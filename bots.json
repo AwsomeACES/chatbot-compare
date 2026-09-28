@@ -1,0 +1,91 @@
+{
+  "bots": [
+    {
+      "id": "mine-claude",
+      "label": "My bot · Claude Sonnet 5",
+      "description": "VoltKart support bot (tool calling over store data), Claude Sonnet 5 on Bedrock",
+      "profile": "voltkart",
+      "type": "voltkart",
+      "base_url": "http://localhost:8000",
+      "model": "claude-sonnet-5"
+    },
+    {
+      "id": "teammate-gemini",
+      "label": "Teammate bot · Gemini (its default)",
+      "description": "Reliance multi-agent bot with its default provider, Gemini 3.6 Flash",
+      "profile": "reliance222",
+      "type": "sse_chat",
+      "url": "http://localhost:8001/chat/stream",
+      "body": {
+        "provider": "gemini"
+      }
+    },
+    {
+      "id": "mine-haiku",
+      "label": "My bot · Claude Haiku 4.5",
+      "description": "VoltKart support bot on Claude Haiku 4.5, the fast tier closest to Gemini Flash",
+      "profile": "voltkart",
+      "type": "voltkart",
+      "base_url": "http://localhost:8000",
+      "model": "claude-haiku-4-5"
+    },
+    {
+      "id": "teammate-claude",
+      "label": "Teammate bot · Claude Sonnet 5",
+      "description": "Reliance Digital multi-agent bot (LangGraph supervisor + sales/resQ/RAG agents), Claude Sonnet 5 (needs ANTHROPIC_API_KEY / OPENAI_API_KEY in the teammate backend .env)",
+      "profile": "reliance222",
+      "type": "sse_chat",
+      "url": "http://localhost:8001/chat/stream",
+      "body": {
+        "provider": "claude"
+      },
+      "enabled": false
+    },
+    {
+      "id": "mine-gpt",
+      "label": "My bot · GPT-5 mini",
+      "description": "VoltKart support bot running OpenAI GPT-5 mini (OpenAI account needs credits)",
+      "profile": "voltkart",
+      "type": "voltkart",
+      "base_url": "http://localhost:8000",
+      "model": "gpt-5-mini",
+      "enabled": false
+    },
+    {
+      "id": "teammate-gpt",
+      "label": "Teammate bot · GPT-5 mini",
+      "description": "Reliance multi-agent bot running OpenAI GPT-5 mini (needs ANTHROPIC_API_KEY / OPENAI_API_KEY in the teammate backend .env)",
+      "profile": "reliance222",
+      "type": "sse_chat",
+      "url": "http://localhost:8001/chat/stream",
+      "body": {
+        "provider": "chatgpt"
+      },
+      "enabled": false
+    },
+    {
+      "id": "mine-nova",
+      "label": "My bot · Amazon Nova Pro",
+      "profile": "voltkart",
+      "type": "voltkart",
+      "base_url": "http://localhost:8000",
+      "model": "nova-pro"
+    },
+    {
+      "id": "example-http-bot",
+      "enabled": false,
+      "label": "Example: any JSON chat API",
+      "type": "http",
+      "url": "https://example.com/api/chat",
+      "headers": {
+        "X-Api-Key": "replace-me"
+      },
+      "body": {
+        "text": "{message}",
+        "conversation_id": "{session_id}"
+      },
+      "reply_path": "data.answer",
+      "session_path": "data.conversation_id"
+    }
+  ]
+}

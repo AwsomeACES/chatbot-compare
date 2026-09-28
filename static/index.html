@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chatbot Compare</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><span class="logo" aria-hidden="true">⚖</span> Chatbot Compare</div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="evaluate" aria-selected="true">Evaluate</button>
+      <button role="tab" data-tab="results" aria-selected="false">Results</button>
+      <button role="tab" data-tab="arena" aria-selected="false">Blind arena</button>
+    </nav>
+    <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme">◐</button>
+  </header>
+
+  <main>
+    <!-- ================= Evaluate ================= -->
+    <section id="tab-evaluate" class="tab">
+      <div class="grid-2">
+        <div class="card">
+          <h2>1. Pick the chatbots <span class="muted" id="pickCount"></span></h2>
+          <p class="muted">Choose 2–4. Compare bots on the same model to judge the <em>app</em>, or different models to judge the whole product.</p>
+          <div id="botList" class="bot-list"></div>
+        </div>
+        <div class="card">
+          <h2>2. Test suite</h2>
+          <select id="suiteSelect"></select>
+          <p id="suiteInfo" class="muted"></p>
+          <h2>3. Scoring</h2>
+          <label class="check"><input type="checkbox" id="judgeToggle" checked>
+            Use the AI judge (Claude grades each answer blind; costs Bedrock tokens)</label>
+          <p class="muted small">Overall = 45% accuracy (exact checks) + 40% judge quality + 15% speed. Without the judge: 80% accuracy + 20% speed.</p>
+          <button class="primary" id="startBtn" type="button">Run comparison</button>
+          <p id="startError" class="error" role="alert"></p>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Past runs</h2>
+        <div id="runList" class="run-list"><p class="muted">No runs yet.</p></div>
+      </div>
+    </section>
+
+    <!-- ================= Results ================= -->
+    <section id="tab-results" class="tab" hidden>
+      <div id="resultsEmpty" class="card muted">Run a comparison, or open one from Past runs.</div>
+      <div id="results" hidden>
+        <div class="run-head">
+          <div>
+            <h2 id="runTitle"></h2>
+            <p class="muted" id="runMeta"></p>
+          </div>
+          <div class="progress-wrap" id="progressWrap">
+            <div class="progress"><div id="progressBar"></div></div>
+            <span id="progressText" class="muted small"></span>
+          </div>
+        </div>
+
+        <div class="tiles" id="tiles"></div>
+
+        <div class="card">
+          <h2>Scorecard</h2>
+          <div class="table-scroll"><table class="score" id="scoreTable"></table></div>
+          <p class="muted small" id="unsupportedNote"></p>
+        </div>
+
+        <div class="grid-2">
+          <div class="card chart-card">
+            <h2>Scores <span class="muted small">0–100, higher is better</span></h2>
+            <div class="legend" id="legendScores"></div>
+            <div class="chart" id="chartScores"></div>
+          </div>
+          <div class="card chart-card">
+            <h2>Pass rate by skill <span class="muted small">% of cases passed</span></h2>
+            <div class="legend" id="legendCats"></div>
+            <div class="chart" id="chartCats"></div>
+          </div>
+        </div>
+        <div class="card chart-card">
+          <h2>Response time <span class="muted small">seconds per reply · bar = median, tick = 95th percentile</span></h2>
+          <div class="chart" id="chartLatency"></div>
+        </div>
+
+        <div class="card">
+          <div class="cases-head">
+            <h2>Case by case</h2>
+            <div class="filters">
+              <select id="catFilter" aria-label="Filter by skill"></select>
+              <label class="check"><input type="checkbox" id="diffOnly"> Only where bots disagree</label>
+            </div>
+          </div>
+          <div class="table-scroll"><table class="cases" id="caseTable"></table></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= Arena ================= -->
+    <section id="tab-arena" class="tab" hidden>
+      <div class="card">
+        <h2>Blind arena</h2>
+        <p class="muted">Two bots are picked at random and hidden as A and B. Chat with both, then vote. Names are revealed after your vote, and votes build an Elo rating.</p>
+        <details class="pool"><summary>Bots in the arena</summary><div id="arenaPool" class="bot-list compact"></div></details>
+      </div>
+      <div class="arena">
+        <div class="card arena-col"><h3 id="nameA">Bot A</h3><div class="log" id="logA"></div></div>
+        <div class="card arena-col"><h3 id="nameB">Bot B</h3><div class="log" id="logB"></div></div>
+      </div>
+      <div class="card">
+        <form id="arenaForm" class="arena-form">
+          <input id="arenaInput" type="text" placeholder="Ask both bots something…" autocomplete="off" aria-label="Message">
+          <button class="primary" type="submit" id="arenaSend">Send</button>
+        </form>
+        <div class="vote" id="voteBar" hidden>
+          <span>Which answer is better?</span>
+          <button type="button" data-vote="a">A is better</button>
+          <button type="button" data-vote="b">B is better</button>
+          <button type="button" data-vote="tie">Tie</button>
+          <button type="button" data-vote="both_bad">Both bad</button>
+        </div>
+        <p id="arenaMsg" class="muted" role="status"></p>
+      </div>
+      <div class="card">
+        <div class="cases-head"><h2>Arena leaderboard</h2><button type="button" class="ghost" id="arenaReset">Reset votes</button></div>
+        <div class="table-scroll"><table class="score" id="eloTable"></table></div>
+      </div>
+    </section>
+  </main>
+
+  <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
