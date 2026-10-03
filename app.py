@@ -1,7 +1,12 @@
+import base64
+import binascii
 import json
+import logging
 import os
 import random
+import secrets
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
@@ -9,28 +14,68 @@ from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 import evaluator
-from adapters import BotError, open_conversation
+from adapters import BotError, open_conversation, validate
+
+logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("chatbot_compare")
 
 ROOT = os.path.dirname(__file__)
 STATIC_DIR = os.path.join(ROOT, "static")
 BOTS_FILE = os.path.join(ROOT, "bots.json")
 ARENA_FILE = os.path.join(ROOT, "runs", "arena.json")
 ELO_START, ELO_K = 1000, 32
+ARENA_TTL_S = float(os.environ.get("ARENA_TTL", "1800"))  # an idle, unvoted battle is closed after this
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "")  # set it whenever the app is reachable from other machines
+ALLOWED_HOSTS = [h.strip() for h in os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]").split(",") if h.strip()]
+UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 app = FastAPI(title="Chatbot Compare")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 evaluator.load_runs()
 
 
+@app.middleware("http")
+async def guard(request: Request, call_next):
+    """Optional password (HTTP Basic, any user name) and a JSON-only rule for changes: a web page on another
+    site can't send a JSON request here without a CORS preflight, which this app never grants."""
+    if APP_PASSWORD and request.url.path != "/api/health":
+        password = ""
+        scheme, _, value = request.headers.get("authorization", "").partition(" ")
+        if scheme.lower() == "basic":
+            try:
+                password = base64.b64decode(value).decode().partition(":")[2]
+            except (binascii.Error, UnicodeDecodeError):
+                pass
+        if not secrets.compare_digest(password.encode(), APP_PASSWORD.encode()):
+            return JSONResponse({"detail": "Login required"}, status_code=401,
+                                headers={"WWW-Authenticate": 'Basic realm="Chatbot Compare"'})
+    if request.method in UNSAFE_METHODS and not request.headers.get("content-type", "").startswith("application/json"):
+        return JSONResponse({"detail": "Send requests as application/json"}, status_code=415)
+    return await call_next(request)
+
+
+# Added last so it runs first: rejects requests for other host names (DNS rebinding).
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
+
+
 def load_bots():
     with open(BOTS_FILE) as f:
-        return [b for b in json.load(f)["bots"] if b.get("enabled", True)]
+        bots = [b for b in json.load(f)["bots"] if b.get("enabled", True)]
+    valid = []
+    for b in bots:
+        try:
+            validate(b)
+            valid.append(b)
+        except BotError as e:
+            log.warning("Ignoring bot in bots.json: %s", e)
+    return valid
 
 
 def find_bots(ids):
@@ -43,6 +88,11 @@ def find_bots(ids):
 
 def public(bot):
     return {k: bot.get(k) for k in ("id", "label", "type", "description")}
+
+
+@app.get("/api/health")
+def health():
+    return {"status": "ok", "runs": len(evaluator.list_runs())}
 
 
 @app.get("/api/bots")
@@ -88,9 +138,15 @@ def start_run(req: RunRequest):
     if not 2 <= len(set(req.bots)) <= 4:
         raise HTTPException(400, "Pick 2 to 4 different bots")
     try:
-        run = evaluator.start_run(find_bots(list(dict.fromkeys(req.bots))), req.suite, req.judge)
+        evaluator.load_suite(req.suite)
     except (ValueError, FileNotFoundError):
         raise HTTPException(404, "No such suite")
+    try:
+        run = evaluator.start_run(find_bots(list(dict.fromkeys(req.bots))), req.suite, req.judge)
+    except ValueError as e:  # e.g. a bot with no matching profile
+        raise HTTPException(400, str(e))
+    except FileNotFoundError as e:  # e.g. a profile's data file has moved
+        raise HTTPException(400, f"Missing file: {e.filename}")
     return {"id": run["id"]}
 
 
@@ -114,9 +170,27 @@ def delete_run(run_id: str):
 
 
 # ---------- Arena: blind side-by-side, you vote ----------
-# battle_id -> {"bots": [bot_a, bot_b], "convs": [...], "voted": bool}
+# battle_id -> {"bots": [bot_a, bot_b], "convs": [...], "voted": bool, "last_used": monotonic seconds}
 battles: dict[str, dict] = {}
 arena_lock = threading.Lock()
+
+
+def close_battle(battle):
+    for c in battle["convs"]:
+        try:
+            c.close()
+        except Exception:
+            log.exception("Could not close an arena conversation")
+
+
+def purge_battles(now=None):
+    """Close battles nobody voted on, so they don't hold bot sessions (or a one-chat-at-a-time bot) forever."""
+    now = time.monotonic() if now is None else now
+    for bid, battle in list(battles.items()):
+        if battle["voted"] or now - battle["last_used"] > ARENA_TTL_S:
+            if not battle["voted"]:
+                close_battle(battle)
+            battles.pop(bid, None)
 
 
 def load_arena():
@@ -128,8 +202,10 @@ def load_arena():
 
 
 def save_arena(data):
-    with open(ARENA_FILE, "w") as f:
+    tmp = ARENA_FILE + ".tmp"
+    with open(tmp, "w") as f:
         json.dump(data, f, indent=1)
+    os.replace(tmp, ARENA_FILE)
 
 
 class BattleRequest(BaseModel):
@@ -147,6 +223,7 @@ class VoteRequest(BaseModel):
 def arena_message(req: BattleRequest):
     if not req.message.strip():
         raise HTTPException(400, "Type a message")
+    purge_battles()
     battle = battles.get(req.battle_id) if req.battle_id else None
     if battle is None or battle["voted"]:
         pool = find_bots(req.bots) if req.bots else load_bots()
@@ -156,6 +233,7 @@ def arena_message(req: BattleRequest):
         battle = {"bots": pair, "convs": [open_conversation(b) for b in pair], "voted": False}
         req.battle_id = uuid.uuid4().hex
         battles[req.battle_id] = battle
+    battle["last_used"] = time.monotonic()
 
     def send(conv):
         try:
@@ -163,6 +241,9 @@ def arena_message(req: BattleRequest):
             return {"text": r.text, "latency_ms": r.latency_ms, "error": None}
         except BotError as e:
             return {"text": "", "latency_ms": None, "error": str(e)}
+        except Exception as e:
+            log.exception("Arena message failed")
+            return {"text": "", "latency_ms": None, "error": f"{type(e).__name__}: {e}"}
 
     with ThreadPoolExecutor(2) as pool:
         a, b = pool.map(send, battle["convs"])
@@ -179,8 +260,7 @@ def arena_vote(req: VoteRequest):
     if req.winner not in ("a", "b", "tie", "both_bad"):
         raise HTTPException(400, "winner must be a, b, tie or both_bad")
     battle["voted"] = True
-    for c in battle["convs"]:
-        c.close()
+    close_battle(battle)
     a, b = (bot["id"] for bot in battle["bots"])
 
     with arena_lock:

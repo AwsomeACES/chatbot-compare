@@ -7,6 +7,10 @@ Every bot in bots.json has a "type" that picks the adapter:
   supportflow        SupportFlow AI (Mouni's bot): JWT login + POST /api/chat {message, conversation_id}
   openai_compatible  Any OpenAI-style /chat/completions API (OpenAI, Ollama, vLLM, OpenRouter, Groq...)
   claude_bedrock     Claude on Amazon Bedrock with your own system prompt (e.g. a no-tools baseline)
+
+Optional for every type: "max_concurrency" (parallel test chats, see evaluator.py) and "fallback_replies":
+phrases the bot only says when its own LLM call failed. Such a reply raises a BotError the evaluator treats as
+blocked (retried, then left out of the score) instead of grading it as a real answer.
 """
 
 import json
@@ -65,6 +69,13 @@ def _headers(cfg):
     return headers
 
 
+def _json(r):
+    try:
+        return r.json()
+    except ValueError as e:
+        raise BotError(f"Bot returned non-JSON (HTTP {r.status_code}): {r.text[:200]}") from e
+
+
 def _post(url, body, headers=None):
     try:
         r = httpx2.post(url, json=body, headers=headers or {}, timeout=TIMEOUT)
@@ -73,10 +84,10 @@ def _post(url, body, headers=None):
     if r.status_code >= 400:
         try:
             detail = r.json().get("detail") or r.text
-        except ValueError:
+        except (ValueError, AttributeError):
             detail = r.text
         raise BotError(f"HTTP {r.status_code}: {str(detail)[:300]}")
-    return r.json()
+    return _json(r)
 
 
 class Conversation:
@@ -87,8 +98,14 @@ class Conversation:
 
     def send(self, message: str) -> Reply:
         started = time.monotonic()
-        text = self._send(message)
-        return Reply(text=(text or "").strip(), latency_ms=int((time.monotonic() - started) * 1000))
+        try:
+            text = (self._send(message) or "").strip()
+        except (KeyError, IndexError, TypeError) as e:  # reply JSON not shaped as expected
+            raise BotError(f"Unexpected reply format: {type(e).__name__}: {e}") from e
+        for phrase in self.cfg.get("fallback_replies", []):
+            if phrase.lower() in text.lower():
+                raise BotError(f"Bot's LLM call failed (fallback reply): {text[:150]}")
+        return Reply(text=text, latency_ms=int((time.monotonic() - started) * 1000))
 
     def _send(self, message: str) -> str:
         raise NotImplementedError
@@ -162,7 +179,10 @@ class SSEChatConversation(Conversation):
                     if line.startswith("event:"):
                         event = line[6:].strip()
                     elif line.startswith("data:"):
-                        data = json.loads(line[5:].strip() or "null")
+                        try:
+                            data = json.loads(line[5:].strip() or "null")
+                        except ValueError as e:
+                            raise BotError(f"Malformed stream line: {line[:200]}") from e
                         if event == token_event:
                             pieces.append(data.get("text", "") if isinstance(data, dict) else str(data))
                         elif event == error_event:
@@ -211,15 +231,16 @@ class SupportFlowConversation(Conversation):
                 break
         if r.status_code >= 400:
             raise BotError(f"HTTP {r.status_code}: {r.text[:300]}")
-        return r.json()
+        return _json(r)
 
     def _retire(self, conversation_id):
         self._call("POST", f"/api/conversations/{conversation_id}/escalate")
 
     def _send(self, message):
         if not self.held:
-            if not self.lock.acquire(timeout=TIMEOUT):
-                raise BotError("Another conversation with this bot is still open")
+            if not self.lock.acquire(timeout=float(self.cfg.get("busy_timeout", TIMEOUT))):
+                # e.g. an arena battle still holds the chat: retried by the evaluator, then shown as blocked
+                raise BotError("Bot is busy: another conversation with this login is still open")
             self.held = True
             if self.key not in self._cleaned:  # chats left open from earlier use would be continued
                 for c in self._call("GET", "/api/conversations"):
@@ -307,8 +328,29 @@ ADAPTERS = {
 }
 
 
-def open_conversation(cfg) -> Conversation:
-    adapter = ADAPTERS.get(cfg["type"])
+REQUIRED = {
+    "voltkart": ["base_url", "model"],
+    "http": ["url"],
+    "sse_chat": ["url"],
+    "supportflow": ["base_url", "email", "password"],
+    "openai_compatible": ["base_url", "model"],
+    "claude_bedrock": ["model"],
+}
+
+
+def validate(cfg):
+    """Raise BotError naming what is wrong with one bots.json entry."""
+    name = cfg.get("id", "?")
+    adapter = ADAPTERS.get(cfg.get("type"))
     if adapter is None:
-        raise BotError(f"Unknown bot type '{cfg['type']}'. Use one of: {', '.join(ADAPTERS)}")
-    return adapter(cfg)
+        raise BotError(f"Bot '{name}': unknown type '{cfg.get('type')}'. Use one of: {', '.join(ADAPTERS)}")
+    missing = [k for k in ["id", "label", *REQUIRED[cfg["type"]]] if not cfg.get(k)]
+    if missing:
+        raise BotError(f"Bot '{name}' ({cfg['type']}) is missing: {', '.join(missing)}")
+    if "max_concurrency" in cfg and not (isinstance(cfg["max_concurrency"], int) and cfg["max_concurrency"] >= 1):
+        raise BotError(f"Bot '{name}': max_concurrency must be a whole number of at least 1")
+    return adapter
+
+
+def open_conversation(cfg) -> Conversation:
+    return validate(cfg)(cfg)

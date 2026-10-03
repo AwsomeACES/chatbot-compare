@@ -14,16 +14,23 @@ Headline scores per bot (0-100, higher is better):
   hallucination  share of cases with no invented detail: a failed hallucination case, or the judge
                  spotting a made-up fact in any other case, counts as a hallucination
   bias           share of bias cases passed (same answer for every persona, no stereotyping)
+
+Robustness: every bot gets its own worker pool (bots.json "max_concurrency", default EVAL_CONCURRENCY), quota /
+rate-limit errors are retried with backoff before a case counts as blocked, and an unexpected error in one case
+is recorded on that case instead of failing the run.
 """
 
+import contextlib
+import hashlib
 import json
+import logging
 import os
 import re
 import statistics
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import anthropic
 from pydantic import BaseModel, Field
@@ -34,8 +41,15 @@ ROOT = os.path.dirname(__file__)
 RUNS_DIR = os.path.join(ROOT, "runs")
 SUITES_DIR = os.path.join(ROOT, "suites")
 JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "anthropic.claude-opus-5")
-CONCURRENCY = int(os.environ.get("EVAL_CONCURRENCY", "4"))
-BLOCKED_ERRORS = re.compile(r"\b429\b|RESOURCE_EXHAUSTED|quota|rate limit|no credits|HTTP 402", re.I)
+CONCURRENCY = int(os.environ.get("EVAL_CONCURRENCY", "4"))  # default parallel chats per bot
+RETRIES = int(os.environ.get("BLOCKED_RETRIES", "2"))  # extra attempts for a quota / rate-limit error
+BACKOFF_S = float(os.environ.get("BLOCKED_BACKOFF", "10"))  # first wait; doubles each retry
+MIN_COVERAGE = 0.8  # a bot scored on fewer of its cases than this is shown but not ranked
+BLOCKED_ERRORS = re.compile(r"\b429\b|RESOURCE_EXHAUSTED|quota|rate limit|no credits|HTTP 402|fallback reply|bot is busy",
+                            re.I)
+SECRET_KEYS = {"password", "headers", "api_key"}  # never written into a saved run
+
+log = logging.getLogger("chatbot_compare")
 
 # Overall score weights (0-100 scale). Speed is relative to the fastest bot in the run.
 # A metric no bot could be scored on (e.g. quality without the judge) is dropped and the rest rescaled.
@@ -113,20 +127,36 @@ def _norm(s):
     return re.sub(r"\b(month|year|day)s\b", r"\1", s.replace("-", " "))
 
 
-def run_checks(expect, reply):
-    """Returns (passed, [failure messages]) or (None, []) when the case has no checks."""
+def _has(text, needle):
+    """Normalised substring match. A needle that starts or ends with a digit must not run into other digits,
+    so the price "149" matches "$149.00" and "Rs.149" but not "$1,149" or "1490"."""
+    n = _norm(needle)
+    pattern = re.escape(n)
+    if n[:1].isdigit():
+        pattern = r"(?<!\d)(?<!\d\.)" + pattern
+    if n[-1:].isdigit():
+        pattern += r"(?!\d)"
+    return re.search(pattern, text) is not None
+
+
+def run_checks(expect, reply, history=None):
+    """Returns (passed, [failure messages]) or (None, []) when the case has no checks.
+    contains_* and regex look at the final reply; not_contains (leaks, invented facts) at every reply in history."""
     if not expect:
         return None, []
     text, failures = _norm(reply), []
+    every = _norm("\n".join(history)) if history else text
     if isinstance(expect.get("contains_any"), str):
         expect = {**expect, "contains_any": [expect["contains_any"]]}
-    if "contains_any" in expect and not any(_norm(x) in text for x in expect["contains_any"]):
+    if isinstance(expect.get("not_contains"), str):
+        expect = {**expect, "not_contains": [expect["not_contains"]]}
+    if "contains_any" in expect and not any(_has(text, x) for x in expect["contains_any"]):
         failures.append(f"should mention one of: {', '.join(expect['contains_any'])}")
     for x in expect.get("contains_all", []):
-        if _norm(x) not in text:
+        if not _has(text, x):
             failures.append(f"should mention: {x}")
     for x in expect.get("not_contains", []):
-        if _norm(x) in text:
+        if _has(every, x):
             failures.append(f"should not mention: {x}")
     if "regex" in expect and not re.search(expect["regex"], reply, re.I):
         failures.append(f"should match /{expect['regex']}/")
@@ -134,11 +164,11 @@ def run_checks(expect, reply):
 
 
 def check_sessions(expect, turns):
-    """Apply the checks to the last reply of every session (a case with variants has one per persona)."""
-    last = {}
+    """Apply the checks to every session (a case with variants has one per persona)."""
+    replies = {}
     for t in turns:
-        last[t.get("variant")] = t["bot"]
-    results = [(v, *run_checks(expect, reply)) for v, reply in last.items()]
+        replies.setdefault(t.get("variant"), []).append(t["bot"])
+    results = [(v, *run_checks(expect, rs[-1], rs)) for v, rs in replies.items()]
     if all(ok is None for _, ok, _ in results):
         return None, []
     failures = [f"{v}: {f}" if v else f for v, _, fs in results for f in fs]
@@ -209,7 +239,9 @@ def recheck(suite, bot, result):
     """Re-apply the (current) checks to a saved result's final reply."""
     if result.get("unsupported") or result["error"] or not result["turns"]:
         return
-    case = next(c for c in suite["cases"] if c["id"] == result["case_id"])
+    case = next((c for c in suite["cases"] if c["id"] == result["case_id"]), None)
+    if case is None:  # removed from the suite since the run
+        return
     expect = render(case.get("expect"), profile_for(suite, bot)["vars"])
     result["checks"], result["check_failures"] = check_sessions(expect, result["turns"])
 
@@ -217,27 +249,50 @@ def recheck(suite, bot, result):
 # ---------- Runs ----------
 
 _runs: dict[str, dict] = {}
+_mtimes: dict[str, float] = {}  # file time of each run as loaded/saved, to notice edits by rejudge.py
 _lock = threading.Lock()
 
 
-def _save(run):
+def _run_path(run_id):
+    return os.path.join(RUNS_DIR, f"{run_id}.json")
+
+
+def save_run_file(run, path=None):
+    """Write a run atomically, so a crash never leaves half a file."""
+    path = path or _run_path(run["id"])
     with _lock:
         data = json.dumps(run, indent=1)
-    tmp = os.path.join(RUNS_DIR, f".{run['id']}.tmp")
+    tmp = os.path.join(os.path.dirname(path), f".{os.path.basename(path)}.{threading.get_ident()}.tmp")
     with open(tmp, "w") as f:
         f.write(data)
-    os.replace(tmp, os.path.join(RUNS_DIR, f"{run['id']}.json"))
+    os.replace(tmp, path)
+
+
+def _save(run):
+    save_run_file(run)
+    _mtimes[run["id"]] = os.path.getmtime(_run_path(run["id"]))
+
+
+def _load_run_file(name):
+    path = os.path.join(RUNS_DIR, name)
+    with open(path) as f:
+        run = json.load(f)
+    _mtimes[run["id"]] = os.path.getmtime(path)
+    return run
 
 
 def load_runs():
     for name in os.listdir(RUNS_DIR):
-        if name.endswith(".json"):
-            with open(os.path.join(RUNS_DIR, name)) as f:
-                run = json.load(f)
+        if name.endswith(".json") and name != "arena.json":
+            try:
+                run = _load_run_file(name)
+            except (OSError, ValueError, KeyError) as e:
+                log.warning("Skipping unreadable run file %s: %s", name, e)
+                continue
             if run["status"] == "running":  # server stopped mid-run
                 run["status"] = "interrupted"
-            if run.get("summary") and "hallucination" not in run["summary"]["bots"][0]:
-                # Saved before the accuracy / hallucination / bias scores existed; only categories are needed.
+            if run.get("summary") and "ranked" not in run["summary"]["bots"][0]:
+                # Saved by an older version (before hallucination / bias / coverage); only categories are needed.
                 for r in run["results"]:
                     if r["category"] == "grounding":  # old name of the hallucination cases
                         r["category"] = "hallucination"
@@ -253,23 +308,39 @@ def list_runs():
 
 
 def get_run(run_id):
-    return _runs.get(run_id)
+    run = _runs.get(run_id)
+    if run is not None and run["status"] != "running":
+        # rejudge.py may have rewritten the file since it was loaded
+        with contextlib.suppress(OSError, ValueError, KeyError):
+            if os.path.getmtime(_run_path(run_id)) > _mtimes.get(run_id, 0):
+                run = _runs[run_id] = _load_run_file(f"{run_id}.json")
+    return run
 
 
 def delete_run(run_id):
     if _runs.pop(run_id, None):
-        os.remove(os.path.join(RUNS_DIR, f"{run_id}.json"))
+        _mtimes.pop(run_id, None)
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(_run_path(run_id))
+
+
+def public_config(bot):
+    """A bot's config as saved in a run: enough to explain the result later, without secrets."""
+    return {k: v for k, v in bot.items() if k not in SECRET_KEYS}
 
 
 def start_run(bots, suite_id, use_judge):
     suite = load_suite(suite_id)
     for b in bots:
-        profile_for(suite, b)  # fail fast if a bot has no matching profile
+        profile_for(suite, b)  # fail fast if a bot has no matching profile or a data file is missing
+    with open(os.path.join(SUITES_DIR, f"{suite_id}.json"), "rb") as f:
+        suite_hash = hashlib.sha256(f.read()).hexdigest()[:16]
     run = {
         "id": time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:4],
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "suite": suite_id, "suite_name": suite["name"],
+        "suite": suite_id, "suite_name": suite["name"], "suite_sha256": suite_hash,
         "bots": [{"id": b["id"], "label": b["label"]} for b in bots],
+        "bot_configs": [public_config(b) for b in bots],
         "judge": use_judge, "judge_model": JUDGE_MODEL if use_judge else None,
         "status": "running", "progress": {"done": 0, "total": len(bots) * len(suite["cases"])},
         "results": [], "summary": None,
@@ -292,21 +363,18 @@ def _run_case(suite, case, bot, use_judge):
         return result
     sessions = case.get("variants") or [{"label": None, "turns": case["turns"]}]
     for session in sessions:
-        conv = open_conversation(bot)
-        try:
-            for msg in session["turns"]:
-                reply = conv.send(msg)
-                turn = {"user": msg, "bot": reply.text, "latency_ms": reply.latency_ms}
-                if session["label"]:
-                    turn["variant"] = session["label"]
-                result["turns"].append(turn)
-        except BotError as e:
-            result["error"] = str(e)
-            # Quota / rate-limit / billing errors are the account's fault, not the bot's: shown, but not scored.
-            result["blocked"] = bool(BLOCKED_ERRORS.search(str(e)))
-        finally:
-            conv.close()
-        if result["error"]:
+        for attempt in range(RETRIES + 1):
+            turns, error = _run_session(bot, session)
+            # Quota / rate-limit / billing errors are the account's fault, not the bot's: retried, then shown
+            # as blocked and left out of the score.
+            blocked = bool(error and BLOCKED_ERRORS.search(error))
+            if not blocked or attempt == RETRIES:
+                break
+            log.info("%s / %s blocked (%s), retry %d", bot["id"], case["id"], error, attempt + 1)
+            time.sleep(BACKOFF_S * 2 ** attempt)
+        result["turns"] += turns
+        if error:
+            result["error"], result["blocked"] = error, blocked
             break
 
     if result["error"]:
@@ -321,22 +389,63 @@ def _run_case(suite, case, bot, use_judge):
     return result
 
 
-def _execute(run, bots, suite):
-    jobs = [(case, bot) for case in suite["cases"] for bot in bots]
+def _run_session(bot, session):
+    """One conversation. Returns (turns, error message or None); never raises."""
+    turns, conv = [], None
     try:
-        with ThreadPoolExecutor(CONCURRENCY) as pool:
-            futures = [pool.submit(_run_case, suite, case, bot, run["judge"]) for case, bot in jobs]
-            for fut in futures:
+        conv = open_conversation(bot)
+        for msg in session["turns"]:
+            reply = conv.send(msg)
+            turn = {"user": msg, "bot": reply.text, "latency_ms": reply.latency_ms}
+            if session.get("label"):
+                turn["variant"] = session["label"]
+            turns.append(turn)
+        return turns, None
+    except BotError as e:
+        return turns, str(e)
+    except Exception as e:  # a malformed reply must cost this case, not the whole run
+        log.exception("Unexpected error talking to %s", bot["id"])
+        return turns, f"{type(e).__name__}: {e}"
+    finally:
+        if conv is not None:
+            try:
+                conv.close()
+            except Exception:
+                log.exception("Could not close a conversation with %s", bot["id"])
+
+
+def _crashed(case, bot, e):
+    return {"case_id": case["id"], "bot_id": bot["id"], "category": case.get("category", "general"),
+            "rubric": case.get("rubric"), "turns": [], "error": f"Internal error: {type(e).__name__}: {e}",
+            "unsupported": False, "checks": None, "check_failures": [], "judge": None}
+
+
+def _execute(run, bots, suite):
+    # One pool per bot, so a slow or one-chat-at-a-time bot never holds up the others.
+    pools = {b["id"]: ThreadPoolExecutor(max(1, int(b.get("max_concurrency", CONCURRENCY))),
+                                         thread_name_prefix=f"bot-{b['id']}") for b in bots}
+    try:
+        futures = {pools[bot["id"]].submit(_run_case, suite, case, bot, run["judge"]): (case, bot)
+                   for case in suite["cases"] for bot in bots}
+        for fut in as_completed(futures):
+            try:
                 res = fut.result()
-                with _lock:
-                    run["results"].append(res)
-                    run["progress"]["done"] += 1
-                _save(run)
+            except Exception as e:
+                log.exception("Case crashed")
+                res = _crashed(*futures[fut], e)
+            with _lock:
+                run["results"].append(res)
+                run["progress"]["done"] += 1
+            _save(run)
         run["summary"] = summarise(run, suite)
         run["status"] = "done"
     except Exception as e:  # keep the partial results visible in the UI
+        log.exception("Run %s failed", run["id"])
         run["status"] = "failed"
         run["failure"] = f"{type(e).__name__}: {e}"
+    finally:
+        for pool in pools.values():
+            pool.shutdown(wait=False, cancel_futures=True)
     _save(run)
 
 
@@ -384,6 +493,7 @@ def summarise(run, suite):
     for b in run["bots"]:
         all_rs = [r for r in run["results"] if r["bot_id"] == b["id"]]
         rs = [r for r in all_rs if not r.get("unsupported") and not r.get("blocked")]
+        applicable = [r for r in all_rs if not r.get("unsupported")]
         latencies = [t["latency_ms"] for r in rs for t in r["turns"]]
         judged = [r["judge"] for r in rs if r["judge"]]
         quality = None
@@ -393,6 +503,7 @@ def summarise(run, suite):
         hallucinated = {r["case_id"]: h for r in rs if (h := _hallucinated(r)) is not None}
         bots.append({
             "id": b["id"], "label": b["label"], "cases": len(rs),
+            "coverage": round(100 * len(rs) / len(applicable), 1) if applicable else None,
             "accuracy": _pct([_case_passed(r) for r in rs if r["category"] not in NON_FACTUAL]),
             "hallucination": _pct([not h for h in hallucinated.values()]),
             "hallucinated_cases": sorted(c for c, h in hallucinated.items() if h),
@@ -407,26 +518,40 @@ def summarise(run, suite):
             "tone": round(statistics.mean(j["tone"] for j in judged), 2) if judged else None,
             "latency_p50": _percentile(latencies, 50), "latency_p95": _percentile(latencies, 95),
             "errors": sum(1 for r in rs if r["error"]),
+            "judge_errors": sum(1 for r in rs if r.get("judge_error")),
             "blocked": sorted(r["case_id"] for r in all_rs if r.get("blocked")),
             "unsupported": sorted(r["case_id"] for r in all_rs if r.get("unsupported")),
             "by_category": {c: _category_score(rs, c) for c in categories},
         })
 
-    fastest = min((b["latency_p50"] for b in bots if b["latency_p50"]), default=None)
     if not run["judge"]:
         for b in bots:
             b["quality"] = None
+    for b in bots:  # ranked only when scored on enough of its own cases; otherwise "incomplete"
+        b["ranked"] = bool(b["cases"]) and (b["coverage"] or 0) >= 100 * MIN_COVERAGE
+    fastest = min((b["latency_p50"] for b in bots if b["ranked"] and b["latency_p50"]), default=None)
     weights = {k: w for k, w in WEIGHTS.items() if k == "speed" or any(b[k] is not None for b in bots)}
     weights = {k: round(w / sum(weights.values()), 3) for k, w in weights.items()}
     for b in bots:
-        b["speed"] = round(100 * fastest / b["latency_p50"], 1) if fastest and b["latency_p50"] else 0
-        b["overall"] = round(sum(w * (b[k] or 0) for k, w in weights.items()), 1)
+        b["speed"] = (round(min(100.0, 100 * fastest / b["latency_p50"]), 1)
+                      if fastest and b["latency_p50"] else None)
+        if not b["cases"]:
+            b["overall"] = None
+            continue
+        # A metric this bot has no score for (e.g. every bias case blocked) is left out of its overall and
+        # the rest rescaled, rather than counted as 0.
+        own = {k: w for k, w in weights.items() if b[k] is not None}
+        total = sum(own.values())
+        b["overall"] = round(sum(w * b[k] for k, w in own.items()) / total, 1) if total else None
 
-    ranked = sorted(bots, key=lambda b: b["overall"], reverse=True)
+    ranked = sorted((b for b in bots if b["ranked"] and b["overall"] is not None),
+                    key=lambda b: b["overall"], reverse=True)
+    for b in bots:
+        b["rank"] = None
     for i, b in enumerate(ranked, 1):
         b["rank"] = i
     winner = ranked[0] if ranked else None
-    return {"bots": bots, "categories": categories, "weights": weights,
+    return {"bots": bots, "categories": categories, "weights": weights, "min_coverage": 100 * MIN_COVERAGE,
             "winner": {"id": winner["id"], "label": winner["label"], "overall": winner["overall"],
                        "margin": round(winner["overall"] - ranked[1]["overall"], 1) if len(ranked) > 1 else None}
             if winner else None}

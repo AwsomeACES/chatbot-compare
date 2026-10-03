@@ -158,7 +158,15 @@ function openRun(id) {
 }
 async function refreshRun() {
   const id = currentRunId;
-  const run = await api(`/api/runs/${id}`);
+  let run;
+  try {
+    run = await api(`/api/runs/${id}`);
+  } catch (e) { // server restarting or briefly unreachable: say so and keep trying
+    if (id !== currentRunId) return;
+    $("progressText").textContent = `Can't reach the server (${e.message}). Retrying…`;
+    pollTimer = setTimeout(refreshRun, 5000);
+    return;
+  }
   if (id !== currentRunId) return;
   currentRun = run;
   renderRun(run);
@@ -203,15 +211,20 @@ function renderLegend(elId, run) {
   $(elId).innerHTML = run.bots.map((b) => `<span><span class="swatch" style="background:${colorOf(run, b.id)}"></span>${esc(b.label)}</span>`).join("");
 }
 
+const byRank = (bots) => [...bots].sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity));
+
 function renderTiles(run, s) {
-  const ranked = [...s.bots].sort((a, b) => a.rank - b.rank);
+  const ranked = byRank(s.bots).filter((b) => b.rank != null);
   const w = ranked[0];
-  const close = s.winner.margin != null && s.winner.margin < 3;
-  const hero = `<div class="tile hero"><div class="label">${close ? "Too close to call — leader" : "Winner"}</div>
+  const close = s.winner && s.winner.margin != null && s.winner.margin < 3;
+  const hero = w
+    ? `<div class="tile hero"><div class="label">${close ? "Too close to call — leader" : "Winner"}</div>
     <div class="value"><span class="swatch" style="background:${colorOf(run, w.id)}"></span>${esc(w.label)}</div>
-    <div class="sub">Overall ${fmt(w.overall, 1)} / 100${s.winner.margin != null ? ` · ${fmt(s.winner.margin, 1)} points ahead of ${esc(ranked[1].label)}` : ""}</div></div>`;
+    <div class="sub">Overall ${fmt(w.overall, 1)} / 100${s.winner.margin != null ? ` · ${fmt(s.winner.margin, 1)} points ahead of ${esc(ranked[1].label)}` : ""}</div></div>`
+    : `<div class="tile hero"><div class="label">No winner</div><div class="value">Not enough cases scored</div>
+    <div class="sub">A bot is ranked once at least ${fmt(s.min_coverage ?? 80)}% of its cases were scored. Re-run when quotas reset.</div></div>`;
   const best = (k, better = "max") => {
-    const vals = s.bots.filter((b) => b[k] != null);
+    const vals = s.bots.filter((b) => b[k] != null && b.rank != null);
     if (!vals.length) return null;
     return vals.reduce((a, b) => ((better === "max" ? b[k] > a[k] : b[k] < a[k]) ? b : a));
   };
@@ -228,18 +241,19 @@ function renderTiles(run, s) {
 }
 
 function renderScoreTable(run, s) {
-  const ranked = [...s.bots].sort((a, b) => a.rank - b.rank);
+  const ranked = byRank(s.bots);
   const hasJudge = s.bots.some((b) => b.quality != null);
   const cols = [
     ["Overall", (b) => fmt(b.overall, 1)], ["Accuracy", (b) => pct(b.accuracy)], ["No hallucination", (b) => pct(b.hallucination)],
     ["Fairness", (b) => pct(b.bias)], ["Pass rate", (b) => pct(b.pass_rate)], ["Exact checks", (b) => pct(b.checks ?? b.accuracy)],
     ...(hasJudge ? [["Judge quality", (b) => fmt(b.quality)], ["Correct /5", (b) => fmt(b.correctness, 1)],
       ["Helpful /5", (b) => fmt(b.helpfulness, 1)], ["Tone /5", (b) => fmt(b.tone, 1)]] : []),
-    ["Median reply", (b) => secs(b.latency_p50)], ["p95 reply", (b) => secs(b.latency_p95)], ["Errors", (b) => b.errors],
+    ["Median reply", (b) => secs(b.latency_p50)], ["p95 reply", (b) => secs(b.latency_p95)],
+    ["Coverage", (b) => pct(b.coverage)], ["Errors", (b) => b.errors], ["Judge errors", (b) => b.judge_errors ?? 0],
     ["Not supported", (b) => b.unsupported.length], ["Blocked", (b) => (b.blocked || []).length],
   ];
   $("scoreTable").innerHTML = `<thead><tr><th>#</th><th>Chatbot</th>${cols.map(([h]) => `<th class="num">${h}</th>`).join("")}</tr></thead>
-    <tbody>${ranked.map((b) => `<tr class="${b.rank === 1 ? "best" : ""}"><td><span class="rank">${b.rank}</span></td>
+    <tbody>${ranked.map((b) => `<tr class="${b.rank === 1 ? "best" : ""}"><td>${b.rank != null ? `<span class="rank">${b.rank}</span>` : `<span class="muted small" title="Fewer than ${fmt(s.min_coverage ?? 80)}% of its cases were scored">incomplete</span>`}</td>
       <td><span class="swatch" style="background:${colorOf(run, b.id)}"></span>${esc(b.label)}</td>
       ${cols.map(([, f]) => `<td class="num">${f(b)}</td>`).join("")}</tr>`).join("")}</tbody>`;
   const notes = s.bots.filter((b) => b.unsupported.length).map((b) => `${b.label}: ${b.unsupported.join(", ")}`);
@@ -248,7 +262,9 @@ function renderScoreTable(run, s) {
     (b.hallucinated_cases || []).length ? `${b.label} invented facts in: ${b.hallucinated_cases.join(", ")}` : null,
     (b.biased_cases || []).length ? `${b.label} failed bias cases: ${b.biased_cases.join(", ")}` : null,
   ]).filter(Boolean);
-  $("unsupportedNote").textContent = (failed.length ? failed.join(" · ") + ". " : "") + (notes.length
+  const incomplete = s.bots.filter((b) => b.rank == null).map((b) => `${b.label} (${pct(b.coverage)} scored)`);
+  $("unsupportedNote").textContent = (incomplete.length ? `Not ranked, too few cases scored: ${incomplete.join(" · ")}. ` : "")
+    + (failed.length ? failed.join(" · ") + ". " : "") + (notes.length
     ? `Not supported (the bot's design has no such feature; left out of its score): ${notes.join(" · ")}. ` : "")
     + (blocked.length ? `Blocked by API quota / rate limits (left out of the score; re-run when the quota resets for a fair result): ${blocked.join(" · ")}.` : "");
 }

@@ -79,7 +79,12 @@
       "type": "supportflow",
       "base_url": "http://localhost:5000",
       "email": "customer@example.com",
-      "password": "Demo123!"
+      "password": "Demo123!",
+      "max_concurrency": 1,
+      "fallback_replies": [
+        "I found the relevant support context, and the quickest next step is:",
+        "Please tell me the issue and I’ll guide you through the fastest next step."
+      ]
     },
     {
       "id": "example-http-bot",

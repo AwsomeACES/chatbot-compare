@@ -29,8 +29,14 @@ def main():
     suite = evaluator.load_suite(run["suite"])
     with open(os.path.join(ROOT, "bots.json")) as f:
         bots = {b["id"]: b for b in json.load(f)["bots"]}
+    for b in run.get("bot_configs", []):  # a bot since removed from bots.json: use the run's own snapshot
+        bots.setdefault(b["id"], b)
+    unknown = sorted({r["bot_id"] for r in run["results"]} - set(bots))
+    if unknown:
+        print(f"Skipping results of bots no longer in bots.json: {', '.join(unknown)}")
+    results = [r for r in run["results"] if r["bot_id"] in bots]
 
-    for r in run["results"]:  # apply the current "blocked" rule and checks to old results
+    for r in results:  # apply the current "blocked" rule and checks to old results
         if r["error"]:
             r["blocked"] = bool(evaluator.BLOCKED_ERRORS.search(r["error"]))
         evaluator.recheck(suite, bots[r["bot_id"]], r)
@@ -38,7 +44,7 @@ def main():
     if "--checks-only" in sys.argv:
         todo = []
     else:
-        todo = [r for r in run["results"]
+        todo = [r for r in results
                 if r["turns"] and not r["error"] and not r.get("unsupported") and (regrade_all or not r.get("judge"))]
     print(f"Grading {len(todo)} conversations with {evaluator.JUDGE_MODEL}...")
 
@@ -56,13 +62,13 @@ def main():
             mark = "pass" if (r.get("judge") or {}).get("passed") else "FAIL" if r.get("judge") else "judge error"
             print(f"  {i:3}/{len(todo)}  {r['bot_id']:18} {r['case_id']:20} {mark}")
 
-    run["judge"] = True
-    run["judge_model"] = evaluator.JUDGE_MODEL
+    if todo:
+        run["judge"] = True
+        run["judge_model"] = evaluator.JUDGE_MODEL
     run["summary"] = evaluator.summarise(run, suite)
-    with open(path, "w") as f:
-        json.dump(run, f, indent=1)
-    for b in sorted(run["summary"]["bots"], key=lambda b: b["rank"]):
-        print(f"#{b['rank']} {b['label']}: overall {b['overall']}, accuracy {b['accuracy']}%, "
+    evaluator.save_run_file(run, path)  # atomic; the server picks up the change on the next view
+    for b in sorted(run["summary"]["bots"], key=lambda b: b["rank"] or 99):
+        print(f"#{b['rank'] or '-'} {b['label']}: overall {b['overall']}, accuracy {b['accuracy']}%, "
               f"no hallucination {b['hallucination']}%, fairness {b['bias']}%, pass rate {b['pass_rate']}%, "
               f"judge quality {b['quality']}, median {b['latency_p50']} ms, scored cases {b['cases']}, blocked {len(b['blocked'])}")
 
