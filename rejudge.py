@@ -62,7 +62,8 @@ def main():
     with open(path, "w") as f:
         json.dump(run, f, indent=1)
     for b in sorted(run["summary"]["bots"], key=lambda b: b["rank"]):
-        print(f"#{b['rank']} {b['label']}: overall {b['overall']}, pass rate {b['pass_rate']}%, "
+        print(f"#{b['rank']} {b['label']}: overall {b['overall']}, accuracy {b['accuracy']}%, "
+              f"no hallucination {b['hallucination']}%, fairness {b['bias']}%, pass rate {b['pass_rate']}%, "
               f"judge quality {b['quality']}, median {b['latency_p50']} ms, scored cases {b['cases']}, blocked {len(b['blocked'])}")
 
 

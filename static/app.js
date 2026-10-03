@@ -1,8 +1,8 @@
 const $ = (id) => document.getElementById(id);
 const SERIES = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)"];
 const METRICS = [
-  ["overall", "Overall"], ["pass_rate", "Pass rate"], ["accuracy", "Exact checks"],
-  ["quality", "Judge quality"], ["speed", "Speed"],
+  ["overall", "Overall"], ["accuracy", "Accuracy"], ["hallucination", "No hallucination"],
+  ["bias", "Fairness (bias)"], ["quality", "Judge quality"], ["speed", "Speed"],
 ];
 let bots = [], suites = [], currentRunId = null, pollTimer = null, currentRun = null;
 
@@ -20,6 +20,7 @@ async function api(path, opts = {}) {
   return data;
 }
 const fmt = (v, d = 0) => (v == null ? "—" : Number(v).toFixed(d));
+const pct = (v) => (v == null ? "—" : fmt(v) + "%");
 const secs = (ms) => (ms == null ? "—" : (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + "s");
 function tryStore(k, v) { try { v === undefined ? localStorage.getItem(k) : localStorage.setItem(k, v); } catch {} }
 function readStore(k) { try { return localStorage.getItem(k); } catch { return null; } }
@@ -216,9 +217,12 @@ function renderTiles(run, s) {
   };
   const tile = (label, b, val, sub) => b ? `<div class="tile"><div class="label">${label}</div><div class="value">${val}</div>
     <div class="sub"><span class="swatch" style="background:${colorOf(run, b.id)}"></span>${esc(b.label)}${sub ? " · " + sub : ""}</div></div>` : "";
-  const acc = best("pass_rate"), q = best("quality"), fast = best("latency_p50", "min");
+  const acc = best("accuracy"), hal = best("hallucination"), bias = best("bias"), q = best("quality"), fast = best("latency_p50", "min");
+  const flagged = (b, k) => b && b[k]?.length ? `fails ${b[k].length}` : "none failed";
   $("tiles").innerHTML = hero
-    + tile("Most cases passed", acc, acc && fmt(acc.pass_rate) + "%", "")
+    + tile("Most accurate", acc, acc && fmt(acc.accuracy) + "%", "factual cases passed")
+    + tile("Least hallucination", hal, hal && fmt(hal.hallucination) + "%", hal && `no invented facts · ${flagged(hal, "hallucinated_cases")}`)
+    + tile("Fairest (bias)", bias, bias && fmt(bias.bias) + "%", bias && `bias cases · ${flagged(bias, "biased_cases")}`)
     + tile("Best judge quality", q, q && fmt(q.quality), q && `correctness ${fmt(q.correctness, 1)}/5`)
     + tile("Fastest median reply", fast, fast && secs(fast.latency_p50), "");
 }
@@ -227,7 +231,8 @@ function renderScoreTable(run, s) {
   const ranked = [...s.bots].sort((a, b) => a.rank - b.rank);
   const hasJudge = s.bots.some((b) => b.quality != null);
   const cols = [
-    ["Overall", (b) => fmt(b.overall, 1)], ["Pass rate", (b) => fmt(b.pass_rate) + "%"], ["Exact checks", (b) => fmt(b.accuracy) + "%"],
+    ["Overall", (b) => fmt(b.overall, 1)], ["Accuracy", (b) => pct(b.accuracy)], ["No hallucination", (b) => pct(b.hallucination)],
+    ["Fairness", (b) => pct(b.bias)], ["Pass rate", (b) => pct(b.pass_rate)], ["Exact checks", (b) => pct(b.checks ?? b.accuracy)],
     ...(hasJudge ? [["Judge quality", (b) => fmt(b.quality)], ["Correct /5", (b) => fmt(b.correctness, 1)],
       ["Helpful /5", (b) => fmt(b.helpfulness, 1)], ["Tone /5", (b) => fmt(b.tone, 1)]] : []),
     ["Median reply", (b) => secs(b.latency_p50)], ["p95 reply", (b) => secs(b.latency_p95)], ["Errors", (b) => b.errors],
@@ -239,7 +244,11 @@ function renderScoreTable(run, s) {
       ${cols.map(([, f]) => `<td class="num">${f(b)}</td>`).join("")}</tr>`).join("")}</tbody>`;
   const notes = s.bots.filter((b) => b.unsupported.length).map((b) => `${b.label}: ${b.unsupported.join(", ")}`);
   const blocked = s.bots.filter((b) => (b.blocked || []).length).map((b) => `${b.label}: ${b.blocked.length}`);
-  $("unsupportedNote").textContent = (notes.length
+  const failed = s.bots.flatMap((b) => [
+    (b.hallucinated_cases || []).length ? `${b.label} invented facts in: ${b.hallucinated_cases.join(", ")}` : null,
+    (b.biased_cases || []).length ? `${b.label} failed bias cases: ${b.biased_cases.join(", ")}` : null,
+  ]).filter(Boolean);
+  $("unsupportedNote").textContent = (failed.length ? failed.join(" · ") + ". " : "") + (notes.length
     ? `Not supported (the bot's design has no such feature; left out of its score): ${notes.join(" · ")}. ` : "")
     + (blocked.length ? `Blocked by API quota / rate limits (left out of the score; re-run when the quota resets for a fair result): ${blocked.join(" · ")}.` : "");
 }
@@ -360,11 +369,15 @@ function caseDetail(run, c) {
     if (r.unsupported) return `<div><h4>${esc(b.label)}</h4><p class="muted">Not supported by this bot's design, so it was not asked.</p></div>`;
     let h = `<div><h4><span class="swatch" style="background:${colorOf(run, b.id)}"></span>${esc(b.label)}</h4>`
       + `<p class="rubric muted"><b>Expected:</b> ${esc(r.rubric || "—")}</p>`;
-    for (const t of r.turns) h += `<div class="msg user">${esc(t.user)}</div><div class="msg bot">${md(t.bot)}</div><div class="small muted">${secs(t.latency_ms)}</div>`;
+    let session = null;
+    for (const t of r.turns) {
+      if (t.variant && t.variant !== session) h += `<div class="session">${esc((session = t.variant))}</div>`;
+      h += `<div class="msg user">${esc(t.user)}</div><div class="msg bot">${md(t.bot)}</div><div class="small muted">${secs(t.latency_ms)}</div>`;
+    }
     if (r.error) h += `<p class="error">${esc(r.error)}</p>`;
     h += `<div class="verdict">`;
     if (r.checks != null) h += `<div><b>Exact checks:</b> ${r.checks ? "passed" : "failed — " + esc(r.check_failures.join("; "))}</div>`;
-    if (r.judge) h += `<div><b>Judge:</b> ${r.judge.passed ? "pass" : "fail"} · correctness ${r.judge.correctness}/5 · helpfulness ${r.judge.helpfulness}/5 · tone ${r.judge.tone}/5<br>${esc(r.judge.reason)}</div>`;
+    if (r.judge) h += `<div><b>Judge:</b> ${r.judge.passed ? "pass" : "fail"} · correctness ${r.judge.correctness}/5 · helpfulness ${r.judge.helpfulness}/5 · tone ${r.judge.tone}/5${r.judge.hallucinated ? ` · <b class="error">invented facts</b>` : ""}<br>${esc(r.judge.reason)}</div>`;
     if (r.judge_error) h += `<div class="error">Judge error: ${esc(r.judge_error)}</div>`;
     return h + `</div></div>`;
   }).join("") + `</div>`;

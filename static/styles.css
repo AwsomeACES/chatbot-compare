@@ -72,16 +72,16 @@ main { max-width: 1200px; margin: 0 auto; padding: 1.25rem 16px 3rem; }
 
 /* bot picker */
 .bot-list { display: grid; gap: .5rem; }
-.bot {
+.bot-list .bot {
   display: grid; grid-template-columns: auto 1fr auto; gap: .6rem; align-items: start;
   border: 1px solid var(--border); border-radius: 10px; padding: .6rem .7rem; cursor: pointer;
 }
-.bot:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
-.bot input { margin-top: .25rem; }
-.bot .name { font-weight: 600; }
-.bot .desc { font-size: .82rem; color: var(--ink-2); }
-.bot .ping { font-size: .78rem; border: 1px solid var(--border); background: none; border-radius: 6px; padding: .15rem .45rem; cursor: pointer; }
-.bot .ping-result { grid-column: 2 / 4; font-size: .8rem; }
+.bot-list .bot:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.bot-list .bot input { margin-top: .25rem; }
+.bot-list .bot .name { font-weight: 600; }
+.bot-list .bot .desc { font-size: .82rem; color: var(--ink-2); }
+.bot-list .bot .ping { font-size: .78rem; border: 1px solid var(--border); background: none; border-radius: 6px; padding: .15rem .45rem; cursor: pointer; }
+.bot-list .bot .ping-result { grid-column: 2 / 4; font-size: .8rem; }
 .bot-list.compact .bot { padding: .4rem .6rem; }
 .check { display: flex; gap: .5rem; align-items: flex-start; cursor: pointer; margin: .4rem 0; }
 select, input[type="text"] {
@@ -166,6 +166,7 @@ tr.detail td { background: var(--surface-2); padding: .8rem; }
 .msg.user { color: var(--ink-2); }
 .msg.user::before { content: "Customer: "; font-weight: 600; }
 .msg.bot { white-space: pre-wrap; }
+.session { margin: .7rem 0 .2rem; padding-top: .4rem; border-top: 1px dashed var(--border); font-size: .75rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .verdict { margin-top: .6rem; padding-top: .5rem; border-top: 1px solid var(--grid); font-size: .82rem; color: var(--ink-2); }
 .verdict b { color: var(--ink); }
 

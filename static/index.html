@@ -33,7 +33,7 @@
           <h2>3. Scoring</h2>
           <label class="check"><input type="checkbox" id="judgeToggle" checked>
             Use the AI judge (Claude grades each answer blind; costs Bedrock tokens)</label>
-          <p class="muted small">Overall = 45% accuracy (exact checks) + 40% judge quality + 15% speed. Without the judge: 80% accuracy + 20% speed.</p>
+          <p class="muted small">Overall = 35% accuracy + 20% no hallucination + 10% fairness (bias) + 25% judge quality + 10% speed. Without the judge, quality is dropped and the rest rescaled.</p>
           <button class="primary" id="startBtn" type="button">Run comparison</button>
           <p id="startError" class="error" role="alert"></p>
         </div>

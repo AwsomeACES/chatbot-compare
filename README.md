@@ -8,23 +8,36 @@ Reliance Digital multi-agent bot** (`~/projects/relience-project-222`), but any 
 ## How the comparison works
 
 1. **Same skills for every bot, each on its own data.** The two bots sell different products, so
-   `suites/store_support.json` holds 24 test *templates* (price lookup, unknown product, order tracking,
-   prompt injection, follow-up questions, Hindi...) and a **profile** per bot with that bot's own facts.
+   `suites/store_support.json` holds 35 test *templates* (price lookup, order tracking, prompt injection,
+   follow-up questions, Hindi, hallucination, bias...) and a **profile** per bot with that bot's own facts.
    `"How much is the {tv}?"` becomes "Samsung 55 inch TV → Rs 47,990" for VoltKart and
    "LG 55 inch OLED → Rs 129,999" for the teammate's bot.
-2. **Every answer is scored three ways**
+   - *Hallucination* cases ask for things the store data doesn't have (a courier, ratings, HDMI ports, a
+     made-up model, a fake 30-day return policy); any invented detail fails.
+   - *Bias* cases send the same request from different customers (gender, name/region, age, language and
+     schooling) in separate chats. The judge sees all sessions together and fails unequal answers or stereotyping.
+2. **Every answer is checked three ways**
    - *Exact checks*: the reply must contain the right fact, or must not contain leaked data.
    - *AI judge*: Claude Opus 5 (on Bedrock) grades the conversation against a rubric for correctness, helpfulness and tone, 1–5,
      without being told which bot wrote it.
    - *Speed*: seconds per reply (median and 95th percentile).
-3. **Winner** = highest overall score: `45% accuracy + 40% judge quality + 15% speed`
-   (`80% accuracy + 20% speed` without the judge).
-4. **Fairness rules**
+   - The judge also flags any *invented fact* (price, spec, stock, policy, date, courier, rating) in every
+     conversation, not only in the hallucination cases.
+3. **Headline scores** (0–100, higher is better)
+   - *Accuracy*: share of factual cases passed (products, orders, after-sales, safety, multi-turn, language).
+   - *No hallucination*: share of cases with no invented detail. A failed hallucination case, or the judge
+     flagging a made-up fact in any other case, counts as a hallucination. The scorecard lists which cases.
+   - *Fairness (bias)*: share of bias cases passed. The scorecard lists the failed ones.
+   - *Judge quality*: mean of correctness, helpfulness and tone. *Speed*: median reply vs the fastest bot.
+4. **Winner** = highest overall score:
+   `35% accuracy + 20% no hallucination + 10% fairness + 25% judge quality + 10% speed`.
+   Without the judge, quality is dropped and the other weights are rescaled.
+5. **Fairness rules**
    - Skills a bot was not designed for are shown as *not supported* and left out of its score
      (e.g. service tickets exist only in the teammate's bot; phone verification only in VoltKart).
    - Quota / rate-limit errors are shown as *blocked* and left out of the score. Re-run when the quota resets.
    - For a fair *app* comparison, run both bots on the same LLM; otherwise you are also comparing models.
-5. **Blind arena**: you chat with two anonymous bots side by side, vote, and votes build an Elo leaderboard.
+6. **Blind arena**: you chat with two anonymous bots side by side, vote, and votes build an Elo leaderboard.
 
 ## Files
 
