@@ -4,12 +4,14 @@ Every bot in bots.json has a "type" that picks the adapter:
   voltkart           VoltKart-style API: POST {base_url}/api/chat {message, session_id, model}
   http               Any JSON chat API, described by a body template and the path to the reply
   sse_chat           Streaming (SSE) chat API that takes the history each turn (e.g. the Reliance multi-agent bot)
+  supportflow        SupportFlow AI (Mouni's bot): JWT login + POST /api/chat {message, conversation_id}
   openai_compatible  Any OpenAI-style /chat/completions API (OpenAI, Ollama, vLLM, OpenRouter, Groq...)
   claude_bedrock     Claude on Amazon Bedrock with your own system prompt (e.g. a no-tools baseline)
 """
 
 import json
 import os
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -172,6 +174,74 @@ class SSEChatConversation(Conversation):
         return text
 
 
+class SupportFlowConversation(Conversation):
+    """SupportFlow AI (Mouni's Flask bot): JWT login, then POST /api/chat {message, conversation_id}.
+    The bot continues the customer's latest open conversation, so for this login only one test chat runs
+    at a time, and each chat is retired (escalated) when it closes, so the next one starts fresh.
+    Config: base_url, email, password."""
+
+    _tokens = {}
+    _locks = {}
+    _cleaned = set()
+    _guard = threading.Lock()
+
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        self.base = cfg["base_url"].rstrip("/")
+        self.key = (self.base, cfg["email"])
+        with self._guard:
+            self.lock = self._locks.setdefault(self.key, threading.Lock())
+        self.conversation_id = None
+        self.held = False
+
+    def _token(self, refresh=False):
+        if refresh or self.key not in self._tokens:
+            data = _post(f"{self.base}/api/auth/login", {"email": self.cfg["email"], "password": self.cfg["password"]})
+            self._tokens[self.key] = data["token"]
+        return self._tokens[self.key]
+
+    def _call(self, method, path, body=None):
+        for refresh in (False, True):
+            try:
+                r = httpx2.request(method, f"{self.base}{path}", json=body, timeout=TIMEOUT,
+                                   headers={"Authorization": f"Bearer {self._token(refresh)}"})
+            except httpx2.HTTPError as e:
+                raise BotError(f"Could not reach {self.base}: {e}") from e
+            if r.status_code not in (401, 422):  # 401/422 = expired or invalid token: log in again once
+                break
+        if r.status_code >= 400:
+            raise BotError(f"HTTP {r.status_code}: {r.text[:300]}")
+        return r.json()
+
+    def _retire(self, conversation_id):
+        self._call("POST", f"/api/conversations/{conversation_id}/escalate")
+
+    def _send(self, message):
+        if not self.held:
+            if not self.lock.acquire(timeout=TIMEOUT):
+                raise BotError("Another conversation with this bot is still open")
+            self.held = True
+            if self.key not in self._cleaned:  # chats left open from earlier use would be continued
+                for c in self._call("GET", "/api/conversations"):
+                    if c["status"] in ("AI_ACTIVE", "WAITING_FOR_CUSTOMER"):
+                        self._retire(c["id"])
+                self._cleaned.add(self.key)
+        data = self._call("POST", "/api/chat", {"message": message, "conversation_id": self.conversation_id})
+        self.conversation_id = data["conversation_id"]
+        return data.get("reply") or "(no reply: the chat was handed to a human agent)"
+
+    def close(self):
+        try:
+            if self.conversation_id:
+                self._retire(self.conversation_id)
+        except BotError:
+            self._cleaned.discard(self.key)  # clean up before the next chat instead
+        finally:
+            if self.held:
+                self.held = False
+                self.lock.release()
+
+
 class OpenAICompatibleConversation(Conversation):
     """Keeps the history itself, because /chat/completions is stateless."""
 
@@ -231,6 +301,7 @@ ADAPTERS = {
     "voltkart": VoltKartConversation,
     "http": HttpConversation,
     "sse_chat": SSEChatConversation,
+    "supportflow": SupportFlowConversation,
     "openai_compatible": OpenAICompatibleConversation,
     "claude_bedrock": ClaudeBedrockConversation,
 }

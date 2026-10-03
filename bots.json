@@ -72,6 +72,16 @@
       "model": "nova-pro"
     },
     {
+      "id": "mouni-gemini",
+      "label": "Mouni's bot · Gemini 3.8 Flash",
+      "description": "SupportFlow AI (Flask): keyword intent + order/product/KB grounding, then Gemini; hands risky chats to a human agent",
+      "profile": "mouni",
+      "type": "supportflow",
+      "base_url": "http://localhost:5000",
+      "email": "customer@example.com",
+      "password": "Demo123!"
+    },
+    {
       "id": "example-http-bot",
       "enabled": false,
       "label": "Example: any JSON chat API",
