@@ -1,6 +1,9 @@
 .venv/
-__pycache__/
 .env
-runs/*.json
-runs/.*.tmp
-.bots/
+runtime/
+runs/
+__pycache__/
+.pytest_cache/
+.coverage
+coverage.json
+*.pyc

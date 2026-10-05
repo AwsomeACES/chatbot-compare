@@ -1,80 +1,26 @@
-# Chatbot Compare
+﻿# AI Agent Testing Studio
 
-Compare 2–4 chatbots on the same test and find out which one is best, and why.
+Local FastAPI MVP for ZIP upload, safe archive validation, source inspection, evidence-based HTTP tests, optional pytest/coverage, security review, performance checks, SQLite persistence and HTML/JSON reports.
 
-It was built to compare **my VoltKart bot** (`~/projects/reliance-digital-chatbot`) with **my teammate's
-Reliance Digital multi-agent bot** (`~/projects/relience-project-222`), but any chatbot with an HTTP API can be plugged in.
+## Run
 
-## How the comparison works
-
-1. **Same skills for every bot, each on its own data.** The two bots sell different products, so
-   `suites/store_support.json` holds 35 test *templates* (price lookup, order tracking, prompt injection,
-   follow-up questions, Hindi, hallucination, bias...) and a **profile** per bot with that bot's own facts.
-   `"How much is the {tv}?"` becomes "Samsung 55 inch TV → Rs 47,990" for VoltKart and
-   "LG 55 inch OLED → Rs 129,999" for the teammate's bot.
-   - *Hallucination* cases ask for things the store data doesn't have (a courier, ratings, HDMI ports, a
-     made-up model, a fake 30-day return policy); any invented detail fails.
-   - *Bias* cases send the same request from different customers (gender, name/region, age, language and
-     schooling) in separate chats. The judge sees all sessions together and fails unequal answers or stereotyping.
-2. **Every answer is checked three ways**
-   - *Exact checks*: the reply must contain the right fact, or must not contain leaked data.
-   - *AI judge*: Claude Opus 5 (on Bedrock) grades the conversation against a rubric for correctness, helpfulness and tone, 1–5,
-     without being told which bot wrote it.
-   - *Speed*: seconds per reply (median and 95th percentile).
-   - The judge also flags any *invented fact* (price, spec, stock, policy, date, courier, rating) in every
-     conversation, not only in the hallucination cases.
-3. **Headline scores** (0–100, higher is better)
-   - *Accuracy*: share of factual cases passed (products, orders, after-sales, safety, multi-turn, language).
-   - *No hallucination*: share of cases with no invented detail. A failed hallucination case, or the judge
-     flagging a made-up fact in any other case, counts as a hallucination. The scorecard lists which cases.
-   - *Fairness (bias)*: share of bias cases passed. The scorecard lists the failed ones.
-   - *Judge quality*: mean of correctness, helpfulness and tone. *Speed*: median reply vs the fastest bot.
-4. **Winner** = highest overall score:
-   `35% accuracy + 20% no hallucination + 10% fairness + 25% judge quality + 10% speed`.
-   Without the judge, quality is dropped and the other weights are rescaled.
-5. **Fairness rules**
-   - Skills a bot was not designed for are shown as *not supported* and left out of its score
-     (e.g. service tickets exist only in the teammate's bot; phone verification only in VoltKart).
-   - Quota / rate-limit errors are shown as *blocked* and left out of the score. Re-run when the quota resets.
-   - For a fair *app* comparison, run both bots on the same LLM; otherwise you are also comparing models.
-6. **Blind arena**: you chat with two anonymous bots side by side, vote, and votes build an Elo leaderboard.
-
-## Files
-
-| File | What it does |
-|---|---|
-| `app.py` | FastAPI server: bots, suites, runs, arena API; serves the dashboard |
-| `adapters.py` | How to talk to each kind of bot (`voltkart`, `sse_chat`, `http`, `openai_compatible`, `claude_bedrock`) |
-| `evaluator.py` | Runs a suite against the bots, checks, AI judge, scoring and winner |
-| `bots.json` | The bots to compare (URL, model, which profile of facts they use) |
-| `suites/store_support.json` | The shared test cases + each bot's facts |
-| `static/` | Dashboard: pick bots, run, scorecard, charts, case-by-case answers side by side, arena |
-| `runs/` | Saved results (JSON), plus `arena.json` votes |
-
-## Run it
-
-```bash
-# 1. My bot (port 8000)
-cd ~/projects/reliance-digital-chatbot && .venv/bin/uvicorn app:app --port 8000
-
-# 2. Teammate's bot (port 8001). CHROMA_PATH replaces the Windows path in its .env.
-cd ~/projects/relience-project-222/"relience-project 222"/reliance-project/backend
-CHROMA_PATH="$PWD/../reliance-ai-agent/reliance-data/chroma_db" CLAUDE_MODEL=claude-sonnet-5 OPENAI_MODEL=gpt-5-mini \
-  ~/projects/chatbot-compare/.bots/reliance222-venv/bin/uvicorn main:app --port 8001
-
-# 3. This app (port 8080)
-cd ~/projects/chatbot-compare && .venv/bin/uvicorn app:app --port 8080
+```powershell
+Set-Location D:\AI-Agent-Testing-Studio
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+Copy-Item .env.example .env
+powershell -ExecutionPolicy Bypass -File .\run.ps1
 ```
 
-Open http://localhost:8080. Uses your AWS credentials for Bedrock (the judge and Claude bots).
-Env vars: `JUDGE_MODEL` (default `anthropic.claude-opus-5`), `EVAL_CONCURRENCY` (default 4), `BOT_TIMEOUT` (seconds, default 120).
+Open http://127.0.0.1:8000. Use Upload Project, inspect the analysis, configure local target tests, start a run, then download the report.
 
-## Adding another bot
+## Safety
 
-Add an entry to `bots.json`. Give it a `profile` from the suite (or add a new profile with that bot's facts):
+Uploaded code is untrusted. Static analysis never imports uploaded code. Existing pytest execution requires explicit consent, uses a temporary copy, bounded timeout/output and reduced environment, but is not a sandbox: filesystem and network access are not isolated. Do not run public or administrator-hosted deployments. Dependencies are never auto-installed and application startup is unsupported.
 
-```json
-{"id": "new-bot", "label": "New bot", "profile": "voltkart",
- "type": "http", "url": "http://localhost:9000/chat",
- "body": {"text": "{message}", "session": "{session_id}"}, "reply_path": "answer"}
-```
+## Limits
+
+Loopback HTTP targets only. JS/TS execution and coverage, dependency CVE database checks, tool trace verification and universal quality scores are unavailable. LLM evaluations need an API key, model and consent; otherwise they remain unavailable. Blocked and needs-review results are reported honestly.
+
+## API
+
+GET /api/health; POST /api/projects/upload; GET /api/projects; GET /api/projects/{id}; POST /api/projects/{id}/analyze; POST /api/projects/{id}/tests/run; GET /api/runs/{id}; GET /api/runs/{id}/results; GET /api/runs/{id}/progress; POST /api/runs/{id}/stop; GET /api/runs/{id}/report; GET /api/runs/{id}/report/download?format=html|json.

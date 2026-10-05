@@ -1,0 +1,1 @@
+﻿# Deterministic sample chatbot fixture
