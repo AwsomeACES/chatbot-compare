@@ -1,0 +1,7 @@
+deepeval>=3,<5
+deepteam>=1,<2
+garak>=0.13,<1
+transformers>=4.51,<5
+torch>=2.6,<3
+sentencepiece>=0.2
+pymupdf>=1.25

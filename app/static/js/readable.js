@@ -1,7 +1,0 @@
-// Shared presentation helpers. Stored identifiers and uploaded filenames remain unchanged.
-const categoryNames = {static:'Source code checks',unit:'Project unit tests',coverage:'Code coverage',functional:'API response checks',security:'Code security checks',injection:'Prompt attack checks',guardrails:'Safety rule checks',hallucination:'Answer accuracy checks',bias:'Fairness comparisons',multiturn:'Conversation memory',language:'Language and tone',performance:'Speed and reliability'};
-const statusNames = {passed:'Passed',failed:'Failed',needs_review:'Needs human review',blocked:'Could not run',not_tested:'Not run',completed:'Finished',running:'Running',queued:'Waiting',stopped:'Stopped',interrupted:'Interrupted',error:'Run error'};
-function projectName(p){if(!p)return 'Unknown project';if(p.name==='x.zip')return 'Platform verification sample';if(['sample.zip','sample-chatbot.zip'].includes(p.name))return 'Demo chatbot sample';return p.name.replace(/\.zip$/i,'').replace(/[_-]+/g,' ');}
-function runNumber(r){const ordered=[...state.runs].sort((a,b)=>a.started_at.localeCompare(b.started_at)||a.id.localeCompare(b.id));const i=ordered.findIndex(x=>x.id===r.id);return i<0?'New run':`Run ${i+1}`;}
-function runLabel(r){return `${runNumber(r)} - ${projectName(state.projects.find(p=>p.id===r.project_id))} - ${new Date(r.started_at).toLocaleString()}`;}
-function durationLabel(ms){if(!Number.isFinite(ms)||ms<=0)return 'Not measured';return ms<1000?`${Math.round(ms)} milliseconds`:`${(ms/1000).toFixed(1)} seconds`;}

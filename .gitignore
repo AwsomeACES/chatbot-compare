@@ -7,3 +7,12 @@ __pycache__/
 .coverage
 coverage.json
 *.pyc
+.env.*
+!.env.example
+node_modules/
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.zip
+!.gitkeep
