@@ -97,4 +97,25 @@ The optional browser regression requires Node Playwright (`npm install --no-save
 - Framework package presence is not integration proof. DeepEval, DeepTeam, Garak, HHEM and QwenGuard adapters/models are not claimed as executed by the current rubric runner.
 - Keep Studio bound to loopback. This is not a public multi-user production service.
 
-Next improvements: verified isolated ZIP workers, more authenticated interface adapters, calibrated independent judging and verified cost accounting. Design decisions and corrections are recorded in DECISIONS.md. Older documentation is archived under runtime/retired-pre-blackbox.
+Next improvements: verified isolated ZIP workers, more authenticated interface adapters, calibrated independent judging and bot-side telemetry for hidden internal costs. Design decisions and corrections are recorded in DECISIONS.md. Older documentation is archived under runtime/retired-pre-blackbox.
+
+## Cost ($) tracking
+
+New runs have a **Cost ($)** results tab. Bot cost and Evaluation cost are separate. Old runs show **Unavailable**, because no reliable usage ledger existed when they ran.
+
+1. Open **Advanced settings > Cost settings**.
+2. For a REST or web bot, map its model using **Chatbot A/B model or alias**. Use the exact name in the pricing catalogue, or add explicit per-million-token overrides. This estimates only visible traffic; hidden internal calls need bot-side telemetry.
+3. Optionally set a maximum run budget, local compute dollars/hour, manual INR/USD rate and qualifying quality-score threshold. Mark a model local only if it actually runs locally without cloud charges.
+4. Save settings. **Update prices from LiteLLM** refreshes prices for future runs; existing runs retain their pinned snapshot.
+5. Start a run and review its estimated cost. Existing target, judge-sharing and speed-test permissions still apply.
+6. Open **Cost ($)** to inspect tokens, model/role/category/case breakdowns, top five cases, retries, failed calls and per-answer/per-conversation costs. Compare mode shows the two target costs separately, with quality-per-dollar and measurement warnings.
+
+Unknown model pricing or uncertain provider billing displays **Unknown**, never free. A finite budget blocks calls with unknown cost and stops new calls at the estimated allowance. Remaining cases stay **Not tested: budget limit**, with the existing zero contribution. It is not a provider-enforced hard billing cap.
+
+Token sources: **reported** = provider usage; **counted** = known tokenizer; **estimated** = unknown/opaque visible text. Counted and estimated costs are not invoices. Local API charges are zero; optional compute cost is a separate estimate. PDF and JSON include the pinned source/date and counts-only ledger. No API keys or prompt/answer text are stored in `usage_events`.
+
+API: `GET/PUT /api/cost/settings`, `POST /api/cost/prices/update`, `POST /api/cost/estimate`. Mutating requests retain the `X-Studio-Request: 1` header and local-origin protections.
+
+Dependency: `litellm>=1.80,<2`. Standard install command remains `& .\.venv\Scripts\python.exe -m pip install -r requirements.txt`.
+
+Integration scope: the active HTTP, browser and rubric pathways are metered. Optional DeepEval/DeepTeam/Garak custom-model adapters and local HHEM/guard/embedding hooks are provided in `app/blackbox/cost_adapters.py`, but those engines are not active or installed here. Adapter fixture tests do not establish real framework-internal integration. Any future engine must inject the metered adapter for every model role and add provider-call-count integration tests before activation. See `DECISIONS.md` for provider normalization, pricing and budget limitations.

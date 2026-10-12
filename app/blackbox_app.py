@@ -11,9 +11,13 @@ from .config import ROOT,RUNTIME,MAX_UPLOAD
 from .blackbox.schema import Settings,CATEGORIES,CATEGORY_DETAILS
 from .blackbox.runner import ACTIVE,TASKS,make_run,execute,save,aggregate,now
 from .blackbox.reports import generate_pdf
+from .blackbox import pricing,metering
+from .blackbox.cost_summary import estimate,summarize
+from .blackbox.catalog import build_cases
 
 @asynccontextmanager
 async def lifespan(app):
+ metering.recover_interrupted()
  for run in db.all_records('blackbox'):
   if run['status'] in ('queued','running'):
    run.update(status='interrupted',finished_at=now(),stage='interrupted')
@@ -50,6 +54,27 @@ def capabilities():
 def easy_defaults():
  from .blackbox.easy_setup import public_defaults
  return public_defaults()
+@app.get('/api/cost/settings')
+def cost_settings():
+ snap=pricing.snapshot()
+ return {'settings':pricing.settings(),'snapshot':{k:snap[k] for k in ('id','source','date')},'model_count':len(snap['models'])}
+@app.put('/api/cost/settings')
+def update_cost_settings(data:dict):
+ try:return pricing.save_settings(data)
+ except (ValueError,TypeError,ArithmeticError) as exc:raise HTTPException(422,str(exc))
+@app.post('/api/cost/prices/update')
+async def update_prices():
+ try:snap=await pricing.refresh()
+ except Exception:raise HTTPException(502,'Could not refresh price source. The previous snapshot is unchanged.')
+ return {k:snap[k] for k in ('id','source','date')}
+@app.post('/api/cost/estimate')
+def estimate_cost(config:Settings):
+ from .blackbox.easy_setup import judge_defaults
+ if not config.judge_model:config.judge_model=judge_defaults()['model']
+ config.price_snapshot_id='';config.cost_settings_snapshot={}
+ for target in config.targets:
+  if not target.model_alias:target.model_alias=pricing.settings()['aliases'].get(target.name,'')
+ return estimate(config,build_cases(config))
 @app.post('/api/blackbox/easy-run')
 async def easy_run(config:Settings):
  from .blackbox.easy_setup import prepare
@@ -66,6 +91,10 @@ async def start(config:Settings):
    try:ident=str(uuid.UUID(target.archive_id))
    except ValueError:raise HTTPException(422,'Upload a ZIP first.')
    if not db.get('blackbox_archive',ident):raise HTTPException(404,'ZIP not found.')
+ for target in config.targets:
+  if not target.model_alias:target.model_alias=pricing.settings()['aliases'].get(target.name,'')
+ # New runs pin server-side saved prices; caller-supplied internal snapshots are not trusted.
+ config.price_snapshot_id='';config.cost_settings_snapshot={}
  run=make_run(config);save(run,config);ACTIVE[run['id']]=asyncio.Event()
  task=asyncio.create_task(execute(run,config));TASKS.add(task);task.add_done_callback(TASKS.discard)
  return {'id':run['id'],'planned_cases':len(run['cases']),'mode':'compare' if len(config.targets)==2 else 'single'}
@@ -73,6 +102,10 @@ async def start(config:Settings):
 async def resume_run(ident:uuid.UUID,config:Settings):
  if ACTIVE:raise HTTPException(409,'Another evaluation is running.')
  run=get_run(ident)
+ config.price_snapshot_id=run['config'].get('price_snapshot_id','')
+ config.cost_settings_snapshot=run['config'].get('cost_settings_snapshot',{})
+ if not config.price_snapshot_id:
+  raise HTTPException(422,'This run predates cost tracking. Start a new run to meter all calls consistently.')
  for key in ('categories','references','policy','scope','judge_url','judge_model'):
   if getattr(config,key)!=run['config'].get(key):raise HTTPException(422,'Resume must use the same cases, policy and judge as the original run.')
  if [t.model_dump(exclude={'token'}) for t in config.targets]!=run['targets']:raise HTTPException(422,'Resume must use the same target configuration.')
@@ -94,6 +127,7 @@ def list_runs():return [{k:r.get(k) for k in ('id','status','started_at','target
 def get_run(ident):
  run=db.get('blackbox',str(ident))
  if not run:raise HTTPException(404,'Run not found.')
+ run['costs']=summarize(run)
  return run
 @app.get('/api/blackbox/runs/{ident}')
 def result(ident:uuid.UUID):return get_run(ident)
