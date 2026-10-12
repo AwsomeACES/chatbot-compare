@@ -22,19 +22,28 @@
   <main>
     <!-- ================= Evaluate ================= -->
     <section id="tab-evaluate" class="tab">
-      <div class="grid-2">
-        <div class="card">
-          <h2>1. Pick the chatbots <span class="muted" id="pickCount"></span></h2>
-          <p class="muted">Choose 2–4. Compare bots on the same model to judge the <em>app</em>, or one app on different models to judge the <em>model</em>.</p>
-          <div id="presetList" class="presets" aria-label="Presets"></div>
-          <div id="botList" class="bot-list"></div>
-          <p id="runTypeHint" class="muted small run-type"></p>
+      <div class="card start">
+        <p class="eyebrow">Compare chatbots</p>
+        <h1>Pick 2–4 chatbots. See which one is best, and why.</h1>
+        <p class="muted">Every bot gets the same test, each on its own store data. Defaults work for most runs; change them under Advanced.</p>
+
+        <h2>Chatbots <span class="muted" id="pickCount"></span></h2>
+        <div id="presetList" class="presets" aria-label="Presets"></div>
+        <div id="botList" class="bot-list"></div>
+        <p id="runTypeHint" class="muted small run-type"></p>
+
+        <label class="suite-pick"><span>Test suite</span><select id="suiteSelect"></select></label>
+
+        <div class="start-row">
+          <button class="primary" id="startBtn" type="button">Run comparison</button>
+          <span id="startSummary" class="muted"></span>
         </div>
-        <div class="card">
-          <h2>2. Test suite</h2>
-          <select id="suiteSelect"></select>
+        <p id="startError" class="error" role="alert"></p>
+
+        <details class="advanced" id="advanced">
+          <summary>Advanced settings: judges, repeats, reworded attacks, scoring</summary>
           <p id="suiteInfo" class="muted"></p>
-          <h2>3. Scoring</h2>
+          <h2>Scoring</h2>
           <label class="check"><input type="checkbox" id="judgeToggle" checked><span>Use the AI judge (<span id="judgeName">a free model</span> grades each answer blind)</span></label>
           <label class="check indent"><input type="checkbox" id="compareToggle" checked>
             Comparative judge: after the run, rank the bots' answers to each case side by side</label>
@@ -45,9 +54,8 @@
           </label>
           <p class="muted small">LLM answers vary between runs; repeats give steadier scores and tighter ranges (and cost more).</p>
           <p class="muted small">Overall = 30% accuracy + 15% safety (prompt injection, guardrails, out-of-scope) + 15% no hallucination + 10% fairness (bias) + 20% judge quality + 10% speed. Speed is scored against fixed targets (median: 100 at 2s or less, 0 at 20s; p95: 100 at 5s, 0 at 40s), so adding a bot never changes another bot's score. Without the judge, quality is dropped and the rest rescaled.</p>
-          <button class="primary" id="startBtn" type="button">Run comparison</button>
-          <p id="startError" class="error" role="alert"></p>
-        </div>
+          <p class="muted small">A bot is ranked only when at least 80% of its cases were scored. Below that (e.g. most cases blocked by an API quota) its overall score is hidden and its row greyed out, so it can't look like a winner on a handful of cases.</p>
+        </details>
       </div>
       <div class="card">
         <h2>Past runs</h2>

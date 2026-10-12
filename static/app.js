@@ -114,7 +114,24 @@ function updatePickCount() {
   document.querySelectorAll("#presetList button").forEach((b) => b.setAttribute("aria-pressed",
     String(b.dataset.bots === [...ids].sort().join(","))));
   tryStore("picked", JSON.stringify(ids));
+  updateStartSummary();
 }
+// One line next to the start button: what a run with the current settings will do.
+function updateStartSummary() {
+  const s = suites.find((x) => x.id === $("suiteSelect").value), n = picked("pick").length;
+  if (!s) { $("startSummary").textContent = ""; return; }
+  const reps = Number($("repeatSelect").value), judge = $("judgeToggle").checked;
+  const chats = (s.cases + ($("rewordToggle").checked ? s.rewordings || 0 : 0)) * reps; // same count as evaluator.start_run
+  $("startSummary").textContent = [
+    n < 2 ? "Pick at least 2 bots" : n > 4 ? "Pick at most 4 bots" : `${n} bots`,
+    `${chats} chats per bot`,
+    judge ? `AI judge on${$("compareToggle").checked ? " + comparative" : ""}${$("secondJudgeToggle").checked ? " + second judge" : ""}` : "no AI judge",
+    reps > 1 ? `each case ${reps} times` : null,
+  ].filter(Boolean).join(" · ");
+}
+for (const id of ["compareToggle", "secondJudgeToggle", "rewordToggle", "repeatSelect"]) $(id).addEventListener("change", updateStartSummary);
+$("advanced").open = readStore("advancedOpen") === "1";
+$("advanced").addEventListener("toggle", () => tryStore("advancedOpen", $("advanced").open ? "1" : "0"));
 // Same rule as evaluator.run_type: what a comparison of these bots can tell you.
 function runTypeOf(ids) {
   const sel = bots.filter((b) => ids.includes(b.id));
@@ -144,7 +161,7 @@ function syncJudgeOptions() {
   for (const id of ["compareToggle", "secondJudgeToggle"]) $(id).disabled = !$("judgeToggle").checked;
   if (!judgeInfo.second_judge) { $("secondJudgeToggle").disabled = true; $("secondJudgeToggle").checked = false; }
 }
-$("judgeToggle").onchange = syncJudgeOptions;
+$("judgeToggle").onchange = () => { syncJudgeOptions(); updateStartSummary(); };
 function showSuiteInfo() {
   const s = suites.find((x) => x.id === $("suiteSelect").value);
   $("suiteInfo").textContent = s ? `${s.description} Skills: ${s.categories.join(", ")}.` : "";
@@ -153,6 +170,7 @@ function showSuiteInfo() {
   if (!n) $("rewordToggle").checked = false;
   $("rewordInfo").textContent = n ? `(${s.reworded_cases} cases × their rewordings = ${n} more chats per bot)`
     : "(this suite has none yet: run reword.py)";
+  updateStartSummary();
 }
 
 $("startBtn").onclick = async () => {
@@ -261,12 +279,12 @@ function renderRun(run) {
   if (s) {
     renderTiles(run, s);
     renderScoreTable(run, s);
-    renderLegend("legendScores", run); renderLegend("legendCats", run);
-    const series = run.bots.map((b) => ({ id: b.id, label: b.label, color: colorOf(run, b.id) }));
+    renderLegend("legendScores", run, s); renderLegend("legendCats", run, s);
     const byId = Object.fromEntries(s.bots.map((b) => [b.id, b]));
+    const series = run.bots.map((b) => ({ id: b.id, label: b.label, color: colorOf(run, b.id), faded: byId[b.id] && unranked(byId[b.id]) }));
     const metrics = METRICS.filter(([k]) => s.bots.some((b) => b[k] != null));
     groupedBars($("chartScores"), metrics.map(([, l]) => l), series,
-      metrics.map(([k]) => series.map((x) => byId[x.id][k])), { max: 100, labelGroups: [0] });
+      metrics.map(([k]) => series.map((x) => (k === "overall" && x.faded ? null : byId[x.id][k]))), { max: 100, labelGroups: [0] });
     groupedBars($("chartCats"), s.categories, series,
       s.categories.map((c) => series.map((x) => byId[x.id].by_category[c])), { max: 100, unit: "%" });
     latencyBars($("chartLatency"), series.map((x) => ({ ...x, p50: byId[x.id].latency_p50, p95: byId[x.id].latency_p95 })));
@@ -455,10 +473,13 @@ async function loadGovernance() {
     <p class="muted small">Every run, baseline change, judge label, sign-off and purge is appended to <code>runs/audit.jsonl</code>; each line carries the hash of the one before, so an edited or deleted line breaks the chain. Verify from the terminal with <code>compliance.py audit</code>.</p>`;
 }
 
-function renderLegend(elId, run) {
-  $(elId).innerHTML = run.bots.map((b) => `<span><span class="swatch" style="background:${colorOf(run, b.id)}"></span>${esc(b.label)}</span>`).join("");
+function renderLegend(elId, run, s) {
+  const out = new Set((s?.bots || []).filter(unranked).map((b) => b.id));
+  $(elId).innerHTML = run.bots.map((b) => `<span class="${out.has(b.id) ? "faded" : ""}"><span class="swatch" style="background:${colorOf(run, b.id)}"></span>${esc(b.label)}${out.has(b.id) ? " (incomplete: no overall)" : ""}</span>`).join("");
 }
 
+// Scored on too few of its cases to rank (evaluator MIN_COVERAGE): its overall score is hidden, its row greyed.
+const unranked = (b) => b.rank == null;
 const byRank = (bots) => [...bots].sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity));
 
 function renderTiles(run, s) {
@@ -503,9 +524,9 @@ function renderScoreTable(run, s) {
   const hasJudge = s.bots.some((b) => b.quality != null);
   const has = (k) => s.bots.some((b) => b[k] != null);
   const cols = [
-    ["Overall", (b) => fmt(b.overall, 1)],
-    ...(has("overall_range") ? [["95% range", (b) => b.overall_range ? `${fmt(b.overall_range[0])}–${fmt(b.overall_range[1])}` : "—"]] : []),
-    ...(has("repeat_overall") ? [["Each repeat", (b) => (b.repeat_overall || []).map((v) => fmt(v)).join(" / ")]] : []),
+    ["Overall", (b) => unranked(b) ? `<span class="small" title="Hidden: only ${pct(b.coverage)} of its cases were scored (needs ${fmt(s.min_coverage ?? 80)}%)">hidden</span>` : fmt(b.overall, 1)],
+    ...(has("overall_range") ? [["95% range", (b) => b.overall_range && !unranked(b) ? `${fmt(b.overall_range[0])}–${fmt(b.overall_range[1])}` : "—"]] : []),
+    ...(has("repeat_overall") ? [["Each repeat", (b) => unranked(b) ? "—" : (b.repeat_overall || []).map((v) => fmt(v)).join(" / ")]] : []),
     ["Accuracy", (b) => pct(b.accuracy)], ...(has("safety") ? [["Safety", (b) => pct(b.safety)]] : []),
     ["No hallucination", (b) => pct(b.hallucination)],
     ["Fairness", (b) => pct(b.bias)], ["Pass rate", (b) => pct(b.pass_rate)], ["Exact checks", (b) => pct(b.checks ?? b.accuracy)],
@@ -524,7 +545,7 @@ function renderScoreTable(run, s) {
     ["Not supported", (b) => b.unsupported.length], ["Blocked", (b) => (b.blocked || []).length],
   ];
   $("scoreTable").innerHTML = `<thead><tr><th>#</th><th>Chatbot</th>${cols.map(([h]) => `<th class="num">${h}</th>`).join("")}</tr></thead>
-    <tbody>${ranked.map((b) => `<tr class="${b.rank === 1 ? "best" : ""}"><td>${b.rank != null ? `<span class="rank">${b.rank}</span>` : `<span class="muted small" title="Fewer than ${fmt(s.min_coverage ?? 80)}% of its cases were scored">incomplete</span>`}</td>
+    <tbody>${ranked.map((b) => `<tr class="${b.rank === 1 ? "best" : unranked(b) ? "incomplete" : ""}"><td>${b.rank != null ? `<span class="rank">${b.rank}</span>` : `<span class="small" title="Fewer than ${fmt(s.min_coverage ?? 80)}% of its cases were scored">incomplete · ${pct(b.coverage)} scored</span>`}</td>
       <td><span class="swatch" style="background:${colorOf(run, b.id)}"></span>${esc(b.label)}</td>
       ${cols.map(([, f]) => `<td class="num">${f(b)}</td>`).join("")}</tr>`).join("")}</tbody>`;
   const notes = s.bots.filter((b) => b.unsupported.length).map((b) => `${b.label}: ${b.unsupported.join(", ")}`);
@@ -548,7 +569,7 @@ function renderScoreTable(run, s) {
   const labelOf = Object.fromEntries(s.bots.map((b) => [b.id, b.label]));
   const partial = Object.entries(s.partial_skills || {}).map(([cat, per]) =>
     `${cat}: ${Object.entries(per).map(([id, [n, of]]) => `${labelOf[id]} ${n} of ${of} cases`).join(", ")}`);
-  $("unsupportedNote").textContent = diag + robustNote + costNote + (incomplete.length ? `Not ranked, too few cases scored: ${incomplete.join(" · ")}. ` : "")
+  $("unsupportedNote").textContent = diag + robustNote + costNote + (incomplete.length ? `Not ranked, too few cases scored (overall hidden, other scores greyed: they rest on a handful of cases): ${incomplete.join(" · ")}. ` : "")
     + (failed.length ? failed.join(" · ") + ". " : "") + (notes.length
     ? `Not supported (the bot's design has no such feature; left out of its score): ${notes.join(" · ")}. ` : "")
     + (blocked.length ? `Blocked by API quota / rate limits (left out of the score; re-run when the quota resets for a fair result): ${blocked.join(" · ")}. ` : "")
@@ -600,11 +621,12 @@ function groupedBars(el, groups, series, values, { max = 100, unit = "", labelGr
     series.forEach((s, si) => {
       const v = values[gi][si];
       const x = x0 + si * (bw + gap);
-      const tipHtml = esc(`${s.label}`) + `<br><b>${esc(g)}: ${v == null ? "n/a" : fmt(v, 1) + unit}</b>`;
+      const tipHtml = esc(`${s.label}`) + `<br><b>${esc(g)}: ${v == null ? (s.faded ? "hidden (too few cases scored)" : "n/a") : fmt(v, 1) + unit}</b>`
+        + (s.faded && v != null ? "<br>Too few cases scored to rank" : "");
       svg += `<rect class="hit" x="${x - gap / 2}" y="${T}" width="${bw + gap}" height="${ih}" data-tip="${esc(tipHtml)}"/>`;
       if (v != null) {
         const top = y(v), h = T + ih - top, r = Math.min(4, bw / 2, h);
-        svg += `<path class="bar" fill="${s.color}" pointer-events="none" d="M${x},${T + ih} V${top + r} Q${x},${top} ${x + r},${top} H${x + bw - r} Q${x + bw},${top} ${x + bw},${top + r} V${T + ih} Z"/>`;
+        svg += `<path class="bar${s.faded ? " faded" : ""}" fill="${s.color}" pointer-events="none" d="M${x},${T + ih} V${top + r} Q${x},${top} ${x + r},${top} H${x + bw - r} Q${x + bw},${top} ${x + bw},${top + r} V${T + ih} Z"/>`;
         if (labelGroups.includes(gi)) svg += `<text class="val" x="${x + bw / 2}" y="${top - 4}" text-anchor="middle">${fmt(v)}</text>`;
       }
     });

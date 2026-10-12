@@ -73,3 +73,13 @@ def test_csv_has_bot_and_judge_tokens_and_estimated_cost():
     assert row["judge_tokens"] == "1550" and row["judge_cost_usd_estimate"] == "0.0" and row["judge_pricing_source"] == "free tier"
     other = next(x for x in csv.DictReader(io.StringIO(export.csv_text(r).lstrip("﻿"))) if x["case_id"] == "courier")
     assert other["bot_total_tokens"] == "" and other["judge_tokens"] == ""  # nothing reported: empty, not zero
+
+
+def test_report_hides_the_overall_score_of_a_bot_scored_on_too_few_cases():
+    r = run()  # 3 of its 4 applicable cases scored: below MIN_COVERAGE, so not ranked
+    b = r["summary"]["bots"][0]
+    assert b["ranked"] is False and b["overall"] is not None
+    html = export.report_html(r)
+    assert ">not ranked</td>" in html and "Not ranked, too few cases scored" in html
+    b["ranked"], b["coverage"] = True, 100.0
+    assert ">not ranked</td>" not in export.report_html(r)

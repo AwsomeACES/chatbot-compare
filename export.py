@@ -177,11 +177,17 @@ def report_html(run):
         g = gate.get(b["id"])
         out.append(f"<tr><td>{e(b['label'])}</td><td>{e(cfg.get(b['id'], {}).get('llm') or '—')}</td>"
                    + "".join(f"<td class='num'>{c[o]}</td>" for o in OUTCOMES)
-                   + "".join(f"<td class='num'>{fmt(s.get(k))}</td>" for k in ("overall", "accuracy", "safety", "hallucination", "bias"))
+                   + (f"<td class='num' title='only {fmt(s.get('coverage'))}% of its cases were scored'>not ranked</td>"
+                      if s.get("ranked") is False else f"<td class='num'>{fmt(s.get('overall'))}</td>")
+                   + "".join(f"<td class='num'>{fmt(s.get(k))}</td>" for k in ("accuracy", "safety", "hallucination", "bias"))
                    + f"<td class='num'>{fmt(round(s['latency_p50'] / 1000, 1)) if s.get('latency_p50') else '—'}</td>"
                    + f"<td class='{'pass' if g and g['verdict'] == 'pass' else 'fail' if g and g['verdict'] == 'fail' else 'blocked'}'>"
                    + (e(g["verdict"].upper()) if g else "—") + "</td></tr>")
     out.append("</tbody></table>")
+    unranked = [f"{e(b['label'])} ({fmt(srow[b['id']].get('coverage'))}% scored)" for b in run["bots"]
+                if srow.get(b["id"], {}).get("ranked") is False]
+    if unranked:
+        out.append("<p>Not ranked, too few cases scored, so no overall score: " + " · ".join(unranked) + ".</p>")
     if gate:
         for b in run["bots"]:
             failed = [r for r in gate[b["id"]]["rules"] if r["ok"] is False]
