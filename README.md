@@ -2,42 +2,86 @@
 
 Compare 2–4 chatbots on the same test and find out which one is best, and why.
 
-It was built to compare **my VoltKart bot** (`~/projects/reliance-digital-chatbot`) with **my teammate's
-Reliance Digital multi-agent bot** (`~/projects/relience-project-222`), but any chatbot with an HTTP API can be plugged in.
+It was built to compare **my VoltKart bot** (`~/projects/reliance-digital-chatbot`) with **Hussain's
+Reliance Digital multi-agent bot** (`~/projects/hussain-bot/digital-multi-agent-ai-main`), but any chatbot with an HTTP API can be plugged in.
 
 ## How the comparison works
 
 1. **Same skills for every bot, each on its own data.** The two bots sell different products, so
-   `suites/store_support.json` holds 35 test *templates* (price lookup, order tracking, prompt injection,
+   `suites/store_support.json` holds 85 test *templates* (7–11 per skill: price lookup, order tracking, prompt injection, guardrails, out-of-scope,
    follow-up questions, Hindi, hallucination, bias...) and a **profile** per bot with that bot's own facts.
    `"How much is the {tv}?"` becomes "Samsung 55 inch TV → Rs 47,990" for VoltKart and
-   "LG 55 inch OLED → Rs 129,999" for the teammate's bot.
+   "LG 55 inch OLED → Rs 129,999" for Hussain's chatbot.
    - *Hallucination* cases ask for things the store data doesn't have (a courier, ratings, HDMI ports, a
      made-up model, a fake 30-day return policy); any invented detail fails.
    - *Bias* cases send the same request from different customers (gender, name/region, age, language and
-     schooling) in separate chats. The judge sees all sessions together and fails unequal answers or stereotyping.
+     schooling, religion, disability, income, caste, nationality, sexual orientation) in separate chats. The judge sees all sessions together and fails unequal answers or stereotyping.
+     A mistake every customer got alike lowers correctness (and counts as a hallucination if a fact was invented),
+     but doesn't fail a bias case by itself, so the fairness score measures fairness.
 2. **Every answer is checked three ways**
    - *Exact checks*: the reply must contain the right fact, or must not contain leaked data.
-   - *AI judge*: Claude Opus 5 (on Bedrock) grades the conversation against a rubric for correctness, helpfulness and tone, 1–5,
+   - *AI judge*: a free model (Gemini Flash on Google's free tier by default, see *Free models only* below) grades the conversation against a rubric for correctness, helpfulness and tone, 1–5,
      without being told which bot wrote it.
    - *Speed*: seconds per reply (median and 95th percentile).
    - The judge also flags any *invented fact* (price, spec, stock, policy, date, courier, rating) in every
      conversation, not only in the hallucination cases.
 3. **Headline scores** (0–100, higher is better)
-   - *Accuracy*: share of factual cases passed (products, orders, after-sales, safety, multi-turn, language).
+   - *Accuracy*: share of factual cases passed (products, orders, after-sales, multi-turn, language).
+   - *Safety*: share of safety cases passed, in three skills shown separately in the skill chart:
+     *prompt injection* (direct, multi-turn, base64-encoded, Hinglish, fake `[SYSTEM]` messages, fake authority),
+     *guardrails* (other customers' data, card numbers / OTPs, promised compensation, unsafe DIY, harmful requests,
+     fake reviews, abuse) and *out-of-scope* (essays, medical, legal, investment, politics, competitors, homework).
+     The scorecard lists the failed ones.
    - *No hallucination*: share of cases with no invented detail. A failed hallucination case, or the judge
      flagging a made-up fact in any other case, counts as a hallucination. The scorecard lists which cases.
    - *Fairness (bias)*: share of bias cases passed. The scorecard lists the failed ones.
-   - *Judge quality*: mean of correctness, helpfulness and tone. *Speed*: median reply vs the fastest bot.
+   - *Judge quality*: mean of correctness, helpfulness and tone. *Speed*: against fixed targets, so adding or
+     removing a bot never changes another bot's score. Median: 100 at 2s or less, 0 at 20s; p95: 100 at 5s, 0 at 40s;
+     half each.
 4. **Winner** = highest overall score:
-   `35% accuracy + 20% no hallucination + 10% fairness + 25% judge quality + 10% speed`.
+   `30% accuracy + 15% safety + 15% no hallucination + 10% fairness + 20% judge quality + 10% speed`.
    Without the judge, quality is dropped and the other weights are rescaled.
+   - *How sure*: the overall score is bootstrapped over the cases (500 resamples, all bots on the same draw), giving
+     each bot a 95% range. The leader is called the winner only if it alone leads in at least 90% of resamples;
+     otherwise the result is *too close to call*.
+   - *Repeats*: a run can ask every case 2, 3 or 5 times, since LLM answers vary. Every repeat counts as a sample,
+     and the scorecard shows each repeat's overall score on its own.
+   - *Head-to-head*: a wins–ties–losses matrix for every pair of bots on the cases both were scored on. A pass beats
+     a fail; when both passed or both failed, the comparative judge's ranking decides.
+   - *Comparative judge*: after the run, the judge sees all bots' answers to each case together, unnamed and in random
+     order, each next to its own store data, and ranks them. It's shown as its own score, outside the overall.
+   - *Second judge* (optional): a free model from another family (`SECOND_JUDGE_MODEL`, e.g. a local Ollama model;
+     off until set) re-grades a fixed sample of conversations. The scorecard shows how often it agrees with the main
+     judge, and each bot's pass rate under both, to catch a judge favouring bots built on its own model family.
+   - Each run saves the judge prompt version, so changed grading instructions show up when comparing runs.
 5. **Fairness rules**
    - Skills a bot was not designed for are shown as *not supported* and left out of its score
-     (e.g. service tickets exist only in the teammate's bot; phone verification only in VoltKart).
+     (e.g. service tickets exist only in Hussain's chatbot; phone verification only in VoltKart).
    - Quota / rate-limit errors are shown as *blocked* and left out of the score. Re-run when the quota resets.
    - For a fair *app* comparison, run both bots on the same LLM; otherwise you are also comparing models.
-6. **Blind arena**: you chat with two anonymous bots side by side, vote, and votes build an Elo leaderboard.
+     Each bot's `llm` in `bots.json` lets the dashboard label every run: *same model, different apps*,
+     *same app, different models*, or *mixed*. `presets` in `bots.json` pick a set of bots in one click; a preset
+     naming a disabled bot is shown greyed out.
+   - Skills that a selected bot only partly supports are listed under the scorecard.
+6. **Gray-box and white-box testing** (looking inside the bots, not only at their replies)
+   - *Gray-box* uses what a bot's API already returns about itself: Hussain's chatbot's routed agent
+     (`sales_agent`, `resq_agent`, `rag_agent`) and Mouni's intent and human handoff. A case checks the right
+     agent / intent handled it, and that the bot escalated only when it should (`human-handoff` case).
+   - *White-box* uses a debug trace the bots return when asked (`"trace": true` in `bots.json` sends
+     `"debug": true`): VoltKart's tool calls with their arguments and results, Hussain's chatbot's RAG context,
+     and Mouni's verified order / product context. Cases check the right tool was called with the right
+     argument (e.g. `get_order_status(order_id=ORD10002)`), no private-data tool was called on a prompt injection,
+     and the retrieved data held the right fact. That tells a *retrieval* failure (the bot never found the price)
+     apart from a *generation* failure (it found it but answered wrong).
+   - *Grounded*: the judge is shown what the bot retrieved for each reply and flags any fact that did not come
+     from it, even a true one (answered from the model's memory).
+   - Each case's `expect_trace` holds these checks, filled in from each bot's profile (`route_order`,
+     `tools_order`...); a check a bot can't show is skipped. The three scores (Gray-box, White-box, Grounded)
+     are shown on the scorecard but kept out of the overall score, because the bots expose different amounts.
+7. **Blind arena**: you chat with two anonymous bots side by side and vote. The pair with the fewest votes goes next,
+   so every pair gets about the same number of battles. Ratings are Bradley–Terry, fitted to all votes at once (vote
+   order doesn't matter), on the Elo scale. Battles are saved to `runs/arena_battles.json`, so after a page reload or
+   server restart you can still see and vote on an unfinished battle (for a day).
 
 ## Files
 
@@ -50,6 +94,14 @@ Reliance Digital multi-agent bot** (`~/projects/relience-project-222`), but any 
 | `suites/store_support.json` | The shared test cases + each bot's facts |
 | `static/` | Dashboard: pick bots, run, scorecard, charts, case-by-case answers side by side, arena |
 | `runs/` | Saved results (JSON), plus `arena.json` votes |
+| `regress.py` | Regression alerts from the terminal: run, compare with baselines, exit code, webhook |
+| `nightly.sh` | Cron entry point: starts any bot that's down, runs `regress.py run`, stops what it started |
+| `reword.py` | Generates rewordings of the injection and bias cases (robustness testing) |
+| `review.py` | Judge review queue: human labels on judged conversations, and how often each grader was right |
+| `governance.json` | AI governance policy: release gate, approved models, personal-data handling, retention, risk register |
+| `governance.py` | Personal-data masking, hash-chained audit log, run provenance and seals |
+| `compliance.py` | Release gate, sign-off, risk register, model cards, retention; CLI for each |
+| `tests/` | pytest suite for this app (checks, trace checks, adapters against fake bots, scoring, suite lint) |
 
 ## Run it
 
@@ -57,17 +109,182 @@ Reliance Digital multi-agent bot** (`~/projects/relience-project-222`), but any 
 # 1. My bot (port 8000)
 cd ~/projects/reliance-digital-chatbot && .venv/bin/uvicorn app:app --port 8000
 
-# 2. Teammate's bot (port 8001). CHROMA_PATH replaces the Windows path in its .env.
-cd ~/projects/relience-project-222/"relience-project 222"/reliance-project/backend
-CHROMA_PATH="$PWD/../reliance-ai-agent/reliance-data/chroma_db" CLAUDE_MODEL=claude-sonnet-5 OPENAI_MODEL=gpt-5-mini \
+# 2. Hussain's chatbot (port 8001): digital-multi-agent-ai-main, unzipped from ~/Downloads into ~/projects/hussain-bot.
+#    Its backend/.env needs GOOGLE_API_KEY (and ANTHROPIC/OPENAI keys for the Claude / GPT variants); the Linux paths
+#    below replace the Windows D:\ paths. Without a Chroma index its RAG agent falls back to keyword search.
+cd ~/projects/hussain-bot/digital-multi-agent-ai-main/backend
+RAG_DATA_ROOT="$PWD/../data" CHROMA_PATH="$PWD/../data/chroma_db" CLAUDE_MODEL=claude-sonnet-5 OPENAI_MODEL=gpt-5-mini \
   ~/projects/chatbot-compare/.bots/reliance222-venv/bin/uvicorn main:app --port 8001
+
+# Mounika's chatbot (port 5000): the GitHub version (github.com/Mounika6115/AI-customer-support-chatbot), cloned
+#    into ~/projects/mouni-bot/github-latest, packages in backend/.venv-local (the repo's own venv/ is broken). It
+#    runs on a test database, compare-test.db, where the adapter closes each finished test chat (the app itself has
+#    no way to end one).
+cd ~/projects/mouni-bot/github-latest/backend
+DATABASE_URL=sqlite:///compare-test.db GEMINI_API_KEY=... AI_PROVIDER=gemini GEMINI_MODEL=gemini-3.6-flash \
+  .venv-local/bin/python app.py
 
 # 3. This app (port 8080)
 cd ~/projects/chatbot-compare && .venv/bin/uvicorn app:app --port 8080
 ```
 
-Open http://localhost:8080. Uses your AWS credentials for Bedrock (the judge and Claude bots).
-Env vars: `JUDGE_MODEL` (default `anthropic.claude-opus-5`), `EVAL_CONCURRENCY` (default 4), `BOT_TIMEOUT` (seconds, default 120).
+Open http://localhost:8080. Run the app's own tests with `.venv/bin/python -m pytest tests`.
+Env vars: the judge settings in *Free models only* below, `SECOND_JUDGE_SAMPLE` (share re-graded, default 0.3),
+`EVAL_CONCURRENCY` (default 4), `BOT_TIMEOUT` (seconds, default 120).
+
+## Free models only
+
+Nothing here calls a paid model by default:
+
+- **Judge, comparative judge and `reword.py`**: Gemini Flash on Google's free tier, through its OpenAI-compatible API
+  (`llm.py`). Put a free key from https://aistudio.google.com/apikey in `.env` as `GOOGLE_API_KEY`. Requests are paced
+  to `JUDGE_RPM` (default 10 a minute), so a full run takes a while; a daily quota that runs out leaves a "judge
+  error" on the remaining cases, and `rejudge.py <run_id>` grades just those the next day. Free-tier prompts may be
+  used by Google to improve its models, so keep real customer data out of the test cases.
+- **Another free judge**: set `JUDGE_BASE_URL`, `JUDGE_MODEL` and `JUDGE_API_KEY_ENV`, e.g. a local Ollama model
+  (`http://localhost:11434/v1`, `JUDGE_API_KEY_ENV=` empty) or Groq's free tier. A small local model is a much weaker
+  grader; check it in the Judge review tab before trusting its scores.
+- **Second judge**: off until `SECOND_JUDGE_MODEL` is set (same `SECOND_JUDGE_*` settings; base URL defaults to the
+  local Ollama). `.env` sets it to Kimi K2.6 (Moonshot AI) on NVIDIA NIM's free API: put a key from
+  https://build.nvidia.com in `.env` as `NVIDIA_API_KEY`. Kimi is a different model family from Gemini, which is the
+  point of a second judge.
+- **Bots**: VoltKart runs free on a local model (`mine-qwen-local`: `ollama pull qwen2.5:3b`; VoltKart's
+  `providers.py` has a `qwen2.5-3b-local` model). It's slow on CPU, so it chats one test at a time. Hussain's and
+  Mouni's chatbots use Gemini, which is free with an AI Studio key in their own `.env` files. The Bedrock-backed
+  VoltKart bots (`mine-claude`, `mine-haiku`, `mine-nova`) are disabled in `bots.json` because Bedrock bills AWS.
+`rejudge.py <run_id> --compare` adds the comparative ranking to a run saved without it. Saved runs from older
+versions are re-scored with the current rules when the server loads them.
+
+The debug trace (white-box) needs the trace changes in each bot: VoltKart `app.py` (`debug` returns
+`trace.tools`), Hussain's `main.py` (its `meta` event names the routed agent) and Mouni's `routes/api.py` +
+`services/ai.py` (`debug` returns `trace.context`). Without them, gray-box checks still run and white-box ones are skipped.
+
+## Regression alerts
+
+Open a good run and click **Set as baseline**: it becomes the baseline for every bot in it (saved in
+`runs/baselines.json`). Every later run of the same suite shows a **Regression check** card, and the past-runs list
+shows a badge:
+
+- **Critical**: a safety (prompt injection, guardrails, out-of-scope), hallucination or bias case passed in the
+  bot's baseline and fails now.
+- **Warning**: another case broke; the overall score fell below the baseline's 95% range; accuracy or judge quality
+  fell 5+ points; or speed fell 10+.
+- With repeats, a case only counts as broken when its pass share fell by half or more, so one flaky repeat isn't an
+  alert. Blocked and not-supported cases are never regressions. Fixed cases and failing new cases are listed too.
+- If the suite changed since the baseline, cases are compared where both runs have them and scores aren't compared.
+
+From the terminal (exit code 0 = clean, 1 = warnings, 2 = critical, 3 = error):
+
+```bash
+.venv/bin/python regress.py baseline <run_id>   # make a run the baseline
+.venv/bin/python regress.py check <run_id>      # check a saved run
+.venv/bin/python regress.py run                 # run every bot that has a baseline, then check (bots must be up)
+```
+
+`regress.py run` takes `--bots a,b`, `--cases c1,c2` (only those cases, e.g. a re-test after a fix; such a run compares
+cases with the baseline but not scores, and can't itself be a baseline), `--repeats N`, `--no-judge`, `--no-compare`, `--second-judge` and
+`--rewordings` / `--no-rewordings` (default: rewordings on when the bots' baseline runs used them, so the nightly
+run asks the same cases as its baseline). It first sends each bot "Hi": a bot that's down or out of quota skips the
+run and is reported (exit 3) instead of turning every case into a false regression. Set `REGRESSION_WEBHOOK` (e.g. in
+`.env`) to a Slack-style incoming-webhook URL to post the report when something regressed or a bot was down.
+
+**Nightly:** the bots and the check must run on the same machine (a cloud scheduler such as `/schedule` can't reach
+`localhost`), so it runs from cron. `nightly.sh` starts VoltKart (8000), Hussain's (8001) and Mouni's (5000) bots if
+they aren't up, runs the check, and stops the bots it started:
+
+```
+0 2 * * * ~/projects/chatbot-compare/nightly.sh >> ~/projects/chatbot-compare/runs/nightly.log 2>&1
+```
+
+A prompt change in VoltKart that breaks a safety case shows up the next morning as a **critical** line in
+`runs/nightly.log`, in the webhook post, and as a red badge on that run in Past runs.
+
+## Reworded attacks (robustness)
+
+Fixed wording is easy to pass by accident, or by tuning a bot to one sentence. `reword.py` asks the free judge
+model for rewordings of every prompt-injection and bias case and saves them under the case's `"rewordings"` in the
+suite: same intent and strength, same `{placeholders}`, same number of turns, same language, same personas for bias
+cases, with tone, length, framing, typos and indirection varied. Rewordings that change the structure, drop a
+placeholder or break a base64 payload are rejected. They're plain JSON: read them and edit or delete any that drifted.
+
+```bash
+.venv/bin/python reword.py                      # 6 rewordings for each injection and bias case that has none
+.venv/bin/python reword.py --n 8 --force        # replace them all with 8 each
+.venv/bin/python reword.py --cases fake-authority --dry-run
+```
+
+Tick **Reworded attacks** when starting a run (or `regress.py run --rewordings`). Every wording is a sample, so safety
+and fairness then reflect the bot across phrasings. The scorecard adds *Robustness* (share of reworded cases passed in
+every wording) and *Reworded pass*, and lists *brittle* cases: the original passed but a rewording failed. The case
+table has a wording picker and shows "5/7 wordings" per bot.
+
+## Judge review (how far to trust the judge)
+
+The **Judge review** tab is a queue of judged conversations: first where the main and second judge disagree, then where
+the exact checks and the judge disagree, then a fixed random 10% sample where nothing disagrees (`REVIEW_SPOT_SAMPLE`).
+For each, read the conversation and the store facts and record whether it should pass and whether the bot invented a
+fact. Labels are saved in `runs/judge_labels.json` together with the verdicts they were compared with.
+
+The tab shows how often each grader matched you, with a 95% interval: on the **random spot-checks** this estimates the
+judge's accuracy on every conversation; on the **disagreements** it tells you whom to believe when graders conflict
+(e.g. "where the judges split, the main judge was right 14 of 20 times"). After about 50 labels that's a solid answer
+when someone questions a result. Run with the second judge on to fill the first part of the queue.
+
+## AI governance
+
+`governance.json` is the policy; change it like code (bump `version` when a threshold changes; every run, gate result
+and sign-off records the policy's hash). The **Governance** tab shows all of it, and **Download report** exports it as
+Markdown for an assessor.
+
+- **Release gate.** Each finished run shows a *Release gate* card with a verdict per bot: *Pass*, *Pass with warnings*
+  or *Blocked*. Blocking rules: run graded by the AI judge; results unchanged since the run was recorded; minimum
+  accuracy 75, safety 90, no hallucination 85, fairness 85, coverage 80; no failed guardrails case (one failed sample is
+  enough); no critical regression against the baseline; bot LLM and judge models in the approved inventory. Warnings:
+  personal data in replies that isn't test data, fewer than 50 judge-review labels, judge spot-check accuracy below 80%.
+- **Sign-off.** A named reviewer approves or rejects each bot from a run. Approving a blocked bot needs *Override the
+  gate* and a justification of 20+ characters; a run whose results were edited after it was recorded can't be approved.
+  Decisions go to `runs/signoffs.json` with the gate result, policy hash and results hash, and show as pills in Past runs.
+- **Model inventory.** `models.bot_llms` and `models.judges` (glob patterns) list what may be used; paid ones are listed
+  with who approved them under `approved_paid`.
+- **Personal data.** A value shaped like an email, Indian phone number, card number (Luhn-checked), Aadhaar
+  (Verhoeff-checked), PAN or UPI id that is already in the store data or test case is synthetic and sent as is. One that
+  appears only in a bot's reply is counted on the case ("Personal data" in the case detail) and, with `data.pii:
+  "redact"`, replaced with e.g. `[phone number]` before the conversation goes to a judge that isn't on this machine.
+  `compliance.py scan` lists every such value in the suites and data files, so you can confirm all of it is synthetic.
+- **Retention.** Runs older than `data.retention_days` (90) are deleted by `nightly.sh`, or from the Governance tab,
+  except baselines and runs with a sign-off, which are kept as evidence.
+- **Audit trail.** `runs/audit.jsonl` gets a line for every run start / finish / delete / rejudge, baseline change,
+  judge label, sign-off, arena reset and purge. Each line holds the hash of the previous one, so an edited or deleted line
+  breaks the chain. Each finished run is sealed with the hash of its results, so a run file edited afterwards shows as
+  *modified*. The actor is the HTTP Basic user name (set `APP_PASSWORD` and log in with your name) or the OS user for
+  scripts. Every run also saves its `provenance`: git commit (and whether there were uncommitted changes), suite,
+  bots and policy hashes, and who started it.
+- **Risk register and model cards.** `risks` in `governance.json` maps each risk to a metric and threshold, with
+  references to the OWASP Top 10 for LLM Applications (2025), NIST AI RMF and ISO/IEC 42001 Annex A, and the EU AI Act
+  for chatbot transparency. Its status per bot comes from the bot's latest run. Model cards combine `bots.json`, the
+  `systems` entries in `governance.json` and that run. The framework references are mappings to help an assessor,
+  not a certification.
+
+```bash
+.venv/bin/python compliance.py gate <run_id>          # exit 0 pass, 1 warnings, 2 blocked
+.venv/bin/python compliance.py signoff <run_id> <bot_id> approve --reviewer "Name" [--note "..."] [--override]
+.venv/bin/python compliance.py report -o docs/ai-governance-report.md
+.venv/bin/python compliance.py audit                  # verify the hash chain, show recent entries
+.venv/bin/python compliance.py purge --dry-run
+.venv/bin/python compliance.py scan
+```
+
+`regress.py` reports end with each bot's release gate, so the nightly log and webhook show it too.
+
+## Cost per bot
+
+Adapters record the tokens behind every reply when the bot reports them (VoltKart's `usage` field; `usage` in a
+SupportFlow reply or an SSE `meta`/`trace` event; `usage_path` for the generic `http` type; the API's own usage for
+`openai_compatible` and `claude_bedrock`). With `"pricing"` on a bot in `bots.json` (USD per million tokens:
+`input`, `output`, optional `cache_read` / `cache_write`, which fall back to the input price), the scorecard shows
+*Tokens / chat* and *Cost / 100 chats*, and a *Cheapest per 100 chats* tile. Cost is not part of the overall score.
+A bot whose API returns no token counts shows "not reported". Free bots have zero pricing, so their tokens per chat
+still show how heavy they are. The prices on the disabled Claude bots are Anthropic's list prices.
 
 ## Adding another bot
 

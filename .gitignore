@@ -4,3 +4,6 @@ __pycache__/
 runs/*.json
 runs/.*.tmp
 .bots/
+runs/audit.jsonl
+runs/bot-logs/
+runs/nightly.log

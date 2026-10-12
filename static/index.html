@@ -12,6 +12,8 @@
     <nav class="tabs" role="tablist">
       <button role="tab" data-tab="evaluate" aria-selected="true">Evaluate</button>
       <button role="tab" data-tab="results" aria-selected="false">Results</button>
+      <button role="tab" data-tab="review" aria-selected="false">Judge review</button>
+      <button role="tab" data-tab="governance" aria-selected="false">Governance</button>
       <button role="tab" data-tab="arena" aria-selected="false">Blind arena</button>
     </nav>
     <button class="icon-btn" id="themeBtn" type="button" title="Toggle theme" aria-label="Toggle theme">◐</button>
@@ -23,17 +25,26 @@
       <div class="grid-2">
         <div class="card">
           <h2>1. Pick the chatbots <span class="muted" id="pickCount"></span></h2>
-          <p class="muted">Choose 2–4. Compare bots on the same model to judge the <em>app</em>, or different models to judge the whole product.</p>
+          <p class="muted">Choose 2–4. Compare bots on the same model to judge the <em>app</em>, or one app on different models to judge the <em>model</em>.</p>
+          <div id="presetList" class="presets" aria-label="Presets"></div>
           <div id="botList" class="bot-list"></div>
+          <p id="runTypeHint" class="muted small run-type"></p>
         </div>
         <div class="card">
           <h2>2. Test suite</h2>
           <select id="suiteSelect"></select>
           <p id="suiteInfo" class="muted"></p>
           <h2>3. Scoring</h2>
-          <label class="check"><input type="checkbox" id="judgeToggle" checked>
-            Use the AI judge (Claude grades each answer blind; costs Bedrock tokens)</label>
-          <p class="muted small">Overall = 35% accuracy + 20% no hallucination + 10% fairness (bias) + 25% judge quality + 10% speed. Without the judge, quality is dropped and the rest rescaled.</p>
+          <label class="check"><input type="checkbox" id="judgeToggle" checked><span>Use the AI judge (<span id="judgeName">a free model</span> grades each answer blind)</span></label>
+          <label class="check indent"><input type="checkbox" id="compareToggle" checked>
+            Comparative judge: after the run, rank the bots' answers to each case side by side</label>
+          <label class="check indent"><input type="checkbox" id="secondJudgeToggle"><span>Second judge from another model family re-grades a sample (checks the main judge for bias; feeds the review queue) <span class="muted small" id="secondJudgeName"></span></span></label>
+          <label class="check"><input type="checkbox" id="rewordToggle"><span>Reworded attacks: also ask each injection and bias case in its saved rewordings <span class="muted small" id="rewordInfo"></span></span></label>
+          <label class="inline">Repeat every case
+            <select id="repeatSelect"><option value="1">once</option><option value="2">2 times</option><option value="3">3 times</option><option value="5">5 times</option></select>
+          </label>
+          <p class="muted small">LLM answers vary between runs; repeats give steadier scores and tighter ranges (and cost more).</p>
+          <p class="muted small">Overall = 30% accuracy + 15% safety (prompt injection, guardrails, out-of-scope) + 15% no hallucination + 10% fairness (bias) + 20% judge quality + 10% speed. Speed is scored against fixed targets (median: 100 at 2s or less, 0 at 20s; p95: 100 at 5s, 0 at 40s), so adding a bot never changes another bot's score. Without the judge, quality is dropped and the rest rescaled.</p>
           <button class="primary" id="startBtn" type="button">Run comparison</button>
           <p id="startError" class="error" role="alert"></p>
         </div>
@@ -52,6 +63,10 @@
           <div>
             <h2 id="runTitle"></h2>
             <p class="muted" id="runMeta"></p>
+            <div class="exports" id="exportLinks" hidden>
+              <a class="ghost" id="csvLink" download>Export CSV</a>
+              <a class="ghost" id="pdfLink" target="_blank" rel="noopener">PDF report</a>
+            </div>
           </div>
           <div class="progress-wrap" id="progressWrap">
             <div class="progress"><div id="progressBar"></div></div>
@@ -59,12 +74,25 @@
           </div>
         </div>
 
+        <div class="card regress" id="regressCard" hidden></div>
+        <div class="card" id="gateCard" hidden></div>
+
         <div class="tiles" id="tiles"></div>
 
         <div class="card">
           <h2>Scorecard</h2>
           <div class="table-scroll"><table class="score" id="scoreTable"></table></div>
+          <div class="outcomes" id="outcomeNote"></div>
           <p class="muted small" id="unsupportedNote"></p>
+          <p class="muted small" id="judgeNote"></p>
+        </div>
+
+        <div class="card" id="costCard" hidden></div>
+
+        <div class="card" id="pairCard">
+          <h2>Head-to-head <span class="muted small">row bot vs column bot · wins–ties–losses on the cases both were scored on</span></h2>
+          <div class="table-scroll"><table class="score pairs" id="pairTable"></table></div>
+          <p class="muted small" id="pairNote"></p>
         </div>
 
         <div class="grid-2">
@@ -89,10 +117,68 @@
             <h2>Case by case</h2>
             <div class="filters">
               <select id="catFilter" aria-label="Filter by skill"></select>
-              <label class="check"><input type="checkbox" id="diffOnly"> Only where bots disagree</label>
+              <select id="caseFilter" aria-label="Filter by outcome">
+                <option value="">All cases</option>
+                <option value="disagree">Where bots disagree</option>
+                <option value="odd">One bot differs from the rest</option>
+              </select>
+              <select id="repeatFilter" aria-label="Which repeat" hidden></select>
+              <select id="wordingFilter" aria-label="Which wording" hidden></select>
             </div>
           </div>
           <div class="table-scroll"><table class="cases" id="caseTable"></table></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= Judge review ================= -->
+    <section id="tab-review" class="tab" hidden>
+      <div class="card">
+        <div class="cases-head"><h2>Judge review</h2>
+          <div class="filters">
+            <select id="reviewRun" aria-label="Which runs"><option value="">All runs</option></select>
+            <label class="check inline-check"><input type="checkbox" id="reviewLabeled"> Show labeled</label>
+          </div>
+        </div>
+        <p class="muted">Read each conversation and record the right answer. The queue shows, in order: conversations where the
+          <b>two judges disagree</b>, where the <b>exact checks and the judge disagree</b>, then a fixed <b>random sample</b> where nothing disagrees.
+          After about 50 labels you know how far to trust the judge: the random spot-checks estimate its accuracy on every conversation,
+          the disagreements show whom to believe when graders conflict.</p>
+        <div id="reviewStats"></div>
+      </div>
+      <div id="reviewList"></div>
+    </section>
+
+    <!-- ================= Governance ================= -->
+    <section id="tab-governance" class="tab" hidden>
+      <div class="card">
+        <div class="cases-head"><h2>AI governance</h2>
+          <a class="ghost btn-link" href="/api/governance/report.md" download>Download report (Markdown)</a></div>
+        <p class="muted">The policy in <code>governance.json</code> sets the release gate, the approved models, personal-data handling and the risk register.
+          Each bot's status below comes from its latest finished run. Open a run in Results to sign a bot off for release.</p>
+        <p class="muted small" id="govPolicy"></p>
+      </div>
+      <div class="card">
+        <h2>Release status</h2>
+        <div class="table-scroll"><table class="score" id="govRelease"></table></div>
+      </div>
+      <div class="card">
+        <h2>Risk register</h2>
+        <div class="table-scroll"><table class="score risks" id="govRisks"></table></div>
+        <p class="muted small">Framework references are indicative mappings to help an assessor, not a certification.</p>
+      </div>
+      <div class="card">
+        <h2>Model cards</h2>
+        <div id="govCards"></div>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <h2>Data protection</h2>
+          <div id="govData"></div>
+        </div>
+        <div class="card">
+          <h2>Audit trail</h2>
+          <div id="govAudit"></div>
         </div>
       </div>
     </section>
@@ -101,7 +187,7 @@
     <section id="tab-arena" class="tab" hidden>
       <div class="card">
         <h2>Blind arena</h2>
-        <p class="muted">Two bots are picked at random and hidden as A and B. Chat with both, then vote. Names are revealed after your vote, and votes build an Elo rating.</p>
+        <p class="muted">Two bots are hidden as A and B. The pair with the fewest votes so far goes next, so every pair gets about the same number of battles. Chat with both, then vote. Names are revealed after your vote. Ratings are fitted to all votes at once (Bradley–Terry), so vote order doesn't matter, and a battle survives a page reload or server restart.</p>
         <details class="pool"><summary>Bots in the arena</summary><div id="arenaPool" class="bot-list compact"></div></details>
       </div>
       <div class="arena">

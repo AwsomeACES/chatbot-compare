@@ -1,6 +1,8 @@
 import base64
 import binascii
+import itertools
 import json
+import math
 import logging
 import os
 import random
@@ -8,6 +10,7 @@ import secrets
 import threading
 import time
 import uuid
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
 from dotenv import load_dotenv
@@ -15,12 +18,16 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+import compliance
 import evaluator
+import export
+import governance
+import review
 from adapters import BotError, open_conversation, validate
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -30,8 +37,10 @@ ROOT = os.path.dirname(__file__)
 STATIC_DIR = os.path.join(ROOT, "static")
 BOTS_FILE = os.path.join(ROOT, "bots.json")
 ARENA_FILE = os.path.join(ROOT, "runs", "arena.json")
-ELO_START, ELO_K = 1000, 32
-ARENA_TTL_S = float(os.environ.get("ARENA_TTL", "1800"))  # an idle, unvoted battle is closed after this
+BATTLES_FILE = os.path.join(ROOT, "runs", "arena_battles.json")
+RATING_BASE = 1000  # Bradley-Terry strengths shown on the Elo scale: +400 = 10x the odds of winning
+ARENA_TTL_S = float(os.environ.get("ARENA_TTL", "1800"))  # an idle battle's bot sessions are closed after this
+BATTLE_KEEP_S = 24 * 3600  # an unvoted battle can still be voted on (from its saved transcript) for this long
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "")  # set it whenever the app is reachable from other machines
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]").split(",") if h.strip()]
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
@@ -44,18 +53,20 @@ evaluator.load_runs()
 @app.middleware("http")
 async def guard(request: Request, call_next):
     """Optional password (HTTP Basic, any user name) and a JSON-only rule for changes: a web page on another
-    site can't send a JSON request here without a CORS preflight, which this app never grants."""
-    if APP_PASSWORD and request.url.path != "/api/health":
-        password = ""
-        scheme, _, value = request.headers.get("authorization", "").partition(" ")
-        if scheme.lower() == "basic":
-            try:
-                password = base64.b64decode(value).decode().partition(":")[2]
-            except (binascii.Error, UnicodeDecodeError):
-                pass
-        if not secrets.compare_digest(password.encode(), APP_PASSWORD.encode()):
-            return JSONResponse({"detail": "Login required"}, status_code=401,
-                                headers={"WWW-Authenticate": 'Basic realm="Chatbot Compare"'})
+    site can't send a JSON request here without a CORS preflight, which this app never grants. The Basic user name
+    is who the audit log says acted."""
+    user = password = ""
+    scheme, _, value = request.headers.get("authorization", "").partition(" ")
+    if scheme.lower() == "basic":
+        try:
+            user, _, password = base64.b64decode(value).decode().partition(":")
+        except (binascii.Error, UnicodeDecodeError):
+            pass
+    governance.actor.set(f"{user.strip()[:60]} (dashboard)" if user.strip() else "dashboard")
+    if (APP_PASSWORD and request.url.path != "/api/health"
+            and not secrets.compare_digest(password.encode(), APP_PASSWORD.encode())):
+        return JSONResponse({"detail": "Login required"}, status_code=401,
+                            headers={"WWW-Authenticate": 'Basic realm="Chatbot Compare"'})
     if request.method in UNSAFE_METHODS and not request.headers.get("content-type", "").startswith("application/json"):
         return JSONResponse({"detail": "Send requests as application/json"}, status_code=415)
     return await call_next(request)
@@ -65,9 +76,13 @@ async def guard(request: Request, call_next):
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
 
-def load_bots():
+def read_bots_file():
     with open(BOTS_FILE) as f:
-        bots = [b for b in json.load(f)["bots"] if b.get("enabled", True)]
+        return json.load(f)
+
+
+def load_bots():
+    bots = [b for b in read_bots_file()["bots"] if b.get("enabled", True)]
     valid = []
     for b in bots:
         try:
@@ -87,7 +102,7 @@ def find_bots(ids):
 
 
 def public(bot):
-    return {k: bot.get(k) for k in ("id", "label", "type", "description")}
+    return {k: bot.get(k) for k in ("id", "label", "type", "description", "llm")} | {"app": evaluator.app_of(bot)}
 
 
 @app.get("/api/health")
@@ -97,7 +112,15 @@ def health():
 
 @app.get("/api/bots")
 def bots():
-    return {"bots": [public(b) for b in load_bots()]}
+    """The enabled bots, and the presets from bots.json; a preset naming a disabled or unknown bot says which."""
+    enabled = {b["id"]: b for b in load_bots()}
+    presets = []
+    for p in read_bots_file().get("presets", []):
+        missing = [i for i in p.get("bots", []) if i not in enabled]
+        presets.append({**p, "missing": missing,
+                        "run_type": None if missing else evaluator.run_type([enabled[i] for i in p["bots"]])})
+    return {"bots": [public(b) for b in enabled.values()], "presets": presets,
+            "judge": {"model": evaluator.JUDGE_MODEL, "second_judge": evaluator.SECOND_JUDGE_MODEL or None}}
 
 
 @app.post("/api/bots/{bot_id}/ping")
@@ -118,6 +141,11 @@ class RunRequest(BaseModel):
     bots: list[str]
     suite: str
     judge: bool = True
+    repeats: int = 1  # ask every case this many times; scores average over all of them
+    comparative: bool = True  # after the run, the judge ranks the bots' answers side by side
+    second_judge: bool = False  # a judge from another model family re-grades a sample
+    rewordings: bool = False  # also ask every reworded version of the cases that have them
+    cases: list[str] | None = None  # only these case ids (default: the whole suite)
 
 
 @app.get("/api/suites")
@@ -142,7 +170,9 @@ def start_run(req: RunRequest):
     except (ValueError, FileNotFoundError):
         raise HTTPException(404, "No such suite")
     try:
-        run = evaluator.start_run(find_bots(list(dict.fromkeys(req.bots))), req.suite, req.judge)
+        run = evaluator.start_run(find_bots(list(dict.fromkeys(req.bots))), req.suite, req.judge,
+                                  repeats=req.repeats, comparative=req.comparative, second_judge=req.second_judge,
+                                  rewordings=req.rewordings, case_ids=req.cases)
     except ValueError as e:  # e.g. a bot with no matching profile
         raise HTTPException(400, str(e))
     except FileNotFoundError as e:  # e.g. a profile's data file has moved
@@ -152,7 +182,10 @@ def start_run(req: RunRequest):
 
 @app.get("/api/runs")
 def runs():
-    return {"runs": evaluator.list_runs()}
+    signed = {}
+    for s in compliance.load_signoffs():
+        signed.setdefault(s["run_id"], {})[s["bot_id"]] = s["decision"]  # the latest decision per bot
+    return {"runs": [r | {"signoffs": signed.get(r["id"], {})} for r in evaluator.list_runs()]}
 
 
 @app.get("/api/runs/{run_id}")
@@ -163,14 +196,155 @@ def run(run_id: str):
     return r
 
 
+@app.get("/api/runs/{run_id}/export.csv")
+def run_csv(run_id: str):
+    r = evaluator.get_run(run_id)
+    if r is None:
+        raise HTTPException(404, "No such run")
+    return Response(export.csv_text(r), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="chatbot-compare-{run_id}.csv"'})
+
+
+@app.get("/api/runs/{run_id}/report.html")
+def run_report(run_id: str):
+    """A printable report; the browser's Save as PDF makes the PDF."""
+    r = evaluator.get_run(run_id)
+    if r is None:
+        raise HTTPException(404, "No such run")
+    return HTMLResponse(export.report_html(r))
+
+
 @app.delete("/api/runs/{run_id}")
 def delete_run(run_id: str):
     evaluator.delete_run(run_id)
     return {"ok": True}
 
 
+# ---------- Baselines and regression alerts ----------
+
+@app.get("/api/baselines")
+def baselines():
+    out = {}
+    for bot_id, run_id in evaluator.load_baselines().items():
+        r = evaluator.get_run(run_id)
+        out[bot_id] = {"run_id": run_id, "created_at": r["created_at"] if r else None}
+    return {"baselines": out}
+
+
+@app.post("/api/runs/{run_id}/baseline")
+def set_baseline(run_id: str):
+    try:
+        return {"bots": evaluator.set_baseline(run_id)}
+    except KeyError:
+        raise HTTPException(404, "No such run")
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.delete("/api/runs/{run_id}/baseline")
+def clear_baseline(run_id: str):
+    evaluator.clear_baseline(run_id)
+    return {"ok": True}
+
+
+@app.get("/api/runs/{run_id}/regressions")
+def run_regressions(run_id: str):
+    r = evaluator.get_run(run_id)
+    if r is None:
+        raise HTTPException(404, "No such run")
+    return evaluator.regressions(r)
+
+
+# ---------- Judge review: humans check the AI judge ----------
+
+class LabelRequest(BaseModel):
+    id: str
+    passed: bool  # should the conversation pass
+    hallucinated: bool  # did the bot invent a fact
+    note: str = ""
+
+
+@app.get("/api/review")
+def review_queue(run_id: str | None = None, include_labeled: bool = False, limit: int = 100):
+    if run_id and evaluator.get_run(run_id) is None:
+        raise HTTPException(404, "No such run")
+    return review.queue(run_id, include_labeled, max(1, min(limit, 500)))
+
+
+@app.post("/api/review/label")
+def review_label(req: LabelRequest):
+    try:
+        review.label(req.id, req.passed, req.hallucinated, req.note)
+    except KeyError:
+        raise HTTPException(404, "No such conversation")
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    return review.stats()
+
+
+@app.delete("/api/review/label")
+def review_unlabel(id: str):
+    review.unlabel(id)
+    return review.stats()
+
+
+# ---------- Governance: release gate, sign-off, audit trail, risk register, model cards ----------
+
+class SignoffRequest(BaseModel):
+    bot_id: str
+    decision: str  # "approve" or "reject"
+    reviewer: str
+    note: str = ""
+    override: bool = False  # approve although the release gate blocks it (needs a justification in note)
+
+
+class PurgeRequest(BaseModel):
+    dry_run: bool = True
+
+
+@app.get("/api/governance")
+def governance_overview():
+    return compliance.overview()
+
+
+@app.get("/api/governance/report.md")
+def governance_report():
+    return PlainTextResponse(compliance.report_markdown(), media_type="text/markdown; charset=utf-8",
+                             headers={"Content-Disposition": 'attachment; filename="ai-governance-report.md"'})
+
+
+@app.post("/api/governance/purge")
+def governance_purge(req: PurgeRequest):
+    return compliance.purge(dry_run=req.dry_run)
+
+
+@app.get("/api/runs/{run_id}/gate")
+def run_gate(run_id: str):
+    r = evaluator.get_run(run_id)
+    if r is None:
+        raise HTTPException(404, "No such run")
+    return compliance.gate(r) | {"signoffs": compliance.signoffs_for(run_id)}
+
+
+@app.post("/api/runs/{run_id}/signoff")
+def run_signoff(run_id: str, req: SignoffRequest):
+    try:
+        return compliance.signoff(run_id, req.bot_id, req.decision, req.reviewer, req.note, req.override)
+    except KeyError:
+        raise HTTPException(404, "No such run or bot")
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.get("/api/audit")
+def audit(limit: int = 100, target: str | None = None):
+    return {"verify": governance.verify_log(),
+            "entries": governance.read_log(max(1, min(limit, 1000)), target=target)}
+
+
 # ---------- Arena: blind side-by-side, you vote ----------
-# battle_id -> {"bots": [bot_a, bot_b], "convs": [...], "voted": bool, "last_used": monotonic seconds}
+# Live battles: battle_id -> {"bots": [bot_a, bot_b], "convs": [...], "voted": bool, "last_used": monotonic seconds}.
+# Every battle is also saved to BATTLES_FILE (bot ids and transcript), so a vote still counts after a restart.
 battles: dict[str, dict] = {}
 arena_lock = threading.Lock()
 
@@ -193,19 +367,80 @@ def purge_battles(now=None):
             battles.pop(bid, None)
 
 
-def load_arena():
+def _read_json(path, default):
     try:
-        with open(ARENA_FILE) as f:
+        with open(path) as f:
             return json.load(f)
     except FileNotFoundError:
-        return {"ratings": {}, "votes": []}
+        return default
+
+
+def _write_json(path, data):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=1)
+    os.replace(tmp, path)
+
+
+def load_arena():
+    return _read_json(ARENA_FILE, {"votes": []})
 
 
 def save_arena(data):
-    tmp = ARENA_FILE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=1)
-    os.replace(tmp, ARENA_FILE)
+    _write_json(ARENA_FILE, data)
+
+
+def load_saved_battles():
+    """Saved battles still open for a vote; older unvoted ones are dropped."""
+    saved = _read_json(BATTLES_FILE, {})
+    return {k: v for k, v in saved.items() if time.time() - v.get("created", 0) < BATTLE_KEEP_S}
+
+
+def save_battle(bid, battle=None):
+    """Store (or, with battle=None, forget) one battle's transcript."""
+    with arena_lock:
+        saved = load_saved_battles()
+        if battle is None:
+            saved.pop(bid, None)
+        else:
+            saved[bid] = battle
+        _write_json(BATTLES_FILE, saved)
+
+
+def pick_pair(pool, votes, rng=random):
+    """The pair of bots with the fewest votes so far (random among equals), in random order, so every pair gets
+    about the same number of battles and no bot is always shown as A."""
+    played = Counter(frozenset((v["a"], v["b"])) for v in votes)
+    pairs = list(itertools.combinations(pool, 2))
+    fewest = min(played[frozenset((a["id"], b["id"]))] for a, b in pairs)
+    pair = list(rng.choice([p for p in pairs if played[frozenset((p[0]["id"], p[1]["id"]))] == fewest]))
+    rng.shuffle(pair)
+    return pair
+
+
+def bradley_terry(votes, iterations=300):
+    """Ratings from all votes at once (Bradley-Terry, fitted by minorization-maximization), so unlike Elo they don't
+    depend on vote order. A tie or "both bad" is half a win each. Every bot also plays one virtual tie against a
+    fixed 1000-rated opponent, which keeps an unbeaten bot's rating finite and anchors the scale."""
+    wins, games = Counter(), Counter()
+    for v in votes:
+        score_a = {"a": 1.0, "b": 0.0}.get(v["winner"], 0.5)
+        wins[v["a"]] += score_a
+        wins[v["b"]] += 1 - score_a
+        games[frozenset((v["a"], v["b"]))] += 1
+    players = sorted({v[k] for v in votes for k in ("a", "b")})
+    strength = dict.fromkeys(players, 1.0)
+    for _ in range(iterations):
+        new = {}
+        for i in players:
+            denom = 1 / (strength[i] + 1)  # the virtual opponent, strength 1
+            for pair, n in games.items():
+                if i in pair:
+                    (j,) = pair - {i}
+                    denom += n / (strength[i] + strength[j])
+            new[i] = (wins[i] + 0.5) / denom
+        strength = new
+    return {i: round(RATING_BASE + 400 * math.log10(strength[i]), 1) for i in players}
 
 
 class BattleRequest(BaseModel):
@@ -225,12 +460,16 @@ def arena_message(req: BattleRequest):
         raise HTTPException(400, "Type a message")
     purge_battles()
     battle = battles.get(req.battle_id) if req.battle_id else None
+    if battle is None and req.battle_id and req.battle_id in load_saved_battles():
+        raise HTTPException(409, "This chat can't continue: the bots' sessions were closed (the server restarted or "
+                                 "it sat idle). Vote on what you've seen, or send again to start a new battle.")
     if battle is None or battle["voted"]:
         pool = find_bots(req.bots) if req.bots else load_bots()
         if len(pool) < 2:
             raise HTTPException(400, "Need at least 2 bots for the arena")
-        pair = random.sample(pool, 2)
-        battle = {"bots": pair, "convs": [open_conversation(b) for b in pair], "voted": False}
+        pair = pick_pair(pool, load_arena()["votes"])
+        battle = {"bots": pair, "convs": [open_conversation(b) for b in pair], "voted": False, "log": [],
+                  "created": time.time()}
         req.battle_id = uuid.uuid4().hex
         battles[req.battle_id] = battle
     battle["last_used"] = time.monotonic()
@@ -247,54 +486,73 @@ def arena_message(req: BattleRequest):
 
     with ThreadPoolExecutor(2) as pool:
         a, b = pool.map(send, battle["convs"])
+    battle["log"].append({"user": req.message, "a": a, "b": b})
+    save_battle(req.battle_id, {"bots": [x["id"] for x in battle["bots"]], "labels": [x["label"] for x in battle["bots"]],
+                                "log": battle["log"], "created": battle["created"]})
     return {"battle_id": req.battle_id, "a": a, "b": b}
+
+
+@app.get("/api/arena/battle/{battle_id}")
+def arena_battle(battle_id: str):
+    """A saved, unvoted battle's transcript (bot names stay hidden), so the page can show it again after a reload."""
+    saved = load_saved_battles().get(battle_id)
+    if saved is None:
+        raise HTTPException(404, "Battle not found")
+    return {"battle_id": battle_id, "log": saved["log"], "live": battle_id in battles}
 
 
 @app.post("/api/arena/vote")
 def arena_vote(req: VoteRequest):
-    battle = battles.get(req.battle_id)
-    if battle is None:
-        raise HTTPException(404, "Battle not found (the server may have restarted)")
-    if battle["voted"]:
-        raise HTTPException(400, "Already voted")
     if req.winner not in ("a", "b", "tie", "both_bad"):
         raise HTTPException(400, "winner must be a, b, tie or both_bad")
-    battle["voted"] = True
-    close_battle(battle)
-    a, b = (bot["id"] for bot in battle["bots"])
-
+    battle = battles.get(req.battle_id)
+    if battle is not None and battle["voted"]:
+        raise HTTPException(400, "Already voted")
+    saved = load_saved_battles().get(req.battle_id)
+    if battle is None and saved is None:
+        raise HTTPException(404, "Battle not found (or it is more than a day old)")
+    if battle is not None:
+        battle["voted"] = True
+        close_battle(battle)
+        ids, labels = [b["id"] for b in battle["bots"]], [b["label"] for b in battle["bots"]]
+    else:
+        ids, labels = saved["bots"], saved["labels"]
+    save_battle(req.battle_id)
     with arena_lock:
         data = load_arena()
-        ratings = data["ratings"]
-        for bot in battle["bots"]:
-            ratings.setdefault(bot["id"], {"elo": ELO_START, "wins": 0, "losses": 0, "ties": 0, "label": bot["label"]})
-        ra, rb = ratings[a], ratings[b]
-        expected_a = 1 / (1 + 10 ** ((rb["elo"] - ra["elo"]) / 400))
-        score_a = {"a": 1.0, "b": 0.0}.get(req.winner, 0.5)
-        ra["elo"] = round(ra["elo"] + ELO_K * (score_a - expected_a), 1)
-        rb["elo"] = round(rb["elo"] + ELO_K * ((1 - score_a) - (1 - expected_a)), 1)
-        if req.winner == "a":
-            ra["wins"] += 1; rb["losses"] += 1
-        elif req.winner == "b":
-            rb["wins"] += 1; ra["losses"] += 1
-        else:
-            ra["ties"] += 1; rb["ties"] += 1
-        data["votes"].append({"a": a, "b": b, "winner": req.winner})
+        data["votes"].append({"a": ids[0], "b": ids[1], "winner": req.winner, "labels": dict(zip(ids, labels)),
+                              "at": time.strftime("%Y-%m-%dT%H:%M:%S")})
         save_arena(data)
-    return {"a": public(battle["bots"][0]), "b": public(battle["bots"][1])}
+    return {"a": {"id": ids[0], "label": labels[0]}, "b": {"id": ids[1], "label": labels[1]}}
 
 
 @app.get("/api/arena/leaderboard")
 def leaderboard():
     data = load_arena()
-    rows = [{"id": k, **v, "battles": v["wins"] + v["losses"] + v["ties"]} for k, v in data["ratings"].items()]
-    return {"rows": sorted(rows, key=lambda r: r["elo"], reverse=True), "votes": len(data["votes"])}
+    votes = data["votes"]
+    labels = {k: v.get("label", k) for k, v in data.get("ratings", {}).items()}  # files saved before labels on votes
+    labels.update({b["id"]: b["label"] for b in load_bots()})
+    for v in votes:
+        labels.update(v.get("labels", {}))
+    ratings = bradley_terry(votes)
+    rows = []
+    for bot_id, rating in ratings.items():
+        mine = [v for v in votes if bot_id in (v["a"], v["b"])]
+        won = sum(1 for v in mine if (v["winner"] == "a") == (v["a"] == bot_id) and v["winner"] in ("a", "b"))
+        tied = sum(1 for v in mine if v["winner"] not in ("a", "b"))
+        rows.append({"id": bot_id, "label": labels.get(bot_id, bot_id), "rating": rating, "wins": won,
+                     "losses": len(mine) - won - tied, "ties": tied, "battles": len(mine)})
+    pairs = Counter(" vs ".join(sorted((labels.get(v["a"], v["a"]), labels.get(v["b"], v["b"])))) for v in votes)
+    return {"rows": sorted(rows, key=lambda r: r["rating"], reverse=True), "votes": len(votes),
+            "pairs": [{"pair": k, "battles": n} for k, n in sorted(pairs.items())]}
 
 
 @app.post("/api/arena/reset")
 def arena_reset():
     with arena_lock:
-        save_arena({"ratings": {}, "votes": []})
+        votes = len(load_arena()["votes"])
+        save_arena({"votes": []})
+    governance.record("arena.reset", None, votes=votes)
     return {"ok": True}
 
 

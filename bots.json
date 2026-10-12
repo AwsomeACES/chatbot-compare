@@ -3,21 +3,19 @@
     {
       "id": "mine-claude",
       "label": "My bot · Claude Sonnet 5",
-      "description": "VoltKart support bot (tool calling over store data), Claude Sonnet 5 on Bedrock",
+      "description": "VoltKart support bot (tool calling over store data), Claude Sonnet 5 on Bedrock (paid)",
       "profile": "voltkart",
+      "llm": "Claude Sonnet 5",
       "type": "voltkart",
+      "trace": true,
       "base_url": "http://localhost:8000",
-      "model": "claude-sonnet-5"
-    },
-    {
-      "id": "teammate-gemini",
-      "label": "Teammate bot · Gemini (its default)",
-      "description": "Reliance multi-agent bot with its default provider, Gemini 3.6 Flash",
-      "profile": "reliance222",
-      "type": "sse_chat",
-      "url": "http://localhost:8001/chat/stream",
-      "body": {
-        "provider": "gemini"
+      "model": "claude-sonnet-5",
+      "pricing": {
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.2,
+        "cache_write": 2.5,
+        "source": "Anthropic list price, USD per million tokens (cache read 0.1x input, cache write 1.25x); Bedrock on-demand may differ"
       }
     },
     {
@@ -25,66 +23,150 @@
       "label": "My bot · Claude Haiku 4.5",
       "description": "VoltKart support bot on Claude Haiku 4.5, the fast tier closest to Gemini Flash",
       "profile": "voltkart",
+      "llm": "Claude Haiku 4.5",
       "type": "voltkart",
+      "trace": true,
       "base_url": "http://localhost:8000",
-      "model": "claude-haiku-4-5"
+      "model": "claude-haiku-4-5",
+      "pricing": {
+        "input": 1.0,
+        "output": 5.0,
+        "cache_read": 0.1,
+        "cache_write": 1.25,
+        "source": "Anthropic list price, USD per million tokens (cache read 0.1x input, cache write 1.25x); Bedrock on-demand may differ"
+      }
     },
     {
-      "id": "teammate-claude",
-      "label": "Teammate bot · Claude Sonnet 5",
-      "description": "Reliance Digital multi-agent bot (LangGraph supervisor + sales/resQ/RAG agents), Claude Sonnet 5 (needs ANTHROPIC_API_KEY / OPENAI_API_KEY in the teammate backend .env)",
-      "profile": "reliance222",
-      "type": "sse_chat",
-      "url": "http://localhost:8001/chat/stream",
-      "body": {
-        "provider": "claude"
-      },
-      "enabled": false
+      "id": "mine-gemini",
+      "label": "My bot · Gemini 2.5 Flash",
+      "description": "VoltKart support bot on Gemini 2.5 Flash (Gemini API free tier)",
+      "profile": "voltkart",
+      "llm": "Gemini 2.5 Flash",
+      "type": "voltkart",
+      "trace": true,
+      "base_url": "http://localhost:8000",
+      "model": "gemini-2.5-flash",
+      "pricing": {
+        "input": 0,
+        "output": 0,
+        "source": "free: Gemini API free tier"
+      }
     },
     {
       "id": "mine-gpt",
       "label": "My bot · GPT-5 mini",
       "description": "VoltKart support bot running OpenAI GPT-5 mini (OpenAI account needs credits)",
       "profile": "voltkart",
+      "llm": "GPT-5 mini",
       "type": "voltkart",
+      "trace": true,
       "base_url": "http://localhost:8000",
       "model": "gpt-5-mini",
-      "enabled": false
-    },
-    {
-      "id": "teammate-gpt",
-      "label": "Teammate bot · GPT-5 mini",
-      "description": "Reliance multi-agent bot running OpenAI GPT-5 mini (needs ANTHROPIC_API_KEY / OPENAI_API_KEY in the teammate backend .env)",
-      "profile": "reliance222",
-      "type": "sse_chat",
-      "url": "http://localhost:8001/chat/stream",
-      "body": {
-        "provider": "chatgpt"
-      },
       "enabled": false
     },
     {
       "id": "mine-nova",
       "label": "My bot · Amazon Nova Pro",
       "profile": "voltkart",
+      "llm": "Amazon Nova Pro",
       "type": "voltkart",
+      "trace": true,
       "base_url": "http://localhost:8000",
-      "model": "nova-pro"
+      "model": "nova-pro",
+      "enabled": false
+    },
+    {
+      "id": "mine-qwen-local",
+      "label": "My bot · Qwen2.5 3B (local, free)",
+      "description": "VoltKart support bot on a free local model (Ollama qwen2.5:3b); slow on CPU, one chat at a time",
+      "profile": "voltkart",
+      "llm": "Qwen2.5 3B (local)",
+      "type": "voltkart",
+      "trace": true,
+      "base_url": "http://localhost:8000",
+      "model": "qwen2.5-3b-local",
+      "max_concurrency": 1,
+      "pricing": {
+        "input": 0,
+        "output": 0,
+        "source": "free: runs locally in Ollama"
+      },
+      "timeout": 300,
+      "enabled": false
     },
     {
       "id": "mouni-gemini",
-      "label": "Mouni's bot · Gemini 3.8 Flash",
-      "description": "SupportFlow AI (Flask): keyword intent + order/product/KB grounding, then Gemini; hands risky chats to a human agent",
+      "label": "Mouni's chatbot · Gemini 3.6 Flash",
+      "description": "SupportFlow AI (Flask, GitHub version of 2026-10-06): database lookups (products, orders, refunds, warranties, offers) then Gemini 3.6 Flash (free tier); pure-AI mode, no human hand-off",
       "profile": "mouni",
+      "llm": "Gemini 3.6 Flash",
       "type": "supportflow",
+      "trace": true,
       "base_url": "http://localhost:5000",
       "email": "customer@example.com",
       "password": "Demo123!",
       "max_concurrency": 1,
-      "fallback_replies": [
-        "I found the relevant support context, and the quickest next step is:",
-        "Please tell me the issue and I’ll guide you through the fastest next step."
-      ]
+      "db_path": "~/projects/mouni-bot/github-latest/backend/compare-test.db",
+      "handoff": false,
+      "pricing": {
+        "input": 0,
+        "output": 0,
+        "source": "free: Gemini API free tier (the bot's own key)"
+      }
+    },
+    {
+      "id": "hussain-gemini",
+      "label": "Hussain's chatbot · Gemini 3.6 Flash",
+      "description": "Reliance Digital multi-agent bot (digital-multi-agent-ai: LangGraph supervisor + sales/resQ/RAG/vision agents), Gemini 3.6 Flash",
+      "profile": "hussain",
+      "llm": "Gemini 3.6 Flash",
+      "type": "sse_chat",
+      "trace": true,
+      "url": "http://localhost:8001/chat/stream",
+      "body": {
+        "provider": "gemini"
+      },
+      "max_concurrency": 1,
+      "pricing": {
+        "input": 0,
+        "output": 0,
+        "source": "free: Gemini API free tier (the bot's own key)"
+      }
+    },
+    {
+      "id": "hussain-claude",
+      "label": "Hussain's chatbot · Claude Sonnet 5",
+      "description": "Reliance Digital multi-agent bot (digital-multi-agent-ai: LangGraph supervisor + sales/resQ/RAG/vision agents), Claude Sonnet 5 (needs ANTHROPIC_API_KEY in Hussain's backend .env)",
+      "profile": "hussain",
+      "llm": "Claude Sonnet 5",
+      "type": "sse_chat",
+      "trace": true,
+      "url": "http://localhost:8001/chat/stream",
+      "body": {
+        "provider": "claude"
+      },
+      "enabled": false,
+      "pricing": {
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.2,
+        "cache_write": 2.5,
+        "source": "Anthropic list price, USD per million tokens (cache read 0.1x input, cache write 1.25x); Bedrock on-demand may differ"
+      }
+    },
+    {
+      "id": "hussain-gpt",
+      "label": "Hussain's chatbot · GPT-5 mini",
+      "description": "Reliance Digital multi-agent bot (digital-multi-agent-ai: LangGraph supervisor + sales/resQ/RAG/vision agents), GPT-5 mini (needs OPENAI_API_KEY in Hussain's backend .env)",
+      "profile": "hussain",
+      "llm": "GPT-5 mini",
+      "type": "sse_chat",
+      "trace": true,
+      "url": "http://localhost:8001/chat/stream",
+      "body": {
+        "provider": "chatgpt"
+      },
+      "enabled": false
     },
     {
       "id": "example-http-bot",
@@ -101,6 +183,70 @@
       },
       "reply_path": "data.answer",
       "session_path": "data.conversation_id"
+    }
+  ],
+  "judge_pricing": [
+    {
+      "model": "gemini-*",
+      "input": 0,
+      "output": 0,
+      "source": "free: Gemini API free tier (no charge; Google may use the prompts to improve its models)"
+    },
+    {
+      "model": "moonshotai/kimi-*",
+      "input": 0,
+      "output": 0,
+      "source": "free: NVIDIA NIM free API"
+    }
+  ],
+  "presets": [
+    {
+      "id": "free-three-apps",
+      "label": "Three apps, free models",
+      "description": "VoltKart, Hussain's and Mouni's chatbots, all on the Gemini free tier: no bill",
+      "bots": [
+        "mine-gemini",
+        "hussain-gemini",
+        "mouni-gemini"
+      ]
+    },
+    {
+      "id": "same-app-models",
+      "label": "My bot: Claude vs Gemini",
+      "description": "Same app, different models: which LLM suits VoltKart best",
+      "bots": [
+        "mine-claude",
+        "mine-haiku",
+        "mine-gemini"
+      ]
+    },
+    {
+      "id": "same-model-sonnet",
+      "label": "Apps on Sonnet 5",
+      "description": "Same model, different apps: VoltKart vs Hussain's chatbot, both on Claude Sonnet 5",
+      "bots": [
+        "mine-claude",
+        "hussain-claude"
+      ]
+    },
+    {
+      "id": "same-model-gpt",
+      "label": "Apps on GPT-5 mini",
+      "description": "Same model, different apps: VoltKart vs Hussain's chatbot, both on GPT-5 mini",
+      "bots": [
+        "mine-gpt",
+        "hussain-gpt"
+      ]
+    },
+    {
+      "id": "three-apps",
+      "label": "Three apps, own models",
+      "description": "Each team's bot on its default model: compares whole products",
+      "bots": [
+        "mine-claude",
+        "hussain-gemini",
+        "mouni-gemini"
+      ]
     }
   ]
 }
