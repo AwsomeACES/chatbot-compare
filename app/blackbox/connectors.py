@@ -1,7 +1,6 @@
 import asyncio, ipaddress, json, socket, time, uuid
 from urllib.parse import urlsplit
 import httpx
-from . import metering
 
 async def validate_destination(url):
  p=urlsplit(url)
@@ -45,7 +44,7 @@ def parse_chat_stream(text):
  if not done:raise ValueError('Chat stream ended without a successful completion event.')
  answer=''.join(chunks)
  if not answer.strip():raise ValueError('Chat stream completed without an answer.')
- return {'reply':answer,'stream_metadata':metadata,'usage':metadata.get('usage'),'model':metadata.get('model')}
+ return {'reply':answer,'stream_metadata':metadata}
 
 def field(data,path):
  for key in path.split('.'):
@@ -72,7 +71,7 @@ class Connector:
  async def conversation(self,case):
   if self.kind=='web': return await self.web_conversation(case)
   transcript=[]; session=str(uuid.uuid4());history=[];usage=[]
-  for turn_index,prompt in enumerate(case['turns']):
+  for prompt in case['turns']:
    if case['parallel']: history=[];session=str(uuid.uuid4())
    history.append({'role':'user','content':prompt})
    t=self.target;headers={}
@@ -86,10 +85,7 @@ class Connector:
     if t.history_field:body[t.history_field]=history[:-1]
    started=time.perf_counter()
    try:
-    async def send():
-     if self.kind=='openai':return await metering.completion(t.url,body,t.token.get_secret_value() if t.token else '',self.timeout)
-     return await request_json(self.client,'POST',t.url,headers=headers,json=body)
-    data=await metering.call(send,role='target',model=t.model,alias=t.model_alias,provider=metering.provider_from(t.url),messages=history,turn_index=turn_index,conversation_id=(case.get('id','')+':'+str(turn_index) if case.get('parallel') else case.get('id','')),local=t.local_model,opaque=self.kind!='openai')
+    data=await request_json(self.client,'POST',t.url,headers=headers,json=body)
     path=t.response_field or ('choices.0.message.content' if self.kind=='openai' else '')
     if path:answer=field(data,path)
     else:
@@ -102,9 +98,6 @@ class Connector:
     history.append({'role':'assistant','content':answer})
     usage.append(data.get('usage'))
     transcript.append({'input':prompt,'output':answer,'seconds':round(time.perf_counter()-started,3),'transport':'HTTP','http_status':200,'response_metadata':data.get('stream_metadata',{})})
-   except metering.BudgetLimit as exc:
-    exc.observation={'transcript':transcript,'usage':usage,'error':str(exc)}
-    raise
    except Exception as e:
     transcript.append({'input':prompt,'output':None,'seconds':round(time.perf_counter()-started,3),'error':safe_error(e)})
     return {'transcript':transcript,'error':safe_error(e),'usage':usage}
@@ -127,33 +120,26 @@ class Connector:
    page=await context.new_page();page.set_default_timeout(self.timeout*1000)
    try:
     await page.goto(t.url,wait_until='domcontentloaded')
-    for turn_index,prompt in enumerate(case['turns']):
+    for prompt in case['turns']:
      if case['parallel'] and transcript:
       await context.close();context=await browser.new_context(accept_downloads=False,service_workers='block');await context.route('**/*',guard);page=await context.new_page();page.set_default_timeout(self.timeout*1000);await page.goto(t.url)
      inputs=page.locator(t.input_selector or 'textarea:visible, input[type="text"]:visible, [contenteditable="true"]:visible')
      if await inputs.count()!=1:raise ValueError('Chat input detection is ambiguous; configure its CSS selector. No arbitrary page controls were clicked.')
      answers=page.locator(t.answer_selector or '[data-message-author-role="assistant"], [data-role="assistant"], .assistant-message, .bot-message')
      before=await answers.count();start=time.perf_counter()
-     async def send_widget():
-      await inputs.fill(prompt)
-      if t.send_selector:await page.locator(t.send_selector).click()
-      else:await inputs.press('Enter')
-      deadline=time.monotonic()+self.timeout;last='';stable=0
-      while time.monotonic()<deadline:
-       await asyncio.sleep(.5)
-       if await answers.count()>before:
-        value=await answers.last.inner_text()
-        stable=stable+1 if value==last and value.strip() else 0;last=value
-        if stable>=3:break
-      else:raise ValueError('No identifiable completed assistant reply. Configure the assistant-message CSS selector.')
-      return {'reply':last}
-     observed=await metering.call(send_widget,role='target',model=t.model,alias=t.model_alias,provider='web-widget',messages=[{'role':'user','content':p} for p in case['turns'][:turn_index+1]],turn_index=turn_index,conversation_id=(case.get('id','')+':'+str(turn_index) if case.get('parallel') else case.get('id','')),local=t.local_model,opaque=True)
-     last=observed['reply']
+     await inputs.fill(prompt)
+     if t.send_selector:await page.locator(t.send_selector).click()
+     else:await inputs.press('Enter')
+     deadline=time.monotonic()+self.timeout;last='';stable=0
+     while time.monotonic()<deadline:
+      await asyncio.sleep(.5)
+      if await answers.count()>before:
+       value=await answers.last.inner_text()
+       stable=stable+1 if value==last and value.strip() else 0;last=value
+       if stable>=3:break
+     else:raise ValueError('No identifiable completed assistant reply. Configure the assistant-message CSS selector.')
      transcript.append({'input':prompt,'output':last[:24000],'seconds':round(time.perf_counter()-start,3),'transport':'browser'})
     return {'transcript':transcript,'error':None,'usage':[]}
-   except metering.BudgetLimit as exc:
-    exc.observation={'transcript':transcript,'usage':[],'error':str(exc)}
-    raise
    except Exception as e:return {'transcript':transcript,'error':safe_error(e),'usage':[]}
    finally:await browser.close()
 

@@ -172,7 +172,7 @@ def test_real_browser_chat_widget(http_fixture):
 
 def test_judge_rejects_invented_evidence(monkeypatch):
  async def response(*a,**kw):return {'choices':[{'finish_reason':'stop','message':{'content':json.dumps({'score':100,'reason':'fine','evidence':['invented quote']})}}]}
- monkeypatch.setattr(judge.metering,'completion',response)
+ monkeypatch.setattr(judge,'request_json',response)
  cfg=config(judge_model='fixture',judge_consent=True)
  with pytest.raises(ValueError,match='did not match'):
   asyncio.run(judge.ask(cfg,{'transcript':[{'output':'actual reply'}]}))

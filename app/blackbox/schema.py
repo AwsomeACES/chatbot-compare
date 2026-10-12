@@ -28,8 +28,6 @@ class Target(BaseModel):
  session_field: str = 'conversation_id'
  history_field: str = ''
  model: str = ''
- model_alias: str = Field(default='',max_length=250)
- local_model: bool = False
  token: SecretStr | None = None
  input_selector: str = ''
  answer_selector: str = ''
@@ -62,16 +60,8 @@ class Settings(BaseModel):
  max_minutes: int = Field(default=20,ge=1,le=120)
  latency_budget_seconds: float = Field(default=5,ge=.1,le=60)
  seed: int = 42
- judge_model_alias: str = Field(default='',max_length=250)
- judge_local_model: bool = False
- max_budget_usd: str | None = None
- price_snapshot_id: str = ''
- cost_settings_snapshot: dict = Field(default_factory=dict)
  @model_validator(mode='after')
  def check(self):
-  if self.max_budget_usd is not None:
-   from .pricing import decimal
-   self.max_budget_usd=str(decimal(self.max_budget_usd))
   self.categories=list(dict.fromkeys(self.categories))
   if not self.categories or any(c not in CATEGORIES for c in self.categories):
    raise ValueError('Choose supported black-box categories.')
