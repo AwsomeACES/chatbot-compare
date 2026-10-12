@@ -3,6 +3,7 @@
 The queue holds judged conversations from finished runs, in this order (with labeled ones listed first when asked
 for, most recent first):
   judges  the main and second judge disagree (pass/fail or invented facts)
+  evidence  none of the main judge's quotes is in the bot's replies (an "unverified" verdict)
   checks  the exact checks and the main judge disagree on pass/fail
   spot    a fixed random sample of the rest (SPOT_SAMPLE), where nothing disagrees
 A reviewer reads the conversation and records the right answer: should it pass, and did the bot invent a fact. Each
@@ -26,7 +27,7 @@ import governance
 LABELS_FILE = os.path.join(evaluator.RUNS_DIR, "judge_labels.json")
 SPOT_SAMPLE = float(os.environ.get("REVIEW_SPOT_SAMPLE", "0.1"))
 TARGET = 50  # labels after which the agreement figures are worth quoting
-KINDS = ("judges", "checks", "spot")
+KINDS = ("judges", "evidence", "checks", "spot")
 _lock = threading.Lock()
 
 
@@ -62,6 +63,8 @@ def kind_of(r, iid):
     j2 = r.get("judge2")
     if j2 and (j2["passed"] != j["passed"] or j2["hallucinated"] != j["hallucinated"]):
         return "judges"
+    if j.get("unverified"):
+        return "evidence"
     if r.get("checks") is not None and r["checks"] != j["passed"]:
         return "checks"
     return "spot" if _spot(iid) else None

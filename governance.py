@@ -180,6 +180,45 @@ def is_local(base_url):
     return host in ("localhost", "127.0.0.1", "::1") or host.endswith(".local")
 
 
+CLOUD_BOT_TYPES = {"claude_bedrock"}  # bots this app reaches through a cloud API, with no URL of their own
+
+
+def remote_bots(bots):
+    """The bots a run would send test messages to over the network (not on this machine)."""
+    return [b.get("label") or b["id"] for b in bots
+            if b.get("type") in CLOUD_BOT_TYPES or not is_local(b.get("base_url") or b.get("url") or "")]
+
+
+def remote_judges(endpoints):
+    """The judge models that would receive conversations (with personal data masked) over the network."""
+    return [m for ep in endpoints if not is_local(ep.base_url) for m in ep.models]
+
+
+class ConsentError(ValueError):
+    pass
+
+
+def check_consent(bots, judge_endpoints, consent):
+    """What a run may do, as the person starting it allowed. consent: {"send_to_bots": bool, "share_with_judge": bool}
+    from the dashboard, or None for a script the operator started (regress.py, nightly.sh), which is recorded as such.
+    Sending test messages to a bot that isn't on this machine, and sharing conversations with a judge that isn't,
+    each need their own yes. Returns the record saved on the run; raises ConsentError naming what's missing."""
+    rbots, rjudges = remote_bots(bots), remote_judges(judge_endpoints)
+    record = {"remote_bots": rbots, "remote_judges": rjudges, "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+              "by": current_actor()}
+    if consent is None:
+        return {**record, "send_to_bots": None, "share_with_judge": None, "given_by": "script"}
+    missing = []
+    if rbots and not consent.get("send_to_bots"):
+        missing.append(f"send test messages to {', '.join(rbots)} (not on this machine)")
+    if rjudges and not consent.get("share_with_judge"):
+        missing.append(f"share the conversations with the AI judge ({', '.join(rjudges)}; personal data is masked first)")
+    if missing:
+        raise ConsentError("Allow this run to " + " and to ".join(missing) + ".")
+    return {**record, "send_to_bots": bool(consent.get("send_to_bots")),
+            "share_with_judge": bool(consent.get("share_with_judge")), "given_by": "dashboard"}
+
+
 def pii_mode(policy=None):
     mode = ((policy or load_policy()).get("data") or {}).get("pii", "redact")
     return mode if mode in ("redact", "flag", "off") else "redact"

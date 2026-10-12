@@ -7,6 +7,13 @@ Every bot in bots.json has a "type" that picks the adapter:
   supportflow        SupportFlow AI (Mouni's chatbot): JWT login + POST /api/chat {message, conversation_id}
   openai_compatible  Any OpenAI-style /chat/completions API (OpenAI, Ollama, vLLM, OpenRouter, Groq...)
   claude_bedrock     Claude on Amazon Bedrock with your own system prompt (e.g. a no-tools baseline)
+  web_widget         A chat widget on a web page, driven in a real browser (Playwright), for a bot with no API:
+                     "url", "input_selector" (the message box), "reply_selector" (each bot message); optional
+                     "send_selector" (else Enter), "open_selector" (a launcher button to click first),
+                     "settle_ms" (how long the last reply must stay unchanged, default 1500), "headless" (default
+                     true) and "browser_path" (else CHROME_PATH, else Playwright's own Chromium). Needs the
+                     playwright package; a login, CAPTCHA or a selector that matches nothing ends the case with a
+                     clear error. Use "max_concurrency": 1 or 2: every chat is its own browser.
 
 Optional for every type: "max_concurrency" (parallel test chats, see evaluator.py), "timeout" (seconds per reply,
 default BOT_TIMEOUT; raise it for a slow local model) and "fallback_replies":
@@ -429,6 +436,78 @@ class ClaudeBedrockConversation(Conversation):
         return text
 
 
+class WebWidgetConversation(Conversation):
+    """A chat widget on a web page, driven in its own headless browser. A reply is every bot message that appeared
+    after ours, once the last one has stopped changing (widgets stream text in)."""
+
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        try:
+            from playwright.sync_api import Error as PlaywrightError, sync_playwright
+        except ImportError as e:
+            raise BotError("web_widget bots need Playwright: .venv/bin/pip install playwright") from e
+        self._error = PlaywrightError
+        self.timeout_ms = int(1000 * float(cfg.get("timeout", TIMEOUT)))
+        self.settle_ms = int(cfg.get("settle_ms", 1500))
+        self._pw = sync_playwright().start()
+        try:
+            path = cfg.get("browser_path") or os.environ.get("CHROME_PATH")
+            self._browser = self._pw.chromium.launch(headless=cfg.get("headless", True),
+                                                     **({"executable_path": path} if path else {}))
+            self.page = self._browser.new_page()
+            self.page.goto(cfg["url"], timeout=self.timeout_ms)
+            if cfg.get("open_selector"):
+                self.page.click(cfg["open_selector"], timeout=self.timeout_ms)
+            self.page.wait_for_selector(cfg["input_selector"], state="visible", timeout=min(self.timeout_ms, 30000))
+        except self._error as e:
+            self.close()
+            raise BotError(f"Chat widget not usable at {cfg['url']} (login, CAPTCHA or a selector that matches "
+                           f"nothing?): {str(e).splitlines()[0][:200]}") from e
+        except Exception:
+            self.close()
+            raise
+
+    def _texts(self):
+        return [t.strip() for t in self.page.locator(self.cfg["reply_selector"]).all_inner_texts()]
+
+    def _send(self, message):
+        before = len(self._texts())
+        try:
+            box = self.page.locator(self.cfg["input_selector"]).first
+            box.fill(message, timeout=10000)
+            if self.cfg.get("send_selector"):
+                self.page.click(self.cfg["send_selector"], timeout=10000)
+            else:
+                box.press("Enter")
+        except self._error as e:
+            raise BotError(f"Could not send the message in the widget: {str(e).splitlines()[0][:200]}") from e
+        deadline = time.monotonic() + self.timeout_ms / 1000
+        last, stable_since = None, None
+        while time.monotonic() < deadline:
+            texts = self._texts()
+            new = [t for t in texts[before:] if t]
+            if new:
+                if new != last:
+                    last, stable_since = new, time.monotonic()
+                elif (time.monotonic() - stable_since) * 1000 >= self.settle_ms:
+                    return "\n".join(new)
+            self.page.wait_for_timeout(200)
+        if last:
+            return "\n".join(last)  # still changing at the timeout: take what is there
+        raise BotError(f"No reply in the widget within {self.timeout_ms // 1000}s (reply_selector "
+                       f"{self.cfg['reply_selector']!r} found no new message)")
+
+    def close(self):
+        for thing in ("_browser", "_pw"):
+            obj = getattr(self, thing, None)
+            if obj is not None:
+                try:
+                    obj.close() if thing == "_browser" else obj.stop()
+                except Exception:
+                    pass
+                setattr(self, thing, None)
+
+
 ADAPTERS = {
     "voltkart": VoltKartConversation,
     "http": HttpConversation,
@@ -436,6 +515,7 @@ ADAPTERS = {
     "supportflow": SupportFlowConversation,
     "openai_compatible": OpenAICompatibleConversation,
     "claude_bedrock": ClaudeBedrockConversation,
+    "web_widget": WebWidgetConversation,
 }
 
 
@@ -446,6 +526,7 @@ REQUIRED = {
     "supportflow": ["base_url", "email", "password"],
     "openai_compatible": ["base_url", "model"],
     "claude_bedrock": ["model"],
+    "web_widget": ["url", "input_selector", "reply_selector"],
 }
 
 

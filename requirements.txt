@@ -3,3 +3,4 @@ fastapi
 uvicorn
 python-dotenv
 boto3
+playwright  # only for web_widget bots (chat widgets on a web page); uses CHROME_PATH or `playwright install chromium`

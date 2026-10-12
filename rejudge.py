@@ -53,11 +53,14 @@ def main():
 
     def grade(r):
         profile = evaluator.profile_for(suite, bots[r["bot_id"]])
+        old = r.get("judge")
         try:
             r["judge"] = evaluator.judge(profile.get("context"), r.get("rubric"), r["turns"])
             r.pop("judge_error", None)
+            evaluator.keep_spent(r, [evaluator.verdict_spent(old)], "judge", "replaced")  # still paid for
         except BotError as e:
             r["judge_error"] = str(e)
+            evaluator.keep_spent(r, evaluator.llm.spent_from(e), "judge", "rejected")
         return r
 
     with ThreadPoolExecutor(evaluator.CONCURRENCY) as pool:
@@ -72,11 +75,17 @@ def main():
     if "--compare" in sys.argv:
         run_bots = [bots[b["id"]] for b in run["bots"] if b["id"] in bots]
         print(f"Comparing answers side by side with {evaluator.JUDGE_MODEL}...")
+        evaluator.retire_judging(run, comparisons=run.get("comparisons") or [])
         run["comparisons"] = evaluator.run_comparisons({**run, "results": results}, suite, run_bots)
         run["comparative"] = True
         failed = sum(1 for c in run["comparisons"] if c.get("error"))
         print(f"  {len(run['comparisons'])} cases compared" + (f", {failed} failed" if failed else ""))
     run["summary"] = evaluator.summarise(run, suite)
+    ju = run["summary"].get("judge_usage")
+    if ju:
+        cost = "no price" if ju["cost"] is None else f"${ju['cost']:,.4f}"
+        print(f"AI judge, whole run: {ju['total_tokens']:,} tokens in {ju['usage_calls']} calls, estimated {cost}"
+              + (f" ({ju['unpriced_calls']} calls unpriced)" if ju["cost"] is not None and ju["unpriced_calls"] else ""))
     evaluator.save_run_file(run, path)  # atomic; the server picks up the change on the next view
     governance.record("run.rejudge", run_id, results_sha256=governance.seal(run), regraded=len(todo),
                       judge_model=run.get("judge_model"), compare="--compare" in sys.argv,

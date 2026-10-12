@@ -1,0 +1,20 @@
+# Runs the nightly regression check once (started by chatbot-compare-nightly.timer).
+# Install as a user service on any always-on Linux host (a VM, a mini PC, a server) that has this project and the
+# bots checked out the same way as in bots.json "servers":
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/chatbot-compare-nightly.* ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now chatbot-compare-nightly.timer
+#   loginctl enable-linger "$USER"     # keep user timers running while nobody is logged in
+# Alerts go to REGRESSION_WEBHOOK (in .env), so the team sees them without opening this machine.
+[Unit]
+Description=Chatbot Compare nightly regression check
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/chatbot-compare
+ExecStart=/bin/sh -c 'exec %h/projects/chatbot-compare/nightly.sh >> %h/projects/chatbot-compare/runs/nightly.log 2>&1'
+TimeoutStartSec=6h
+# Exit codes 1 (warnings) and 2 (critical regressions) are results, not a failed service.
+SuccessExitStatus=1 2

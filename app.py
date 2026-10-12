@@ -6,6 +6,7 @@ import math
 import logging
 import os
 import random
+import re
 import secrets
 import threading
 import time
@@ -27,6 +28,8 @@ import compliance
 import evaluator
 import export
 import governance
+import prices
+import quickbot
 import review
 from adapters import BotError, open_conversation, validate
 
@@ -82,7 +85,8 @@ def read_bots_file():
 
 
 def load_bots():
-    bots = [b for b in read_bots_file()["bots"] if b.get("enabled", True)]
+    """bots.json's enabled bots, then the ones added by URL (bots.quick.json)."""
+    bots = [b for b in read_bots_file()["bots"] + quickbot.load() if b.get("enabled", True)]
     valid = []
     for b in bots:
         try:
@@ -101,8 +105,11 @@ def find_bots(ids):
     return [bots[i] for i in ids]
 
 
-def public(bot):
-    return {k: bot.get(k) for k in ("id", "label", "type", "description", "llm")} | {"app": evaluator.app_of(bot)}
+def public(bot, snapshot=None):
+    return {k: bot.get(k) for k in ("id", "label", "type", "description", "llm")} | {
+        "app": evaluator.app_of(bot), "quick": bool(bot.get("quick")),
+        "remote": bool(governance.remote_bots([bot])),  # test messages would leave this machine
+        "priced": bool(evaluator.priced_config(bot, snapshot).get("pricing"))}
 
 
 @app.get("/api/health")
@@ -114,13 +121,21 @@ def health():
 def bots():
     """The enabled bots, and the presets from bots.json; a preset naming a disabled or unknown bot says which."""
     enabled = {b["id"]: b for b in load_bots()}
+    snapshot = prices.latest()
     presets = []
     for p in read_bots_file().get("presets", []):
         missing = [i for i in p.get("bots", []) if i not in enabled]
         presets.append({**p, "missing": missing,
                         "run_type": None if missing else evaluator.run_type([enabled[i] for i in p["bots"]])})
-    return {"bots": [public(b) for b in enabled.values()], "presets": presets,
-            "judge": {"model": evaluator.JUDGE_MODEL, "second_judge": evaluator.SECOND_JUDGE_MODEL or None}}
+    return {"bots": [public(b, snapshot) for b in enabled.values()], "presets": presets,
+            "prices": {"date": snapshot.get("date"), "models": len(snapshot.get("models") or {})} if snapshot else None,
+            "judge": {"model": evaluator.JUDGE_MODEL, "second_judge": evaluator.SECOND_JUDGE_MODEL or None,
+                      "rpm": evaluator.llm.JUDGE.rpm or None, "daily_limit": evaluator.llm.JUDGE.daily_limit,
+                      "fallback": evaluator.llm.JUDGE.fallback.model if evaluator.llm.JUDGE.fallback else None,
+                      "second_sample": evaluator.SECOND_JUDGE_SAMPLE,
+                      "remote": governance.remote_judges([evaluator.llm.JUDGE]),
+                      "second_remote": governance.remote_judges([evaluator.llm.SECOND_JUDGE] if evaluator.llm.SECOND_JUDGE else []),
+                      "unpriced": evaluator.unpriced([], evaluator.pinned_judge_pricing(snapshot, True), True, True)}}
 
 
 @app.post("/api/bots/{bot_id}/ping")
@@ -135,6 +150,74 @@ def ping(bot_id: str):
         conv.close()
 
 
+# ---------- Adding a bot by URL ----------
+
+class DetectRequest(BaseModel):
+    url: str
+    model: str = ""  # OpenAI-compatible APIs: the model id (default: the first one /models lists)
+    api_key_env: str = ""  # the .env variable holding its API key, if it needs one
+    send_ok: bool = False  # consent to send a test message to a URL off this machine
+
+
+class QuickBotRequest(BaseModel):
+    label: str
+    config: dict
+
+
+@app.post("/api/bots/detect")
+def detect_bot(req: DetectRequest):
+    """Send one test message to the URL and work out how to chat with it (see quickbot.py)."""
+    if governance.remote_bots([{"id": "new", "url": req.url}]) and not req.send_ok:
+        raise HTTPException(400, "This URL is not on this machine: allow sending it a test message first")
+    if req.api_key_env and not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", req.api_key_env):
+        raise HTTPException(400, "The API key variable must be a name like MY_BOT_API_KEY (set it in .env)")
+    try:
+        return quickbot.detect(req.url, req.model.strip() or None, req.api_key_env or None)
+    except BotError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/bots/quick")
+def add_quick_bot(req: QuickBotRequest):
+    taken = {b["id"] for b in read_bots_file()["bots"] + quickbot.load()}
+    try:
+        bot = quickbot.add(req.label, req.config, taken)
+    except BotError as e:
+        raise HTTPException(400, str(e))
+    governance.record("bot.add", bot["id"], type=bot["type"], url=bot.get("url") or bot.get("base_url"))
+    return public(bot)
+
+
+@app.delete("/api/bots/quick/{bot_id}")
+def remove_quick_bot(bot_id: str):
+    try:
+        quickbot.remove(bot_id)
+    except KeyError:
+        raise HTTPException(404, "No such bot added by URL")
+    governance.record("bot.remove", bot_id)
+    return {"ok": True}
+
+
+# ---------- Prices (LiteLLM catalogue snapshots) ----------
+
+@app.get("/api/prices")
+def price_snapshot():
+    snap = prices.latest()
+    return {"date": snap.get("date"), "models": len(snap.get("models") or {}), "url": snap.get("url")} if snap else {}
+
+
+@app.post("/api/prices/update")
+def update_prices():
+    try:
+        info = prices.update()
+    except (RuntimeError, ValueError, OSError) as e:
+        raise HTTPException(502, str(e))
+    except Exception as e:  # network errors from the HTTP client
+        raise HTTPException(502, f"Could not download the price catalogue: {e}")
+    governance.record("prices.update", info["date"], models=info["models"])
+    return {"date": info["date"], "models": info["models"]}
+
+
 # ---------- Evaluation runs ----------
 
 class RunRequest(BaseModel):
@@ -146,6 +229,12 @@ class RunRequest(BaseModel):
     second_judge: bool = False  # a judge from another model family re-grades a sample
     rewordings: bool = False  # also ask every reworded version of the cases that have them
     cases: list[str] | None = None  # only these case ids (default: the whole suite)
+    budget_usd: float | None = None  # stop starting new cases once the estimated spend reaches this
+    consent: dict = {}  # {"send_to_bots": bool, "share_with_judge": bool}: needed for bots / a judge off this machine
+
+
+class ResumeRequest(BaseModel):
+    budget_usd: float | None = None  # a new budget for the rest of the run
 
 
 @app.get("/api/suites")
@@ -172,7 +261,8 @@ def start_run(req: RunRequest):
     try:
         run = evaluator.start_run(find_bots(list(dict.fromkeys(req.bots))), req.suite, req.judge,
                                   repeats=req.repeats, comparative=req.comparative, second_judge=req.second_judge,
-                                  rewordings=req.rewordings, case_ids=req.cases)
+                                  rewordings=req.rewordings, case_ids=req.cases, budget_usd=req.budget_usd,
+                                  consent=req.consent)
     except ValueError as e:  # e.g. a bot with no matching profile
         raise HTTPException(400, str(e))
     except FileNotFoundError as e:  # e.g. a profile's data file has moved
@@ -212,6 +302,46 @@ def run_report(run_id: str):
     if r is None:
         raise HTTPException(404, "No such run")
     return HTMLResponse(export.report_html(r))
+
+
+@app.get("/api/runs/{run_id}/report.pdf")
+def run_pdf(run_id: str):
+    r = evaluator.get_run(run_id)
+    if r is None:
+        raise HTTPException(404, "No such run")
+    try:
+        pdf = export.report_pdf(r)
+    except export.PdfUnavailable as e:
+        raise HTTPException(503, str(e))
+    return Response(pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="chatbot-compare-{run_id}.pdf"'})
+
+
+@app.post("/api/runs/{run_id}/cancel")
+def cancel_run(run_id: str):
+    try:
+        evaluator.cancel_run(run_id)
+    except KeyError:
+        raise HTTPException(404, "No such run")
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    return {"ok": True}
+
+
+@app.post("/api/runs/{run_id}/resume")
+def resume_run(run_id: str, req: ResumeRequest | None = None):
+    r = evaluator.get_run(run_id)
+    if r is None:
+        raise HTTPException(404, "No such run")
+    try:
+        evaluator.resume_run(run_id, find_bots([b["id"] for b in r["bots"]]), budget_usd=req and req.budget_usd)
+    except KeyError:
+        raise HTTPException(404, "No such run")
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(400, f"Missing file: {e.filename}")
+    return {"id": run_id}
 
 
 @app.delete("/api/runs/{run_id}")

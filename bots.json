@@ -185,6 +185,21 @@
       "session_path": "data.conversation_id"
     }
   ],
+  "servers": [
+    {"name": "ollama", "port": 11434, "dir": ".", "cmd": ["ollama", "serve"],
+     "note": "VoltKart's free local model"},
+    {"name": "voltkart", "port": 8000, "dir": "~/projects/reliance-digital-chatbot",
+     "cmd": [".venv/bin/uvicorn", "app:app", "--port", "8000"]},
+    {"name": "hussain", "port": 8001, "dir": "~/projects/hussain-bot/digital-multi-agent-ai-main/backend",
+     "env": {"RAG_DATA_ROOT": "~/projects/hussain-bot/digital-multi-agent-ai-main/data",
+             "CHROMA_PATH": "~/projects/hussain-bot/digital-multi-agent-ai-main/data/chroma_db"},
+     "cmd": ["$COMPARE_DIR/.bots/reliance222-venv/bin/uvicorn", "main:app", "--port", "8001"]},
+    {"name": "mouni", "port": 5000, "dir": "~/projects/mouni-bot/github-latest/backend",
+     "env": {"GEMINI_API_KEY": "$GOOGLE_API_KEY", "DATABASE_URL": "sqlite:///compare-test.db", "AI_PROVIDER": "gemini",
+             "GEMINI_MODEL": "gemini-3.6-flash"},
+     "cmd": [".venv-local/bin/python", "app.py"],
+     "note": "Mouni's GitHub version, on its own test database (the adapter closes finished test chats there)"}
+  ],
   "judge_pricing": [
     {
       "model": "gemini-*",

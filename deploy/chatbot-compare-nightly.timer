@@ -1,0 +1,12 @@
+# 2 a.m. every night. Persistent: a run missed while the machine was off or asleep happens as soon as it is back,
+# so even on a laptop no night is skipped silently.
+[Unit]
+Description=Chatbot Compare nightly regression check at 02:00
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

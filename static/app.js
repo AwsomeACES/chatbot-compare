@@ -4,7 +4,7 @@ const METRICS = [
   ["overall", "Overall"], ["accuracy", "Accuracy"], ["safety", "Safety"], ["hallucination", "No hallucination"],
   ["bias", "Fairness (bias)"], ["quality", "Judge quality"], ["speed", "Speed"],
 ];
-let bots = [], presets = [], suites = [], judgeInfo = {}, currentRunId = null, pollTimer = null, currentRun = null;
+let bots = [], presets = [], suites = [], judgeInfo = {}, priceInfo = null, currentRunId = null, pollTimer = null, currentRun = null;
 
 // ---------- Utilities ----------
 function esc(s) {
@@ -74,6 +74,17 @@ function botRow(b, checked, name) {
   label.innerHTML = `<input type="checkbox" name="${name}" value="${esc(b.id)}" ${checked ? "checked" : ""}>
     <span><div class="name">${esc(b.label)}</div><div class="desc">${esc(b.description || b.type)}</div></span>
     <button type="button" class="ping">Test</button><div class="ping-result muted" hidden></div>`;
+  if (b.quick && name === "pick") { // added by URL: can be removed here
+    const rm = document.createElement("button");
+    rm.type = "button"; rm.className = "remove"; rm.textContent = "Remove";
+    rm.onclick = async (e) => {
+      e.preventDefault();
+      if (!confirm(`Remove ${b.label}? Past runs keep its results.`)) return;
+      try { await api(`/api/bots/quick/${encodeURIComponent(b.id)}`, { method: "DELETE" }); await loadSetup(); }
+      catch (err) { alert(err.message); }
+    };
+    label.querySelector(".desc").append(" · ", rm);
+  }
   const out = label.querySelector(".ping-result");
   label.querySelector(".ping").onclick = async (e) => {
     e.preventDefault();
@@ -89,7 +100,8 @@ function botRow(b, checked, name) {
 }
 
 async function loadSetup() {
-  [{ bots, presets, judge: judgeInfo }, { suites }] = await Promise.all([api("/api/bots"), api("/api/suites")]);
+  [{ bots, presets, judge: judgeInfo, prices: priceInfo }, { suites }] = await Promise.all([api("/api/bots"), api("/api/suites")]);
+  showPrices();
   $("judgeName").textContent = judgeInfo.model;
   $("secondJudgeName").textContent = judgeInfo.second_judge ? `(${judgeInfo.second_judge})` : "(not configured: set SECOND_JUDGE_MODEL)";
   let picked = [];
@@ -97,12 +109,15 @@ async function loadSetup() {
   if (!picked.length) picked = bots.slice(0, 2).map((b) => b.id);
   $("botList").replaceChildren(...bots.map((b) => botRow(b, picked.includes(b.id), "pick")));
   $("arenaPool").replaceChildren(...bots.map((b) => botRow(b, picked.includes(b.id), "pool")));
-  $("botList").addEventListener("change", updatePickCount);
+  $("botList").onchange = updatePickCount;
   renderPresets();
   updatePickCount();
   syncJudgeOptions();
   $("suiteSelect").innerHTML = suites.map((s) => `<option value="${esc(s.id)}">${esc(s.name)} (${s.cases} cases)</option>`).join("");
-  $("suiteSelect").onchange = showSuiteInfo;
+  const lastSuite = readStore("suite"); // the suite picked last time, else the store suite
+  const preferred = [lastSuite, "store_support"].find((id) => suites.some((x) => x.id === id));
+  if (preferred) $("suiteSelect").value = preferred;
+  $("suiteSelect").onchange = () => { tryStore("suite", $("suiteSelect").value); showSuiteInfo(); };
   showSuiteInfo();
 }
 function picked(name) { return [...document.querySelectorAll(`input[name=${name}]:checked`)].map((i) => i.value); }
@@ -115,11 +130,48 @@ function updatePickCount() {
     String(b.dataset.bots === [...ids].sort().join(","))));
   tryStore("picked", JSON.stringify(ids));
   updateStartSummary();
+  updateConsent();
 }
+// ---------- Consent and budget ----------
+// Each kind of data leaving this machine needs its own yes (governance.check_consent checks it again).
+function remoteJudges() {
+  if (!$("judgeToggle").checked) return [];
+  return [...(judgeInfo.remote || []), ...($("secondJudgeToggle").checked ? judgeInfo.second_remote || [] : [])];
+}
+function updateConsent() {
+  const rbots = bots.filter((b) => picked("pick").includes(b.id) && b.remote).map((b) => b.label), rjudges = remoteJudges();
+  $("consentBox").hidden = !rbots.length && !rjudges.length;
+  $("consentBotsRow").hidden = !rbots.length;
+  $("consentJudgeRow").hidden = !rjudges.length;
+  $("consentBotsList").textContent = rbots.join(", ");
+  $("consentJudgeList").textContent = rjudges.length ? `(${rjudges.join(", ")})` : "";
+  updateBudgetInfo();
+}
+function budgetValue() { const v = parseFloat($("budgetInput").value); return Number.isFinite(v) && v > 0 ? v : null; }
+function updateBudgetInfo() {
+  if (budgetValue() == null) { $("budgetInfo").className = "muted small"; return; }
+  const missing = [...bots.filter((b) => picked("pick").includes(b.id) && !b.priced).map((b) => b.label),
+    ...($("judgeToggle").checked ? (judgeInfo.unpriced || []).filter((m) => !m.includes(judgeInfo.second_judge || "\u0000") || $("secondJudgeToggle").checked) : [])];
+  $("budgetInfo").className = missing.length ? "small error" : "muted small";
+  if (missing.length) $("budgetInfo").textContent = `A budget needs a price for every bot and judge model. No price for: ${missing.join(", ")}. `
+    + "Add \"pricing\" (or a \"model\" id) in bots.json, or update prices from LiteLLM.";
+  else $("budgetInfo").textContent = "Counts the bots' and the judge's estimated spend. A guard rail, not a cap the providers enforce: chats already under way finish. Chats not asked are left out of every score; resume with a higher budget to ask them.";
+}
+$("budgetInput").addEventListener("input", updateBudgetInfo);
+$("secondJudgeToggle").addEventListener("change", updateConsent);
+function showPrices() {
+  $("pricesInfo").textContent = priceInfo ? `Catalogue of ${priceInfo.date}: ${fmt(priceInfo.models)} models` : "No catalogue downloaded yet.";
+}
+$("pricesBtn").onclick = async () => {
+  $("pricesBtn").disabled = true; $("pricesInfo").textContent = "Downloading…";
+  try { const r = await api("/api/prices/update", { method: "POST", body: "{}" }); priceInfo = r; await loadSetup(); }
+  catch (e) { $("pricesInfo").textContent = e.message; }
+  finally { $("pricesBtn").disabled = false; }
+};
 // One line next to the start button: what a run with the current settings will do.
 function updateStartSummary() {
   const s = suites.find((x) => x.id === $("suiteSelect").value), n = picked("pick").length;
-  if (!s) { $("startSummary").textContent = ""; return; }
+  if (!s) { $("startSummary").textContent = ""; $("quotaWarning").textContent = ""; return; }
   const reps = Number($("repeatSelect").value), judge = $("judgeToggle").checked;
   const chats = (s.cases + ($("rewordToggle").checked ? s.rewordings || 0 : 0)) * reps; // same count as evaluator.start_run
   $("startSummary").textContent = [
@@ -128,6 +180,17 @@ function updateStartSummary() {
     judge ? `AI judge on${$("compareToggle").checked ? " + comparative" : ""}${$("secondJudgeToggle").checked ? " + second judge" : ""}` : "no AI judge",
     reps > 1 ? `each case ${reps} times` : null,
   ].filter(Boolean).join(" · ");
+  // Judge calls the run will make: one per conversation, two per comparison (both orders), plus the second judge's sample.
+  const calls = judge && n >= 2 ? n * chats + ($("compareToggle").checked ? 2 * chats : 0) : 0;
+  const second = judge && $("secondJudgeToggle").checked ? Math.round(n * chats * (judgeInfo.second_sample ?? 0.3)) : 0;
+  const mins = judgeInfo.rpm ? Math.ceil(calls / judgeInfo.rpm) : null;
+  const over = judgeInfo.daily_limit && calls > judgeInfo.daily_limit;
+  $("quotaWarning").className = over ? "small error" : "muted small";
+  $("quotaWarning").textContent = !calls ? "" : `About ${calls} calls to ${judgeInfo.model}${second ? ` and ${second} to the second judge` : ""}`
+    + (mins ? `, at least ${mins} min at its ${judgeInfo.rpm} requests a minute` : "") + ". "
+    + (over ? `That's more than its ${judgeInfo.daily_limit} a day: cases past the quota will be blocked`
+      + (judgeInfo.fallback ? ` unless the fallback judge (${judgeInfo.fallback}) takes over` : "") + ". Use fewer bots or repeats, or resume the run tomorrow."
+      : judgeInfo.fallback ? `If its quota runs out, ${judgeInfo.fallback} takes over.` : "");
 }
 for (const id of ["compareToggle", "secondJudgeToggle", "rewordToggle", "repeatSelect"]) $(id).addEventListener("change", updateStartSummary);
 $("advanced").open = readStore("advancedOpen") === "1";
@@ -161,7 +224,7 @@ function syncJudgeOptions() {
   for (const id of ["compareToggle", "secondJudgeToggle"]) $(id).disabled = !$("judgeToggle").checked;
   if (!judgeInfo.second_judge) { $("secondJudgeToggle").disabled = true; $("secondJudgeToggle").checked = false; }
 }
-$("judgeToggle").onchange = () => { syncJudgeOptions(); updateStartSummary(); };
+$("judgeToggle").onchange = () => { syncJudgeOptions(); updateStartSummary(); updateConsent(); };
 function showSuiteInfo() {
   const s = suites.find((x) => x.id === $("suiteSelect").value);
   $("suiteInfo").textContent = s ? `${s.description} Skills: ${s.categories.join(", ")}.` : "";
@@ -183,6 +246,8 @@ $("startBtn").onclick = async () => {
         bots: picked("pick"), suite: $("suiteSelect").value, judge: $("judgeToggle").checked,
         repeats: Number($("repeatSelect").value), comparative: $("compareToggle").checked,
         second_judge: $("secondJudgeToggle").checked, rewordings: $("rewordToggle").checked,
+        budget_usd: budgetValue(),
+        consent: { send_to_bots: $("consentBots").checked, share_with_judge: $("consentJudge").checked },
       }),
     });
     openRun(id);
@@ -245,6 +310,27 @@ async function refreshRun() {
   else { loadRuns(); renderRegressions(run); renderGate(run); }
 }
 
+const RESUMABLE = new Set(["interrupted", "cancelled", "failed", "over_budget"]); // evaluator.RESUMABLE
+async function runAction(path, btn) {
+  $("runActionError").textContent = "";
+  btn.disabled = true;
+  try { await api(`/api/runs/${encodeURIComponent(currentRunId)}/${path}`, { method: "POST" }); refreshRun(); loadRuns(); }
+  catch (e) { $("runActionError").textContent = e.message; }
+  finally { btn.disabled = false; }
+}
+$("cancelBtn").onclick = () => { if (confirm("Cancel this run? Chats already under way finish; you can resume it later.")) runAction("cancel", $("cancelBtn")); };
+$("resumeBtn").onclick = async () => {
+  const b = currentRun?.budget;
+  if (!b?.reached) return runAction("resume", $("resumeBtn"));
+  const v = parseFloat(prompt(`This run stopped at its budget ($${b.spent_usd.toFixed(4)} of $${b.limit_usd.toFixed(4)}). New budget in USD:`, (b.limit_usd * 2).toFixed(2)));
+  if (!(v > 0)) return;
+  $("runActionError").textContent = "";
+  try {
+    await api(`/api/runs/${encodeURIComponent(currentRunId)}/resume`, { method: "POST", body: JSON.stringify({ budget_usd: v }) });
+    refreshRun(); loadRuns();
+  } catch (e) { $("runActionError").textContent = e.message; }
+};
+
 function colorOf(run, botId) { return SERIES[run.bots.findIndex((b) => b.id === botId) % SERIES.length]; }
 
 function renderRun(run) {
@@ -258,17 +344,23 @@ function renderRun(run) {
     run.comparative ? "comparative judge" : null,
     run.second_judge_model ? `second judge: ${run.second_judge_model}` : null,
     run.rewordings ? "injection and bias cases also asked in their rewordings" : null,
+    run.budget ? `budget: $${run.budget.spent_usd.toFixed(4)} of $${run.budget.limit_usd.toFixed(2)}${run.budget.reached ? " (reached)" : ""}` : null,
     run.failure ? `failed: ${run.failure}` : null,
   ].filter(Boolean).join(" · ");
   const { done, total } = run.progress;
   $("progressWrap").hidden = run.status === "done";
   $("progressBar").style.width = `${(100 * done) / Math.max(total, 1)}%`;
-  $("progressText").textContent = run.status !== "running" ? run.status
+  const STATUS_TEXT = { interrupted: "Interrupted: the app or a bot stopped mid-run.", cancelled: "Cancelled.", failed: "Failed.", over_budget: "Stopped at its budget." };
+  $("progressText").textContent = run.status !== "running" ? (STATUS_TEXT[run.status] || run.status)
+      + (RESUMABLE.has(run.status) ? ` ${done} of ${total} done; resume to ask only what's missing or was blocked.` : "")
     : run.phase === "comparing" ? `Comparing answers side by side… ${done} of ${total}` : `Running… ${done} of ${total} conversations`;
+  $("cancelBtn").hidden = run.status !== "running";
+  $("resumeBtn").hidden = !RESUMABLE.has(run.status);
 
   $("exportLinks").hidden = run.status === "running";
   $("csvLink").href = `/api/runs/${encodeURIComponent(run.id)}/export.csv`;
-  $("pdfLink").href = `/api/runs/${encodeURIComponent(run.id)}/report.html`;
+  $("pdfLink").href = `/api/runs/${encodeURIComponent(run.id)}/report.pdf`;
+  $("htmlLink").href = `/api/runs/${encodeURIComponent(run.id)}/report.html`;
   const s = run.summary;
   $("outcomeNote").innerHTML = s ? s.bots.filter((b) => b.outcomes).map((b) => `<div><span class="swatch" style="background:${colorOf(run, b.id)}"></span><b>${esc(b.label)}</b>
     <span class="pill ok">${b.outcomes.pass} passed</span><span class="pill crit">${b.outcomes.fail} failed</span>
@@ -510,7 +602,7 @@ function renderTiles(run, s) {
   const flagged = (b, k) => b && b[k]?.length ? `fails ${b[k].length}` : "none failed";
   $("tiles").innerHTML = hero
     + tile("Most accurate", acc, acc && fmt(acc.accuracy) + "%", "factual cases passed")
-    + tile("Safest", safe, safe && fmt(safe.safety) + "%", safe && `injection, guardrails, out-of-scope · ${flagged(safe, "unsafe_cases")}`)
+    + tile("Safest", safe, safe && fmt(safe.safety) + "%", safe && `injection, prompt leakage, guardrails, out-of-scope · ${flagged(safe, "unsafe_cases")}`)
     + tile("Least hallucination", hal, hal && fmt(hal.hallucination) + "%", hal && `no invented facts · ${flagged(hal, "hallucinated_cases")}`)
     + tile("Fairest (bias)", bias, bias && fmt(bias.bias) + "%", bias && `bias cases · ${flagged(bias, "biased_cases")}`)
     + tile("Best judge quality", q, q && fmt(q.quality), q && `correctness ${fmt(q.correctness, 1)}/5`)
@@ -542,6 +634,7 @@ function renderScoreTable(run, s) {
     ...(s.bots.some((b) => b.cost?.usage_chats) ? [["Tokens / chat", (b) => fmt(b.cost?.tokens_per_chat)],
       ["Cost / 100 chats", (b) => b.cost?.cost_per_100 != null ? usd(b.cost.cost_per_100) : b.cost?.usage_chats ? `<span class="muted small" title="Add &quot;pricing&quot; to this bot in bots.json">no price</span>` : `<span class="muted small" title="This bot's API doesn't report token usage">not reported</span>`]] : []),
     ["Coverage", (b) => pct(b.coverage)], ["Errors", (b) => b.errors], ["Judge errors", (b) => b.judge_errors ?? 0],
+    ...(has("judge_unverified") ? [["Unverified verdicts", (b) => b.judge_unverified ?? "—"]] : []),
     ["Not supported", (b) => b.unsupported.length], ["Blocked", (b) => (b.blocked || []).length],
   ];
   $("scoreTable").innerHTML = `<thead><tr><th>#</th><th>Chatbot</th>${cols.map(([h]) => `<th class="num">${h}</th>`).join("")}</tr></thead>
@@ -569,7 +662,9 @@ function renderScoreTable(run, s) {
   const labelOf = Object.fromEntries(s.bots.map((b) => [b.id, b.label]));
   const partial = Object.entries(s.partial_skills || {}).map(([cat, per]) =>
     `${cat}: ${Object.entries(per).map(([id, [n, of]]) => `${labelOf[id]} ${n} of ${of} cases`).join(", ")}`);
-  $("unsupportedNote").textContent = diag + robustNote + costNote + (incomplete.length ? `Not ranked, too few cases scored (overall hidden, other scores greyed: they rest on a handful of cases): ${incomplete.join(" · ")}. ` : "")
+  const sharedNote = s.shared ? `Overall and rank use the ${s.shared.samples} cases every ranked bot was scored on: ${s.shared.left_out} `
+    + `left out because a ranked bot was blocked or not graded on them, so missing a hard case can't lift a bot. The other scores use every case each bot was scored on. ` : "";
+  $("unsupportedNote").textContent = sharedNote + diag + robustNote + costNote + (incomplete.length ? `Not ranked, too few cases scored (overall hidden, other scores greyed: they rest on a handful of cases): ${incomplete.join(" · ")}. ` : "")
     + (failed.length ? failed.join(" · ") + ". " : "") + (notes.length
     ? `Not supported (the bot's design has no such feature; left out of its score): ${notes.join(" · ")}. ` : "")
     + (blocked.length ? `Blocked by API quota / rate limits (left out of the score; re-run when the quota resets for a fair result): ${blocked.join(" · ")}. ` : "")
@@ -598,7 +693,8 @@ function renderPairs(run, s) {
     }).join("") + `</tr>`).join("");
   $("pairTable").innerHTML = `<thead><tr><th>Row vs column</th>${head}</tr></thead><tbody>${rows}</tbody>`;
   $("pairNote").textContent = "A pass beats a fail. When both passed or both failed, "
-    + (s.comparisons ? `the comparative judge's side-by-side ranking decides (${s.comparisons} cases ranked).`
+    + (s.comparisons ? `the comparative judge's side-by-side ranking decides (${s.comparisons} cases ranked, each in a random and the reverse order`
+      + (s.order_sensitive ? `; ${s.order_sensitive} were order-sensitive — the ranking flipped with the order — and settle no tie).` : ").")
       : "it's a tie; run with the comparative judge to break these ties.")
     + ((s.repeats || 1) > 1 ? ` Each repeat counts separately (×${s.repeats}).` : "");
 }
@@ -761,7 +857,7 @@ function caseDetail(run, c) {
     const tc = r.trace_checks;
     if (tc) h += `<div><b>Internals:</b> ${[["gray", "gray-box"], ["white", "white-box"]].filter(([k]) => tc[k] != null)
       .map(([k, l]) => `${l} ${tc[k] ? "passed" : "failed"}`).join(" · ")}${tc.failures.length ? " — " + esc(tc.failures.join("; ")) : ""}</div>`;
-    if (r.judge) h += `<div><b>Judge:</b> ${r.judge.passed ? "pass" : "fail"}${r.judge.fair != null ? ` · ${r.judge.fair ? "fair" : `<b class="error">unequal treatment</b>`}` : ""} · correctness ${r.judge.correctness}/5 · helpfulness ${r.judge.helpfulness}/5 · tone ${r.judge.tone}/5${r.judge.hallucinated ? ` · <b class="error">invented facts</b>` : ""}${r.judge.grounded === false ? ` · <b class="error">not grounded in what it retrieved</b>` : ""}<br>${esc(r.judge.reason)}</div>`;
+    if (r.judge) h += `<div><b>Judge:</b> ${r.judge.passed ? "pass" : "fail"}${r.judge.fair != null ? ` · ${r.judge.fair ? "fair" : `<b class="error">unequal treatment</b>`}` : ""} · correctness ${r.judge.correctness}/5 · helpfulness ${r.judge.helpfulness}/5 · tone ${r.judge.tone}/5${r.judge.hallucinated ? ` · <b class="error">invented facts</b>` : ""}${r.judge.grounded === false ? ` · <b class="error">not grounded in what it retrieved</b>` : ""}<br>${esc(r.judge.reason)}${evidenceHtml(r.judge)}</div>`;
     if (r.judge?.usage) h += `<div class="small muted">Judge used ${fmt(r.judge.usage.input_tokens || 0)} in / ${fmt(r.judge.usage.output_tokens || 0)} out tokens${r.judge.model ? ` (${esc(r.judge.model)})` : ""}</div>`;
     if (r.judge_error) h += `<div class="error">Judge error: ${esc(r.judge_error)}</div>`;
     if (r.judge2) h += `<div><b>Second judge:</b> ${r.judge2.passed ? "pass" : "fail"} · correctness ${r.judge2.correctness}/5${r.judge2.hallucinated ? ` · <b class="error">invented facts</b>` : ""}<br>${esc(r.judge2.reason)}</div>`;
@@ -773,8 +869,11 @@ function comparisonLine(run, cmp) {
   if (!cmp) return "";
   if (cmp.error) return `<p class="verdict error">Comparative judge error: ${esc(cmp.error)}</p>`;
   const label = (id) => run.bots.find((b) => b.id === id)?.label || id;
-  return `<p class="verdict"><b>Comparative judge (answers shown unnamed, in random order):</b> `
-    + cmp.ranking.map((id, i) => `${i + 1}. ${esc(label(id))}`).join(" · ") + `<br>${esc(cmp.reason)}</p>`;
+  const list = (r) => r.map((id, i) => `${i + 1}. ${esc(label(id))}`).join(" · ");
+  if (cmp.order_sensitive) return `<p class="verdict"><b>Comparative judge: order-sensitive</b> — its ranking changed when the answers were shown in reverse order, so this case settles no tie.`
+    + `<br>Random order: ${list(cmp.rankings[0])}<br>Reverse order: ${list(cmp.rankings[1])}<br>${esc(cmp.reason)}</p>`;
+  return `<p class="verdict"><b>Comparative judge (answers shown unnamed${cmp.rankings ? ", same ranking in both orders" : ", in random order"}):</b> `
+    + list(cmp.ranking) + `<br>${esc(cmp.reason)}</p>`;
 }
 const PII_LABEL = { email: "email address", upi: "UPI id", card: "card number", aadhaar: "Aadhaar number", pan: "PAN", phone: "phone number" };
 function piiText(counts) { return Object.entries(counts).map(([k, n]) => `${n} ${PII_LABEL[k] || k}${n > 1 ? "s" : ""}`).join(", "); }
@@ -799,10 +898,12 @@ function renderCost(run, s) {
       ${row("Output tokens", (b) => tok(b.cost.usage_results ? b.cost.output_tokens : null), ju && tok(ju.output_tokens))}
       ${row("Cached tokens", (b) => tok(b.cost.usage_results ? b.cost.cache_read_tokens + b.cost.cache_write_tokens : null), ju && tok(ju.cache_read_tokens + ju.cache_write_tokens))}
       ${row("Tokens per chat", (b) => tok(b.cost.tokens_per_chat), ju && ju.usage_calls ? tok(Math.round(ju.total_tokens / ju.usage_calls)) + " / call" : null)}
-      ${row("<b>Estimated cost, whole run</b>", (b) => `<b>${b.cost.usage_results ? (b.cost.priced ? est(b.cost.total_cost) : `<span class="muted small">no price</span>`) : "—"}</b>`, ju && `<b>${est(ju.cost)}</b>${ju.unpriced_calls ? `<div class="muted small">${ju.unpriced_calls} calls unpriced</div>` : ""}`)}
+      ${row("<b>Estimated cost, whole run</b>", (b) => `<b>${b.cost.usage_results ? (b.cost.priced ? est(b.cost.total_cost) : `<span class="muted small">no price</span>`) : "—"}</b>`, ju && `<b>${ju.cost == null ? `<span class="muted small">no price</span>` : est(ju.cost)}</b>${ju.cost != null && ju.unpriced_calls ? `<div class="muted small">${ju.unpriced_calls} calls unpriced</div>` : ""}`)}
       ${row("Estimated cost per 100 chats", (b) => est(b.cost.cost_per_100), null)}
-      ${ju ? row("Judge cost of grading this bot", (b) => ju.by_bot[b.id] ? `${est(ju.by_bot[b.id].cost)} <span class="muted small">(${ju.by_bot[b.id].calls} calls)</span>` : "—", ju.by_kind.comparative ? `+ ${est(ju.by_kind.comparative.cost)} comparative` : "") : ""}
+      ${ju ? row("Judge cost of grading this bot", (b) => { const x = ju.by_bot[b.id]; return x ? `${x.cost == null ? `<span class="muted small">no price</span>` : est(x.cost)} <span class="muted small">(${x.calls} calls${x.cost != null && x.unpriced_calls ? `, ${x.unpriced_calls} unpriced` : ""})</span>` : "—"; }, ju.by_kind.comparative ? `+ ${ju.by_kind.comparative.cost == null ? "unpriced" : est(ju.by_kind.comparative.cost)} comparative` : "") : ""}
     </tbody></table></div>
+    ${ju ? `<p class="small"><b>AI judge by kind of call:</b> ${Object.entries(ju.by_kind).map(([k, x]) => `${esc(k)} ${x.calls} calls · ${tok(x.tokens)} tokens · ${x.cost == null ? "no price" : est(x.cost)}`).join("; ")}.
+      <span class="muted">Each comparison is two calls (both answer orders); rejected replies and grading replaced by a re-grade were still paid for.</span></p>` : ""}
     ${cats.length ? `<h3>By skill <span class="muted small">bot tokens · estimated cost</span></h3><div class="table-scroll"><table class="score cost-table"><thead><tr><th>Skill</th>${bots.map((b) => `<th class="num">${esc(b.label)}</th>`).join("")}</tr></thead><tbody>
       ${cats.map((c) => `<tr><td>${esc(c)}</td>${bots.map((b) => { const x = (b.cost.by_category || {})[c]; return `<td class="num">${x ? `${tok(x.tokens)} · ${x.cost == null ? "no price" : est(x.cost)}` : "—"}</td>`; }).join("")}</tr>`).join("")}
     </tbody></table></div>` : ""}
@@ -831,7 +932,7 @@ $("repeatFilter").onchange = () => currentRun && renderCases(currentRun);
 $("wordingFilter").onchange = () => currentRun && renderCases(currentRun);
 
 // ---------- Judge review: humans check the AI judge ----------
-const KIND_LABEL = { judges: "Judges disagree", checks: "Checks vs judge", spot: "Random spot-check" };
+const KIND_LABEL = { judges: "Judges disagree", evidence: "Judge quotes not found", checks: "Checks vs judge", spot: "Random spot-check" };
 async function loadReview() {
   const runId = $("reviewRun").value;
   let data;
@@ -867,6 +968,13 @@ function renderReviewStats(st, waiting) {
       ${j ? `On the random sample the main judge passed ${j.false_yes} conversation(s) you failed and failed ${j.false_no} you passed. ` : ""}
       ${st.labels < st.target ? "Ranges stay wide until about 50 labels." : ""}</p>` : ""}`;
 }
+// The judge's quotes from the bot's replies, each marked found / not found (evaluator.quote_found).
+function evidenceHtml(v) {
+  if (!v || !v.evidence) return "";
+  if (!v.evidence.length) return `<div class="small error">Unverified: the judge quoted nothing from the reply.</div>`;
+  return `<div class="small">${v.unverified ? `<b class="error">Unverified:</b> none of these quotes is in the reply. ` : "Quoted: "}`
+    + v.evidence.map((e) => `<span class="${e.found ? "" : "error"}" title="${e.found ? "found in the reply" : "not found in the reply"}">“${esc(e.quote)}”${e.found ? "" : " ✕"}</span>`).join(" · ") + `</div>`;
+}
 function verdictText(v) {
   if (!v) return "—";
   return `${v.passed ? "pass" : "fail"}${v.hallucinated ? " · invented facts" : ""}${v.correctness ? ` · correctness ${v.correctness}/5` : ""}`;
@@ -886,7 +994,7 @@ function reviewCard(it) {
     <details><summary class="small">Store facts the judge was given</summary><pre class="small">${esc(it.context || "(none)")}</pre></details>
     <div class="convo">${convo}</div>
     <div class="verdict">
-      <div><b>Main judge:</b> ${verdictText(it.judge)}<br><span class="small">${esc(it.judge.reason)}</span></div>
+      <div><b>Main judge:</b> ${verdictText(it.judge)}<br><span class="small">${esc(it.judge.reason)}</span>${evidenceHtml(it.judge)}</div>
       ${it.judge2 ? `<div><b>Second judge:</b> ${verdictText(it.judge2)}<br><span class="small">${esc(it.judge2.reason)}</span></div>` : ""}
       ${it.checks != null ? `<div><b>Exact checks:</b> ${it.checks ? "passed" : "failed — " + esc(it.check_failures.join("; "))}</div>` : ""}
     </div>
@@ -997,5 +1105,34 @@ async function loadLeaderboard() {
 }
 
 // ---------- Start ----------
+// ---------- Add a chatbot by URL (quickbot.py) ----------
+let detected = null;
+const isLocalUrl = (u) => { try { const h = new URL(u).hostname; return ["localhost", "127.0.0.1", "[::1]"].includes(h) || h.endsWith(".local"); } catch { return true; } };
+$("qbUrl").addEventListener("input", () => { $("qbSendRow").hidden = isLocalUrl($("qbUrl").value.trim()); $("qbResult").hidden = true; });
+$("qbDetect").onclick = async () => {
+  $("qbError").textContent = ""; $("qbResult").hidden = true; $("qbDetect").disabled = true;
+  $("qbStatus").textContent = "Sending “Hi” and working out the format…";
+  try {
+    detected = await api("/api/bots/detect", { method: "POST", body: JSON.stringify({
+      url: $("qbUrl").value.trim(), model: $("qbModel").value.trim(), api_key_env: $("qbKey").value.trim(), send_ok: $("qbSend").checked }) });
+    $("qbHow").innerHTML = `<span class="status pass"><span class="dot">✓</span></span> ${esc(detected.how)} · replied in ${secs(detected.latency_ms)}: “${esc(detected.reply.slice(0, 160))}”`;
+    if (!$("qbLabel").value) $("qbLabel").value = new URL($("qbUrl").value.trim()).host;
+    $("qbResult").hidden = false;
+  } catch (e) { $("qbError").textContent = e.message; }
+  finally { $("qbStatus").textContent = ""; $("qbDetect").disabled = false; }
+};
+$("qbAdd").onclick = async () => {
+  $("qbError").textContent = "";
+  try {
+    const b = await api("/api/bots/quick", { method: "POST", body: JSON.stringify({ label: $("qbLabel").value.trim(), config: detected.config }) });
+    await loadSetup();
+    const box = document.querySelector(`input[name=pick][value="${CSS.escape(b.id)}"]`);
+    if (box) { box.checked = true; updatePickCount(); }
+    if (suites.some((x) => x.id === "generic_support")) { $("suiteSelect").value = "generic_support"; tryStore("suite", "generic_support"); showSuiteInfo(); }
+    $("qbResult").hidden = true; $("qbUrl").value = ""; $("qbLabel").value = ""; detected = null;
+    $("qbStatus").textContent = `Added ${b.label} and picked the generic suite for it.`;
+  } catch (e) { $("qbError").textContent = e.message; }
+};
+
 loadSetup().then(loadRuns).catch((e) => ($("startError").textContent = "Could not load: " + e.message));
 restoreBattle();

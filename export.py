@@ -59,11 +59,12 @@ def _failure(r, verdict):
 
 
 def _usage_cols(run, r, cfg):
-    """The bot's and the judges' tokens for one conversation and their estimated cost (USD; empty when unknown)."""
+    """The bot's and the judges' tokens for one conversation and their estimated cost (USD; empty when unknown).
+    The judge's include its rejected replies and grading a re-grade replaced."""
     u = evaluator.result_usage(r)
     price = cfg.get("pricing")
-    judged = [v for v in (r.get("judge"), r.get("judge2")) if v and v.get("usage")]
-    jprices = [evaluator.price_of(v.get("model"), run.get("judge_pricing")) for v in judged]
+    judged = [v for v in (r.get("judge"), r.get("judge2"), *(r.get("judge_spent") or [])) if v and v.get("usage")]
+    jprices = [evaluator.judge_price(v, run.get("judge_pricing")) for v in judged]
     jcosts = [evaluator.chat_cost(v["usage"], p) if p else None for v, p in zip(judged, jprices)]
     money = lambda x: None if x is None else round(x, 6)
     return {"bot_input_tokens": u and u.get("input_tokens", 0), "bot_output_tokens": u and u.get("output_tokens", 0),
@@ -188,6 +189,10 @@ def report_html(run):
                 if srow.get(b["id"], {}).get("ranked") is False]
     if unranked:
         out.append("<p>Not ranked, too few cases scored, so no overall score: " + " · ".join(unranked) + ".</p>")
+    if summary.get("shared"):
+        out.append(f"<p>Overall uses the {summary['shared']['samples']} cases every ranked bot was scored on "
+                   f"({summary['shared']['left_out']} left out because a ranked bot was blocked or not graded on them); "
+                   "the other scores use every case each bot was scored on.</p>")
     if gate:
         for b in run["bots"]:
             failed = [r for r in gate[b["id"]]["rules"] if r["ok"] is False]
@@ -204,6 +209,7 @@ def report_html(run):
     out.append("</tbody></table>")
 
     out += _cost_html(run, summary)
+    out += _controls_html(run)
     failing = [r for r in data if r["outcome"] != "pass"]
     out.append(f"<h2>Cases that did not pass ({len(failing)})</h2>")
     out += [_case_html(r) for r in failing] or ["<p>Every scored case passed.</p>"]
@@ -237,6 +243,32 @@ def _case_html(r):
                if r["personal_data_in_reply"] else "") + "</div>")
 
 
+def _controls_html(run):
+    """The run's budget, where its prices came from, and what the person starting it allowed."""
+    e = escape
+    out, b, c, cat = [], run.get("budget"), run.get("consent"), run.get("price_catalog")
+    if b:
+        est = f" (of which ${b['estimated_usd']:.4f} estimated from text length)" if b.get("estimated_usd") else ""
+        state = f"stopped: {e(b.get('stopped_by') or 'limit reached')}" if b.get("reached") else "not reached"
+        blocked = sum(1 for r in run.get("results", []) if r.get("budget_blocked"))
+        out.append(f"<p><b>Budget</b>: ${b['spent_usd']:.4f} of ${b['limit_usd']:.4f} spent{est}; {state}"
+                   + (f"; {blocked} conversations not asked (left out of every score; resume with a higher budget)" if blocked else "")
+                   + ". A guard rail on estimates, not a cap the providers enforce: chats already under way finish.</p>")
+    if cat:
+        out.append(f"<p><b>Catalogue prices</b>: {e(cat.get('source') or '')} snapshot of {e(cat.get('date') or '')}, used only for "
+                   "models with no price in bots.json, and fixed on this run when it started.</p>")
+    if c:
+        if c.get("given_by") == "script":
+            who = "started by a script (no dashboard consent asked)"
+        else:
+            who = (f"by {e(c.get('by') or '')}: send to bots {'yes' if c.get('send_to_bots') else 'no'}, "
+                   f"share with the AI judge {'yes' if c.get('share_with_judge') else 'no'}")
+        remote = "; ".join(x for x in (f"bots off this machine: {', '.join(c['remote_bots'])}" if c.get("remote_bots") else "",
+                                       f"cloud judge: {', '.join(c['remote_judges'])}" if c.get("remote_judges") else "") if x)
+        out.append(f"<p><b>Consent</b> {who}{' (' + e(remote) + ')' if remote else ''}.</p>")
+    return (["<h2>Budget, prices and consent</h2>"] + out) if out else []
+
+
 def _cost_html(run, summary):
     """Tokens and estimated cost: each bot side by side, the AI judge apart."""
     e = escape
@@ -263,6 +295,40 @@ def _cost_html(run, summary):
                    f"<td class='num'>{num(ju['input_tokens'])}</td><td class='num'>{num(ju['output_tokens'])}</td>"
                    f"<td class='num'>{num(ju['total_tokens'])}</td><td class='num'>{money(ju['cost'])}</td><td class='num'>—</td>"
                    f"<td>{e(srcs)}</td></tr>")
+        kinds = "; ".join(f"{k}: {x['calls']} calls, {num(x['tokens'])} tokens, {money(x['cost'])}"
+                          for k, x in ju["by_kind"].items())
+        out.append(f"<tr><td colspan='8' class='meta'>AI judge by kind of call: {e(kinds)}</td></tr>")
     out.append("</tbody></table><p class='meta'>Estimates from the tokens each bot and the judge reported, priced with "
                "bots.json (USD per million tokens). Only conversations whose every reply reported tokens are counted.</p>")
     return out
+
+
+class PdfUnavailable(RuntimeError):
+    pass
+
+
+def report_pdf(run):
+    """The HTML report as a PDF (A4, with page numbers), printed by a headless Chromium through Playwright (CHROME_PATH,
+    else Playwright's own). Raises PdfUnavailable when no browser can be started."""
+    import os
+    try:
+        from playwright.sync_api import Error as PlaywrightError, sync_playwright
+    except ImportError as e:
+        raise PdfUnavailable("PDF export needs Playwright: .venv/bin/pip install playwright") from e
+    path = os.environ.get("CHROME_PATH")
+    footer = ("<div style='font-size:8px;width:100%;text-align:center;color:#666'>Chatbot Compare · "
+              f"{escape(run['id'])} · page <span class='pageNumber'></span> of <span class='totalPages'></span></div>")
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True, **({"executable_path": path} if path else {}))
+            try:
+                page = browser.new_page()
+                page.set_content(report_html(run), wait_until="load")
+                return page.pdf(format="A4", print_background=True, display_header_footer=True,
+                                header_template="<span></span>", footer_template=footer,
+                                margin={"top": "14mm", "bottom": "16mm", "left": "12mm", "right": "12mm"})
+            finally:
+                browser.close()
+    except PlaywrightError as e:
+        raise PdfUnavailable("Could not start a browser to print the PDF (run `.venv/bin/playwright install "
+                             f"chromium` or set CHROME_PATH): {str(e).splitlines()[0][:200]}") from e

@@ -168,7 +168,7 @@ def review_runs(monkeypatch, tmp_path):
 def test_the_queue_puts_judge_disagreements_first(review_runs):
     q = review.queue()
     assert [(i["case_id"], i["kind"]) for i in q["items"]] == [("split-judges", "judges"), ("split-checks", "checks")]
-    assert q["waiting"] == {"judges": 1, "checks": 1, "spot": 0}
+    assert q["waiting"] == {"judges": 1, "evidence": 0, "checks": 1, "spot": 0}
     assert "VoltKart" in q["items"][0]["context"]  # the reviewer sees the store facts the judge saw
 
 
@@ -314,7 +314,7 @@ def test_an_overloaded_free_model_hands_over_to_the_next(monkeypatch):
     monkeypatch.setattr(llm.httpx2, "post", post)
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
     out = llm.Endpoint(llm.OLLAMA, "busy, spare").structured("s", "p", {}, "n")
-    assert used == ["busy", "spare"] and out == {"ok": "yes", "_model": "spare"}
+    assert used == ["busy", "spare"] and out == {"ok": "yes", "_model": "spare", "_local": True}
     v = evaluator._verdict({"correctness": 4, "helpfulness": 4, "tone": 4, "hallucinated": False, "grounded": True,
                             "passed": True, "reason": "", "_model": "spare"}, [])
     assert v["model"] == "spare"
@@ -354,6 +354,81 @@ def test_judge_usage_is_tracked_apart_from_the_bots_and_priced_by_model():
     assert evaluator.judge_usage({"results": [{"bot_id": "a", "judge": {"passed": True}}]}) is None
 
 
+def test_unpriced_judge_calls_read_as_unknown_not_free_and_local_judges_are_free():
+    v = lambda model, **kw: {"passed": True, "model": model, "usage": {"input_tokens": 1000, "output_tokens": 100}, **kw}
+    run = {"judge_pricing": [], "results": [{"bot_id": "a", "judge": v("qwen2.5:3b")}],
+           "comparisons": [{"ranking": ["a"], **v("paid-judge")}]}
+    u = evaluator.judge_usage(run)
+    assert u["cost"] is None and u["unpriced_calls"] == 2  # nothing priced: unknown, never $0
+    assert u["by_bot"]["a"] == {"calls": 1, "tokens": 1100, "cost": None, "unpriced_calls": 1}
+    assert u["by_kind"]["comparative"]["cost"] is None
+    run["results"][0]["judge"]["local"] = True  # graded on this machine
+    u = evaluator.judge_usage(run)
+    assert u["cost"] == 0.0 and u["unpriced_calls"] == 1 and u["by_bot"]["a"]["cost"] == 0.0
+    assert u["by_model"]["qwen2.5:3b"]["pricing_source"].startswith("local")
+
+
+def test_rejected_and_replaced_judge_calls_still_count_and_each_ranking_is_a_call():
+    u1 = {"input_tokens": 1000, "output_tokens": 100}
+    run = {"judge_pricing": [{"model": "paid-*", "input": 1.0, "output": 1.0, "source": "list"}],
+           "results": [{"bot_id": "a", "judge": {"passed": True, "model": "paid-1", "usage": u1},
+                        "judge_spent": [{"model": "paid-1", "usage": u1, "kind": "judge", "why": "rejected"}]}],
+           "comparisons": [{"ranking": ["a", "b"], "rankings": [["a", "b"], ["a", "b"]], "model": "paid-1,ollama",
+                            "calls": [{"model": "paid-1", "usage": u1}, {"model": "qwen", "usage": u1, "local": True}]}],
+           "judge_spent": [{"model": "paid-1", "usage": u1, "kind": "judge", "why": "replaced", "bot_id": "a"}]}
+    u = evaluator.judge_usage(run)
+    assert u["calls"] == u["usage_calls"] == 5 and u["total_tokens"] == 5500 and u["unpriced_calls"] == 0
+    assert u["cost"] == pytest.approx(4 * 0.0011)  # the local ranking call is free, not priced as paid-*
+    assert u["by_kind"]["comparative"]["calls"] == 2 and u["by_kind"]["rejected replies"]["calls"] == 1
+    assert u["by_kind"]["replaced by a re-grade"]["calls"] == 1 and u["by_bot"]["a"]["calls"] == 3
+    old = {"results": [], "comparisons": [{"ranking": ["a"], "rankings": [["a"], ["a"]], "model": "m", "usage": u1}]}
+    assert evaluator.judge_usage(old)["calls"] == 2  # an older run's comparison still counts as both orders
+
+
+def test_an_invalid_verdict_keeps_the_tokens_it_cost(monkeypatch):
+    monkeypatch.setattr(evaluator.llm.JUDGE, "structured", lambda *a: {
+        "nonsense": 1, "_model": "gemini-x", "_usage": {"input_tokens": 900, "output_tokens": 20}})
+    with pytest.raises(llm.JudgeError) as e:
+        evaluator.judge("Store", "rubric", [{"user": "q", "bot": "a"}])
+    assert e.value.spent == [{"model": "gemini-x", "usage": {"input_tokens": 900, "output_tokens": 20}}]
+
+
+def test_a_comparison_that_fails_on_the_second_order_keeps_both_calls(monkeypatch):
+    replies = iter([{"ranking": [1, 2], "reason": "", "_model": "m", "_usage": {"input_tokens": 5}},
+                    {"ranking": [1, 1], "reason": "", "_model": "m", "_usage": {"input_tokens": 7}}])
+    monkeypatch.setattr(evaluator.llm.JUDGE, "structured", lambda *a: next(replies))
+    answers = [("a", "ctx", "r", [{"user": "q", "bot": "x"}]), ("b", "ctx", "r", [{"user": "q", "bot": "y"}])]
+    with pytest.raises(llm.JudgeError) as e:
+        evaluator.compare(answers)
+    assert [x["usage"]["input_tokens"] for x in e.value.spent] == [5, 7]
+
+
+def test_unparseable_json_from_the_judge_keeps_the_tokens(monkeypatch):
+    class WithUsage(_Resp):
+        def json(self):
+            return {**super().json(), "usage": {"prompt_tokens": 40, "completion_tokens": 3}}
+
+    monkeypatch.setattr(llm.httpx2, "post", lambda url, json, headers, timeout: WithUsage(200, "not json"))
+    with pytest.raises(llm.JudgeError) as e:
+        llm.Endpoint(llm.OLLAMA, "m", "", rpm=0).structured("sys", "p", {"type": "object"}, "r")
+    assert e.value.spent == [{"model": "m", "usage": {"input_tokens": 40, "output_tokens": 3}, "local": True}]
+
+
+def test_rewording_spend_is_totalled_and_priced(monkeypatch):
+    monkeypatch.setattr(evaluator, "judge_pricing", lambda: [{"model": "paid-*", "input": 2.0, "output": 2.0}])
+    spent = [{"model": "paid-1", "usage": {"input_tokens": 500_000}}, {"model": "qwen", "usage": {"input_tokens": 9}, "local": True}]
+    assert reword.spend_summary(spent) == {"calls": 2, "tokens": 500_009, "cost_usd_estimate": 1.0, "unpriced_calls": 0,
+                                           "models": ["paid-1", "qwen"]}
+    assert reword.spend_summary([{"model": "x", "usage": {"input_tokens": 1}}])["cost_usd_estimate"] is None
+
+
+def test_a_judge_on_this_machine_is_marked_local(monkeypatch):
+    monkeypatch.setattr(evaluator.llm.JUDGE, "structured", lambda *a: {
+        "correctness": 5, "helpfulness": 5, "tone": 5, "hallucinated": False, "grounded": True, "passed": True,
+        "reason": "ok", "_model": "qwen2.5:3b", "_local": True, "_usage": {"input_tokens": 10, "output_tokens": 1}})
+    assert evaluator.judge("Store", "rubric", [{"user": "q", "bot": "a"}])["local"] is True
+
+
 def test_the_judge_api_usage_is_kept_on_the_verdict(monkeypatch):
     monkeypatch.setattr(evaluator.llm.JUDGE, "structured", lambda *a: {
         "correctness": 5, "helpfulness": 5, "tone": 5, "hallucinated": False, "grounded": True, "passed": True,
@@ -370,3 +445,48 @@ def test_the_judge_reports_the_tokens_its_api_returned(monkeypatch):
     monkeypatch.setattr(llm.httpx2, "post", lambda url, json, headers, timeout: WithUsage(200, '{"ranking": [1]}'))
     out = llm.Endpoint(llm.OLLAMA, "m", "", rpm=0).structured("sys", "p", {"type": "object"}, "ranking")
     assert out["_usage"] == {"input_tokens": 2100, "output_tokens": 60}
+    assert out["_local"] is True  # llm.OLLAMA is on this machine
+    remote = llm.Endpoint("https://api.example.com/v1", "m", "", rpm=0).structured("sys", "p", {"type": "object"}, "r")
+    assert "_local" not in remote
+
+
+# ---------- Quotas (AIRM-74) ----------
+
+def test_a_judge_out_of_quota_hands_over_to_the_fallback(monkeypatch):
+    used = []
+
+    def post(url, json, headers, timeout):
+        used.append(json["model"])
+        return _Resp(429, text="RESOURCE_EXHAUSTED") if json["model"] == "gemini" else _Resp(200, '{"ok": 1}')
+
+    monkeypatch.setattr(llm.httpx2, "post", post)
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    ep = llm.Endpoint(llm.GEMINI, "gemini", fallback=llm.Endpoint(llm.OLLAMA, "qwen-local"))
+    assert ep.structured("s", "p", {}, "n") == {"ok": 1, "_model": "qwen-local", "_local": True}
+    assert used.count("gemini") == llm.RETRIES + 1 and used[-1] == "qwen-local"
+    monkeypatch.setattr(llm.httpx2, "post", lambda *a, **k: _Resp(400, text="bad schema"))
+    with pytest.raises(BotError, match="HTTP 400"):  # a real error is not handed over
+        ep.structured("s", "p", {}, "n")
+
+
+def test_requests_to_a_bot_with_an_rpm_are_spaced_out(monkeypatch):
+    clock, sleeps = [50.0], []
+    monkeypatch.setattr(evaluator.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(evaluator.time, "sleep", sleeps.append)
+    monkeypatch.setattr(evaluator, "_pacers", {})
+    for _ in range(3):
+        evaluator.pace({"id": "gemini-bot", "rpm": 20})
+    evaluator.pace({"id": "local-bot"})  # no rpm: never waits
+    assert sleeps == [0, 3.0, 6.0]
+
+
+def test_dropped_results_and_comparisons_hand_their_judge_tokens_to_the_run():
+    u1 = {"input_tokens": 10}
+    run = {"results": []}
+    r = {"bot_id": "a", "judge": {"model": "m", "usage": u1},
+         "judge_spent": [{"model": "m", "usage": u1, "kind": "judge", "why": "rejected"}]}
+    c = {"calls": [{"model": "m", "usage": u1}], "judge_spent": [{"model": "m", "usage": u1, "why": "rejected"}]}
+    evaluator.retire_judging(run, [r], [c])
+    assert [(x["why"], x.get("bot_id")) for x in run["judge_spent"]] == [
+        ("replaced", "a"), ("rejected", "a"), ("replaced", None), ("rejected", None)]
+    assert evaluator.judge_usage(run)["usage_calls"] == 4

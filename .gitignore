@@ -7,3 +7,5 @@ runs/.*.tmp
 runs/audit.jsonl
 runs/bot-logs/
 runs/nightly.log
+bots.quick.json
+runs/prices/

@@ -21,6 +21,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 import evaluator
+import governance
 import llm
 from adapters import BotError
 
@@ -113,7 +114,8 @@ def new_text(x):
 
 
 def generate(case, n):
-    """n rewordings of one case (fewer if some came back unusable)."""
+    """n rewordings of one case (fewer if some came back unusable), the rewordings dropped and the judge model's
+    spend for the call ({model, usage, local?} or None)."""
     original = {k: case[k] for k in ("turns", "variants") if k in case}
     turns = len((case.get("variants") or [case])[0]["turns"])
     prompt = (f"<test_case category=\"{case.get('category')}\">\n{json.dumps(original, ensure_ascii=False, indent=1)}\n"
@@ -124,6 +126,7 @@ def generate(case, n):
               + "(a message may contain line breaks; keep it as one string). "
               + f"Write {n} rewordings and reply with them as JSON.")
     data = llm.JUDGE.structured(SYSTEM, prompt, schema("variants" in case), "rewordings")
+    spent = llm.spent_of(data)
     good, dropped = [], []
     for r in data.get("rewordings") or []:
         r = {"variants": [{"label": v.get("label"), "turns": as_list(v.get("turns"))} for v in r.get("variants") or []]} \
@@ -133,7 +136,18 @@ def generate(case, n):
             dropped.append(why)
         elif new_text(r) not in {new_text(g) for g in good}:
             good.append(r)
-    return good[:n], dropped
+    return good[:n], dropped, spent
+
+
+def spend_summary(spent):
+    """Tokens and estimated cost (USD, None when any call is unpriced) of the judge model's calls."""
+    pricing = evaluator.judge_pricing()
+    prices = [evaluator.judge_price(x, pricing) for x in spent]
+    costs = [evaluator.chat_cost(x["usage"], p) for x, p in zip(spent, prices) if p]
+    return {"calls": len(spent), "tokens": sum(sum(x["usage"].values()) for x in spent),
+            "cost_usd_estimate": round(sum(costs), 6) if spent and len(costs) == len(spent) else None,
+            "unpriced_calls": len(spent) - len(costs),
+            "models": sorted({x["model"] for x in spent})}
 
 
 def option(args, name, default=None):
@@ -163,13 +177,15 @@ def main(args):
 
     def one(case):
         try:
-            return case, *generate(case, n), None
-        except BotError as e:
-            return case, [], [], str(e)
+            good, dropped, spent = generate(case, n)
+            return case, good, dropped, [spent] if spent else [], None
+        except BotError as e:  # a rejected reply was still charged
+            return case, [], [], llm.spent_from(e), str(e)
 
-    failed = 0
+    failed, spent = 0, []
     with ThreadPoolExecutor(evaluator.CONCURRENCY) as pool:
-        for case, good, dropped, error in pool.map(one, todo):
+        for case, good, dropped, case_spent, error in pool.map(one, todo):
+            spent += case_spent
             if error:
                 failed += 1
                 print(f"  {case['id']:26} ERROR {error}")
@@ -188,6 +204,12 @@ def main(args):
             f.write("\n")
         os.replace(tmp, path)
         print(f"Saved {path}. Review the new \"rewordings\" there; start a run with rewordings to use them.")
+    usage = spend_summary(spent)
+    cost = "no price in bots.json \"judge_pricing\"" if usage["cost_usd_estimate"] is None else f"${usage['cost_usd_estimate']:,.4f}"
+    print(f"Judge model spend: {usage['tokens']:,} tokens in {usage['calls']} calls"
+          + (f", estimated {cost}" if spent else " (no token counts reported)"))
+    governance.record("suite.reword", suite_id, cases=len(todo), failed=failed, dry_run="--dry-run" in args,
+                      judge_usage=usage)
     return 1 if failed else 0
 
 

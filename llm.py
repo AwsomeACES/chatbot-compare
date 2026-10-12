@@ -9,6 +9,11 @@ Default: Google's Gemini free tier (an AI Studio key in GOOGLE_API_KEY). The sam
                      records which model gave it
   JUDGE_API_KEY_ENV  env var holding the key, default GOOGLE_API_KEY ("" = no key, e.g. Ollama)
   JUDGE_RPM          requests per minute to stay under (free tiers are rate-limited), default 10; 0 = no limit
+  JUDGE_DAILY_LIMIT  requests a day the judge's plan allows (e.g. a free tier's daily quota); the dashboard warns
+                     before a run that needs more. Unset = unknown, no warning
+  JUDGE_FALLBACK_*   an optional fallback judge (off unless JUDGE_FALLBACK_MODEL is set; default base URL is the local
+                     Ollama): when the main judge stays rate-limited or out of quota after its retries, the call goes to
+                     it instead of failing, and the verdict records which model gave it
   SECOND_JUDGE_*     the same for the optional second judge (a different model family); off unless
                      SECOND_JUDGE_MODEL is set, default base URL is the local Ollama. E.g. Kimi on NVIDIA NIM's free
                      API: SECOND_JUDGE_BASE_URL=https://integrate.api.nvidia.com/v1,
@@ -28,6 +33,7 @@ import httpx2
 from dotenv import load_dotenv
 
 from adapters import BotError, normalize_usage
+from governance import is_local
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))  # also for rejudge.py / reword.py
 
@@ -39,12 +45,35 @@ RETRIES = 4
 RETRY_STATUS = {429, 500, 502, 503, 504}
 
 
+class JudgeError(BotError):
+    """A judge call that failed after the API had already charged for it. spent: [{model, usage, local?}], one per
+    answered call, so the tokens still count in the judge's cost."""
+
+    def __init__(self, message, spent=()):
+        super().__init__(message)
+        self.spent = [s for s in spent if s and s.get("usage")]
+
+
+def spent_of(data):
+    """One call's spend from a structured() reply: {model, usage, local?}, or None when it reported no tokens."""
+    if not isinstance(data, dict) or not data.get("_usage"):
+        return None
+    return {"model": data.get("_model") or "unknown", "usage": data["_usage"], **({"local": True} if data.get("_local") else {})}
+
+
+def spent_from(error):
+    """The tokens a failed judge call still spent ([] when none)."""
+    return list(getattr(error, "spent", None) or [])
+
+
 class Endpoint:
     """One model behind an OpenAI-compatible API, with its own request pacing."""
 
-    def __init__(self, base_url, model, api_key_env="", rpm=0):
+    def __init__(self, base_url, model, api_key_env="", rpm=0, fallback=None, daily_limit=None):
         self.models = [m.strip() for m in model.split(",") if m.strip()]
         self.base_url, self.model, self.api_key_env = base_url.rstrip("/"), ",".join(self.models), api_key_env
+        self.rpm, self.daily_limit = rpm, daily_limit
+        self.fallback = fallback  # another Endpoint, asked when this one stays rate-limited or out of quota
         self.interval = 60 / rpm if rpm else 0
         self._next = 0.0
         self._lock = threading.Lock()
@@ -73,13 +102,15 @@ class Endpoint:
 
     def structured(self, system, prompt, schema, name):
         """The model's reply to one prompt, as a dict matching schema, plus "_model": the model that answered and
-        "_usage": the tokens the API reported for this call ({input_tokens, output_tokens}; left out when none).
+        "_usage": the tokens the API reported for this call ({input_tokens, output_tokens}; left out when none) and
+        "_local": true when the model runs on this machine (no API charge).
         A retryable error (overloaded, rate-limited) moves on to the next model in the list, then backs off."""
         body = {"temperature": 0,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
                 "response_format": {"type": "json_schema", "json_schema": {"name": name, "schema": schema}}}
         headers = self._headers()
         tries = (RETRIES + 1) * len(self.models)
+        retryable = False
         for attempt in range(tries):
             model = body["model"] = self.models[attempt % len(self.models)]
             self._wait_turn()
@@ -89,13 +120,20 @@ class Endpoint:
                 error = f"Could not reach {self.base_url}: {e}"
             else:
                 if r.status_code < 400:
-                    usage = self._usage(r)
-                    return {**self._parse(r, model), "_model": model, **({"_usage": usage} if usage else {})}
+                    meta = {"_model": model, **({"_usage": u} if (u := self._usage(r)) else {}),
+                            **({"_local": True} if is_local(self.base_url) else {})}
+                    try:
+                        return {**self._parse(r, model), **meta}
+                    except BotError as e:  # answered (and charged) but unusable
+                        raise JudgeError(str(e), [spent_of(meta)]) from e
                 error = f"{model}: HTTP {r.status_code}: {r.text[:300]}"
                 if r.status_code not in RETRY_STATUS:
                     raise BotError(error)
+                retryable = True
             if attempt < tries - 1 and (attempt + 1) % len(self.models) == 0:  # every model failed this round
                 time.sleep(min(60, 5 * 2 ** (attempt // len(self.models))))
+        if retryable and self.fallback:  # out of quota or overloaded for good: grade with the fallback instead
+            return self.fallback.structured(system, prompt, schema, name)
         raise BotError(error)
 
     @staticmethod
@@ -119,10 +157,14 @@ class Endpoint:
             raise BotError(f"{model} did not return valid JSON: {text[:200]}") from e
 
 
-def _endpoint(prefix, base_url, model, key_env, rpm):
+def _endpoint(prefix, base_url, model, key_env, rpm, fallback=None):
+    daily = os.environ.get(f"{prefix}_DAILY_LIMIT", "").strip()
     return Endpoint(os.environ.get(f"{prefix}_BASE_URL", base_url), os.environ.get(f"{prefix}_MODEL", model),
-                    os.environ.get(f"{prefix}_API_KEY_ENV", key_env), float(os.environ.get(f"{prefix}_RPM", rpm)))
+                    os.environ.get(f"{prefix}_API_KEY_ENV", key_env), float(os.environ.get(f"{prefix}_RPM", rpm)),
+                    fallback=fallback, daily_limit=int(daily) if daily else None)
 
 
-JUDGE = _endpoint("JUDGE", GEMINI, "gemini-3.7-flash,gemini-3.5-flash,gemini-2.5-flash", "GOOGLE_API_KEY", "10")
+_FALLBACK = _endpoint("JUDGE_FALLBACK", OLLAMA, "", "", "0")
+JUDGE = _endpoint("JUDGE", GEMINI, "gemini-3.7-flash,gemini-3.5-flash,gemini-2.5-flash", "GOOGLE_API_KEY", "10",
+                  fallback=_FALLBACK or None)
 SECOND_JUDGE = _endpoint("SECOND_JUDGE", OLLAMA, "", "", "0")

@@ -362,3 +362,13 @@ tr.incomplete td { color: var(--muted); }
 tr.incomplete .swatch, .legend .faded .swatch { opacity: .4; }
 .legend .faded { color: var(--muted); }
 .chart .bar.faded { opacity: .3; }
+.run-actions { display: flex; gap: .5rem; margin-top: .5rem; justify-content: flex-end; }
+.run-actions [hidden] { display: none; }
+
+.consent { border: 1px solid var(--border); border-radius: 11px; padding: .4rem .8rem; margin: .6rem 0; background: var(--accent-soft); }
+.consent p { margin: .3rem 0; }
+label.field { display: block; margin: .5rem 0; font-size: .9rem; }
+label.field input { margin-top: .25rem; }
+.grid-2.tight { gap: .8rem; }
+input[type="number"] { width: 8rem; padding: .4rem .55rem; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: inherit; }
+.bot-list .bot .remove { font-size: .75rem; border: none; background: none; color: var(--muted); cursor: pointer; padding: 0; text-decoration: underline; }
