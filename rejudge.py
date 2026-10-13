@@ -43,27 +43,41 @@ def main():
             r["blocked"] = bool(evaluator.BLOCKED_ERRORS.search(r["error"]))
         evaluator.recheck(suite, bots[r["bot_id"]], r)
 
+    # the second judge too, when the run used one and it's still configured (a quota or a cancel can leave gaps)
+    second = bool(run.get("second_judge_model")) and bool(evaluator.llm.SECOND_JUDGE)
     if "--checks-only" in sys.argv:
         todo = []
     else:
         todo = [r for r in results
-                if r["turns"] and not r["error"] and not r.get("unsupported") and (regrade_all or not r.get("judge"))
+                if r["turns"] and not r["error"] and not r.get("unsupported")
+                and (regrade_all or not r.get("judge") or (second and not r.get("judge2") and evaluator.second_judge_sampled(r)))
                 and (only is None or r["category"] in only)]
-    print(f"Grading {len(todo)} conversations with {evaluator.JUDGE_MODEL}...")
+    print(f"Grading {len(todo)} conversations with {evaluator.JUDGE_MODEL}"
+          + (f" and {evaluator.SECOND_JUDGE_MODEL}" if second else "") + "...")
 
     def grade(r):
         profile = evaluator.profile_for(suite, bots[r["bot_id"]])
-        old = r.get("judge")
-        try:
-            r["judge"] = evaluator.judge(profile.get("context"), r.get("rubric"), r["turns"])
-            r.pop("judge_error", None)
-            evaluator.keep_spent(r, [evaluator.verdict_spent(old)], "judge", "replaced")  # still paid for
-        except BotError as e:
-            r["judge_error"] = str(e)
-            evaluator.keep_spent(r, evaluator.llm.spent_from(e), "judge", "rejected")
+        if regrade_all or not r.get("judge"):
+            old = r.get("judge")
+            try:
+                r["judge"] = evaluator.judge(profile.get("context"), r.get("rubric"), r["turns"])
+                r.pop("judge_error", None)
+                evaluator.keep_spent(r, [evaluator.verdict_spent(old)], "judge", "replaced")  # still paid for
+            except BotError as e:
+                r["judge_error"] = str(e)
+                evaluator.keep_spent(r, evaluator.llm.spent_from(e), "judge", "rejected")
+        if second and evaluator.second_judge_sampled(r) and (regrade_all or not r.get("judge2")):
+            old = r.get("judge2")
+            try:
+                r["judge2"] = evaluator.judge_second(profile.get("context"), r.get("rubric"), r["turns"])
+                r.pop("judge2_error", None)
+                evaluator.keep_spent(r, [evaluator.verdict_spent(old)], "second judge", "replaced")
+            except BotError as e:
+                r["judge2_error"] = str(e)
+                evaluator.keep_spent(r, evaluator.llm.spent_from(e), "second judge", "rejected")
         return r
 
-    with ThreadPoolExecutor(evaluator.CONCURRENCY) as pool:
+    with ThreadPoolExecutor(evaluator.JUDGE_CONCURRENCY) as pool:
         for i, r in enumerate(pool.map(grade, todo), 1):
             mark = "pass" if (r.get("judge") or {}).get("passed") else "FAIL" if r.get("judge") else "judge error"
             print(f"  {i:3}/{len(todo)}  {r['bot_id']:18} {r['case_id']:20} {mark}")

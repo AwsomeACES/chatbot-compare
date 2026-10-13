@@ -24,7 +24,8 @@ Diagnostics, shown but not part of the overall score (bots expose different amou
   whitebox       share of cases whose tool-call / retrieval checks passed
   grounded       share of judged cases where every fact in the reply came from what the bot retrieved
 
-Robustness: every bot gets its own worker pool (bots.json "max_concurrency", default EVAL_CONCURRENCY), quota /
+Robustness: every bot gets its own chat worker pool (bots.json "max_concurrency", default EVAL_CONCURRENCY) and
+grading has another (JUDGE_CONCURRENCY), so a slow judge never holds up a bot's chats; quota /
 rate-limit errors are retried with backoff before a case counts as blocked, and an unexpected error in one case
 is recorded on that case instead of failing the run.
 
@@ -67,7 +68,7 @@ import threading
 import time
 import uuid
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from threading import Event
 
 from pydantic import BaseModel, Field
@@ -860,6 +861,7 @@ def start_run(bots, suite_id, use_judge, repeats=1, comparative=True, second_jud
         "consent": consent,
         **({"budget": new_budget(budget_usd)} if budget_usd is not None else {}),
     }
+    governance._ner()  # load the name finder (if installed) now, not in the middle of the first chat
     _runs[run["id"]] = run
     _active.add(run["id"])
     _stops[run["id"]] = Event()
@@ -882,6 +884,14 @@ def reworded(case, wording):
 
 
 def _run_case(suite, case, bot, use_judge, repeat=0, second_judge=False, wording=0, stop=None):
+    """One case for one bot: the chat, then its grading, in this thread."""
+    result, grading = _converse(suite, case, bot, repeat, wording, stop)
+    return _grade(result, grading, use_judge, second_judge) if grading else result
+
+
+def _converse(suite, case, bot, repeat=0, wording=0, stop=None):
+    """The chat and the instant checks of one case. Returns (result, grading): grading is what _grade needs to finish
+    it (judges, then masking), or None when there's nothing to grade (unsupported, or the chat failed)."""
     profile = profile_for(suite, bot)
     case = reworded(case, wording)
     case = {**case, **render({k: case[k] for k in ("turns", "variants", "expect", "expect_trace", "rubric")
@@ -895,7 +905,7 @@ def _run_case(suite, case, bot, use_judge, repeat=0, second_judge=False, wording
     caps = profile.get("capabilities")
     if caps is not None and not set(case.get("requires", [])) <= set(caps):
         result["unsupported"] = True
-        return result
+        return result, None
     sessions = case.get("variants") or [{"label": None, "turns": case["turns"]}]
     for session in sessions:
         for attempt in range(RETRIES + 1):
@@ -918,7 +928,7 @@ def _run_case(suite, case, bot, use_judge, repeat=0, second_judge=False, wording
 
     if result["error"]:
         result["checks"] = False if case.get("expect") else None
-        return result
+        return result, None
     unknown = {}
     known = known_pii(profile.get("context"), case.get("rubric"), result["turns"])
     for t in result["turns"]:
@@ -930,15 +940,22 @@ def _run_case(suite, case, bot, use_judge, repeat=0, second_judge=False, wording
     if result["checks"] is None and any(t.get("rejected") for t in result["turns"]):
         result["checks"] = True  # a clean client error the case accepts (accept_error) is a deterministic pass
     result["trace_checks"] = check_trace(case.get("expect_trace"), result["turns"])
+    return result, {"context": profile.get("context"), "rubric": case.get("rubric"), "known": known, "unknown": unknown}
+
+
+def _grade(result, grading, use_judge, second_judge=False):
+    """The judges' verdicts on a finished chat, then masking of personal data the bot produced. Slow (a reasoning judge
+    takes minutes), so a run does it in its own pool, apart from the bots' chat workers."""
+    context, rubric, known, unknown = (grading[k] for k in ("context", "rubric", "known", "unknown"))
     if use_judge:
         try:
-            result["judge"] = judge(profile.get("context"), case.get("rubric"), result["turns"])
+            result["judge"] = judge(context, rubric, result["turns"])
         except BotError as e:
             result["judge_error"] = str(e)
             keep_spent(result, llm.spent_from(e), "judge", "rejected")
     if second_judge and second_judge_sampled(result):
         try:
-            result["judge2"] = judge_second(profile.get("context"), case.get("rubric"), result["turns"])
+            result["judge2"] = judge_second(context, rubric, result["turns"])
         except BotError as e:
             result["judge2_error"] = str(e)
             keep_spent(result, llm.spent_from(e), "second judge", "rejected")
@@ -1037,6 +1054,7 @@ def _run_session(bot, session, accept_error=None):
 
 
 TIMING_N = int(os.environ.get("TIMING_SAMPLES", "5"))  # replies timed per bot in the timing pass
+JUDGE_CONCURRENCY = int(os.environ.get("JUDGE_CONCURRENCY", "4"))  # conversations graded at once, apart from the chats
 
 
 def timing_prompts(suite, bot, n=None):
@@ -1150,36 +1168,59 @@ def _execute(run, bots, suite, work=None):
         work = [(case, bot, rep, w) for rep in range(run.get("repeats", 1)) for case in suite["cases"]
                 for w in wordings_of(case, run.get("rewordings")) for bot in bots]
 
+    # Grading has its own pool: a bot's chat worker hands the finished chat over and starts its next one, so a judge
+    # that takes minutes per verdict never holds up the chats (a one-chat-at-a-time bot would otherwise wait for it).
+    graders = ThreadPoolExecutor(max(1, JUDGE_CONCURRENCY), thread_name_prefix="judge")
+
+    def grade(res, grading, held):
+        try:
+            if stop.is_set():  # cancelled while it waited: kept ungraded, rejudge.py grades it later
+                res["judge_error"] = "Not graded: the run was cancelled (rejudge.py grades it)"
+                return res
+            return _grade(res, grading, run["judge"], second)
+        finally:  # the budget hold lasts until the verdicts are in, so the judge's cost counts before more chats start
+            settle(run, held, result_spend(run, res))
+
     def one(case, bot, rep, w):
         if stop.is_set():  # cancelled before this case started: not asked, so a resume asks it
             return None
         held = reserve(run, stop)
         if held is None:  # not asked: blocked, so it's left out of every score and a resume asks it
             return _over_budget(case, bot, rep, w, run["budget"])
-        res = None
+        res = grading = None
         try:
-            res = _run_case(suite, case, bot, run["judge"], rep, second, w, stop)
-        finally:  # charged here, before this worker starts its next case
-            settle(run, held, result_spend(run, res) if res else [])
-        return res
+            res, grading = _converse(suite, case, bot, rep, w, stop)
+        finally:
+            if grading is None:  # nothing to grade (unsupported, the chat failed, or it crashed): settled now
+                settle(run, held, result_spend(run, res) if res else [])
+        if grading is None:
+            return res
+        return graders.submit(grade, res, grading, held)  # a Future: the result arrives when it's graded
 
     last_save = time.monotonic()
     try:
-        futures = {pools[bot["id"]].submit(one, case, bot, rep, w): (case, bot, rep, w) for case, bot, rep, w in work}
-        for fut in as_completed(futures):
-            try:
-                res = fut.result()
-            except Exception as e:
-                log.exception("Case crashed")
-                res = _crashed(*futures[fut], e)
-            if res is None:
-                continue
-            with _lock:
-                run["results"].append(res)
-                run["progress"]["done"] += 1
-            if time.monotonic() - last_save >= SAVE_EVERY_S:  # the whole file is rewritten, so not on every result
-                _save(run)
-                last_save = time.monotonic()
+        meta = {pools[bot["id"]].submit(one, case, bot, rep, w): (case, bot, rep, w) for case, bot, rep, w in work}
+        pending = set(meta)
+        while pending:
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for fut in done:
+                try:
+                    res = fut.result()
+                except Exception as e:
+                    log.exception("Case crashed")
+                    res = _crashed(*meta[fut], e)
+                if isinstance(res, Future):  # the chat is done and being graded: wait for that instead
+                    meta[res] = meta[fut]
+                    pending.add(res)
+                    continue
+                if res is None:
+                    continue
+                with _lock:
+                    run["results"].append(res)
+                    run["progress"]["done"] += 1
+                if time.monotonic() - last_save >= SAVE_EVERY_S:  # the whole file is rewritten, so not on every result
+                    _save(run)
+                    last_save = time.monotonic()
         if run.get("timing_pass") and not run.get("timing") and not stop.is_set():
             run["phase"] = "timing"
             _save(run)
@@ -1211,7 +1252,7 @@ def _execute(run, bots, suite, work=None):
         run["status"] = "failed"
         run["failure"] = f"{type(e).__name__}: {e}"
     finally:
-        for pool in pools.values():
+        for pool in [*pools.values(), graders]:
             pool.shutdown(wait=False, cancel_futures=True)
     _save(run)
     _active.discard(run["id"])

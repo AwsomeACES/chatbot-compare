@@ -182,7 +182,9 @@ cd ~/projects/chatbot-compare && .venv/bin/uvicorn app:app --port 8080
 ```
 
 Open http://localhost:8080. Run the app's own tests with `.venv/bin/python -m pytest tests`.
-Env vars: the judge settings in *Free models only* below, `SECOND_JUDGE_SAMPLE` (share re-graded, default 1), `TIMING_SAMPLES` (default 5), `SAVE_EVERY` (seconds between saves of a running run, default 3),
+Env vars: the judge settings in *Free models only* below, `SECOND_JUDGE_SAMPLE` (share re-graded, default 1), `JUDGE_CONCURRENCY` (conversations graded at once, default 4:
+grading runs in its own pool, so a bot's chats never wait for a slow judge; a grade not started when a run is
+cancelled is left for `rejudge.py`, which also fills in missing second-judge verdicts), `TIMING_SAMPLES` (default 5), `SAVE_EVERY` (seconds between saves of a running run, default 3),
 `EVAL_CONCURRENCY` (default 4), `BOT_TIMEOUT` (seconds, default 120), `BLOCKED_RETRIES` (default 3) and
 `MAX_RETRY_WAIT` (seconds, default 120). Or start the bot servers with `.venv/bin/python servers.py up` (see *Nightly*).
 

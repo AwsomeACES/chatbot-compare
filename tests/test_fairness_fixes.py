@@ -214,3 +214,88 @@ def test_an_invented_product_is_shown_to_the_judge_not_masked_as_a_name():
     known = governance.known_values("Pulse Pro headphones Rs 149.", "How much are the Pulse Pro headphones?")
     reply = "They're Rs 99 this week, and the Pulse Max is Rs 199."
     assert governance.redact(reply, known)[0] == reply
+
+
+def _run_now(monkeypatch, tmp_path, suite, judge_delay, **kw):
+    """start_run in this thread, with a fake judge that takes judge_delay seconds per verdict."""
+    import threading as real_threading
+    import time as real_time
+    from types import SimpleNamespace
+    monkeypatch.setattr(evaluator, "RUNS_DIR", str(tmp_path))
+    monkeypatch.setattr(evaluator, "SUITES_DIR", str(tmp_path))
+    (tmp_path / "t.json").write_text("{}")
+    monkeypatch.setattr(evaluator, "load_suite", lambda _: suite)
+    chats = []
+
+    class Conv:
+        def send(self, message):
+            chats.append(real_time.monotonic())
+            from adapters import Reply
+            return Reply(text="TV-A is 100", latency_ms=1)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(evaluator, "open_conversation", lambda cfg: Conv())
+
+    def structured(system, prompt, schema, name):
+        real_time.sleep(judge_delay)
+        return {"correctness": 5, "helpfulness": 5, "tone": 5, "hallucinated": False, "grounded": True,
+                "passed": True, "reason": "", "evidence": ["TV-A is 100"]}
+
+    monkeypatch.setattr(evaluator.llm.JUDGE, "structured", structured)
+    monkeypatch.setattr(evaluator, "threading", SimpleNamespace(
+        Thread=lambda target, args, daemon: SimpleNamespace(start=lambda: target(*args)),
+        get_ident=real_threading.get_ident, Condition=real_threading.Condition, Lock=real_threading.Lock))
+    governance._ner()  # loaded once per process (a second or two), not part of what's timed
+    started = real_time.monotonic()
+    run = evaluator.start_run([{**BOT_A, "max_concurrency": 1}], "t", True, comparative=False, **kw)
+    return run, chats, real_time.monotonic() - started
+
+
+def test_a_slow_judge_doesnt_hold_up_a_one_chat_at_a_time_bot(monkeypatch, tmp_path):
+    monkeypatch.setattr(evaluator, "JUDGE_CONCURRENCY", 6)
+    suite = {**SUITE, "cases": [{**SUITE["cases"][0], "id": f"price{i}"} for i in range(6)]}
+    run, chats, elapsed = _run_now(monkeypatch, tmp_path, suite, judge_delay=0.5)
+    assert run["status"] == "done" and len(run["results"]) == 6 and all(r["judge"]["passed"] for r in run["results"])
+    assert chats[-1] - chats[0] < 0.4  # all six chats ran back to back, without waiting for a verdict
+    assert elapsed < 2.0  # graded in parallel: 6 x 0.5 s one after another would take 3 s
+
+
+def test_grading_not_started_when_a_run_is_cancelled_is_left_for_rejudge(monkeypatch, tmp_path):
+    monkeypatch.setattr(evaluator, "JUDGE_CONCURRENCY", 1)
+    suite = {**SUITE, "cases": [{**SUITE["cases"][0], "id": f"price{i}"} for i in range(3)]}
+    orig = evaluator._grade
+
+    def grade_then_cancel(res, grading, use_judge, second_judge=False):
+        out = orig(res, grading, use_judge, second_judge)
+        evaluator._stops[next(iter(evaluator._active))].set()  # cancelled after the first verdict
+        return out
+
+    monkeypatch.setattr(evaluator, "_grade", grade_then_cancel)
+    run, _, _ = _run_now(monkeypatch, tmp_path, suite, judge_delay=0.2)
+    graded = [r for r in run["results"] if r.get("judge")]
+    skipped = [r for r in run["results"] if "cancelled" in (r.get("judge_error") or "")]
+    assert run["status"] == "cancelled" and len(graded) == 1 and len(skipped) == 2
+
+
+def test_rejudge_fills_in_a_missing_second_verdict_without_regrading_the_first(monkeypatch, tmp_path):
+    import json as _json
+    import sys
+    import rejudge
+    monkeypatch.setattr(evaluator, "RUNS_DIR", str(tmp_path))
+    monkeypatch.setattr(evaluator, "load_suite", lambda _: SUITE)
+    first = verdict(model="moonshotai/kimi-k3")
+    rs = [result("a", "price", judge=first, turns=[{"user": "Price of TV-A?", "bot": "TV-A is 100", "latency_ms": 1}],
+                 judge2_error="Not graded: the run was cancelled (rejudge.py grades it)")]
+    run = {"id": "r1", "suite": "t", "bots": [{"id": "a", "label": "A"}], "bot_configs": [BOT_A], "judge": True,
+           "second_judge_model": "gemini-3.7-flash", "results": rs, "comparisons": [], "status": "done"}
+    (tmp_path / "r1.json").write_text(_json.dumps(run))
+    calls = []
+    monkeypatch.setattr(evaluator, "judge", lambda *a: calls.append("first") or first)
+    monkeypatch.setattr(evaluator, "judge_second", lambda *a: calls.append("second") or verdict(model="gemini-3.7-flash"))
+    monkeypatch.setattr(evaluator.llm, "SECOND_JUDGE", llm.Endpoint(llm.GEMINI, "gemini-3.7-flash", "GOOGLE_API_KEY"))
+    monkeypatch.setattr(sys, "argv", ["rejudge.py", "r1"])
+    rejudge.main()
+    saved = _json.loads((tmp_path / "r1.json").read_text())["results"][0]
+    assert calls == ["second"] and saved["judge2"]["model"] == "gemini-3.7-flash" and "judge2_error" not in saved
