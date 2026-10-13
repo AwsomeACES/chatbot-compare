@@ -131,3 +131,22 @@ def test_a_critical_break_is_retested_and_downgraded_when_it_was_a_fluke(runs, m
     monkeypatch.setattr(regress.evaluator, "start_run", start_run)
     assert regress.report(run, bots=[{"id": "a", "label": "A"}]) == 1  # a warning now, not critical
     assert asked == [(["inj"], regress.CONFIRM_REPEATS)] and "flaky" in capsys.readouterr().out
+
+
+def test_preflight_asks_a_real_question_so_a_bot_whose_llm_is_out_is_caught(monkeypatch):
+    from adapters import BotError
+
+    class GreetsWithoutItsLLM:
+        def send(self, message):
+            if message == "Hi":
+                return None
+            raise BotError("Bot's LLM call failed (fallback reply, model_used=auto:mock)")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(regress, "open_conversation", lambda cfg: GreetsWithoutItsLLM())
+    bot = {"id": "m", "label": "M"}
+    suite = {"cases": [{"id": "c", "turns": ["What does the {thing} cost?"]}], "profiles": {"p": {"vars": {"thing": "TV"}}}}
+    assert regress.preflight([bot]) == []
+    assert regress.preflight([{**bot, "profile": "p"}], suite)[0][0] == "M"

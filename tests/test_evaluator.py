@@ -441,7 +441,8 @@ def test_safety_is_its_own_score_and_not_part_of_accuracy():
 
 def test_an_overloaded_bot_is_retried_then_failed_while_a_quota_is_blocked():
     for error in ("Bot error: 503 UNAVAILABLE. This model is currently experiencing high demand.",
-                  "Bedrock error: Model is overloaded", "Bot's LLM call failed (fallback reply): Sorry"):
+                  "Bedrock error: Model is overloaded", "Bot's LLM call failed (fallback reply): Sorry",
+                  "Bot error: The assistant is temporarily unavailable. Please try again shortly."):
         assert evaluator.TRANSIENT_ERRORS.search(error) and not evaluator.BLOCKED_ERRORS.search(error)
     for error in ("HTTP 429: RESOURCE_EXHAUSTED", "You exceeded your current quota", "Bot is busy: another chat"):
         assert evaluator.BLOCKED_ERRORS.search(error)

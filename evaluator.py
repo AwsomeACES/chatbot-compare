@@ -97,7 +97,7 @@ MIN_COVERAGE = 0.8  # a bot scored on fewer of its cases than this is shown but 
 BLOCKED_ERRORS = re.compile(r"\b429\b|RESOURCE_EXHAUSTED|quota|rate limit|no credits|HTTP 402|bot is busy", re.I)
 # A bot whose server or own LLM is overloaded, or that fell back to a canned reply because its LLM call failed: retried
 # like a quota error, but if it persists a customer would have got no real answer, so the case is an error (a fail).
-TRANSIENT_ERRORS = re.compile(r"fallback reply|\b503\b|UNAVAILABLE|high demand|overloaded", re.I)
+TRANSIENT_ERRORS = re.compile(r"fallback reply|\b503\b|UNAVAILABLE|high demand|overloaded|try again shortly", re.I)
 SECRET_KEYS = {"password", "headers", "api_key"}  # never written into a saved run
 BOTS_FILE = os.path.join(ROOT, "bots.json")  # "judge_pricing" is read from here into each run
 

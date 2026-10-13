@@ -3,7 +3,8 @@
 Usage:
   .venv/bin/python regress.py run [--bots a,b] [--cases c1,c2] [--suite store_support] [--repeats N] [--no-judge] [--no-compare]
                                   [--rewordings | --no-rewordings] [--no-second-judge] [--no-confirm]
-      Runs the suite (default: every bot that has a baseline) and checks it. Each bot is sent "Hi" first; if one is
+      Runs the suite (default: every bot that has a baseline) and checks it. Each bot is first asked one real question
+      from the suite (a "Hi" can pass without the bot's LLM, e.g. with its quota gone); if one is
       down or out of quota the run is skipped and reported (exit 3), rather than scored as a wall of failures.
       Rewordings are used when the bots' baseline runs used them, unless --rewordings / --no-rewordings says.
   .venv/bin/python regress.py check <run_id>      Checks a saved run against the baselines.
@@ -98,14 +99,20 @@ def option(args, name, default=None):
     return args[args.index(name) + 1] if name in args and args.index(name) + 1 < len(args) else default
 
 
-def preflight(bots):
-    """Bots that can't answer a "Hi" right now: [(label, error)]."""
+def preflight(bots, suite=None):
+    """Bots that can't answer right now: [(label, error)]. With a suite, each bot is asked a real question from it
+    (filled in with its own facts) rather than "Hi": some bots answer a greeting without calling their LLM, so a
+    "Hi" passes even when the LLM's quota is gone."""
     down = []
     for b in bots:
         conv = None
         try:
+            question = (evaluator.timing_prompts(suite, b, 1) or ["Hi"])[0] if suite else "Hi"
+        except ValueError:  # no matching profile: the run itself will say so
+            question = "Hi"
+        try:
             conv = open_conversation(b)
-            conv.send("Hi")
+            conv.send(question)
         except BotError as e:
             down.append((b["label"], str(e)[:200]))
         finally:
@@ -139,7 +146,7 @@ def cmd_run(args):
               else "No bots given and no baselines set. Use --bots, or set a baseline first.", file=sys.stderr)
         return 3
     bots = [enabled[i] for i in ids]
-    down = preflight(bots)
+    down = preflight(bots, evaluator.load_suite(option(args, "--suite", "store_support")))
     if down:
         text = "Chatbot Compare nightly run skipped, bot(s) not answering:\n" + "\n".join(f"- {l}: {e}" for l, e in down)
         print(text)

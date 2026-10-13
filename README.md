@@ -247,7 +247,7 @@ one is configured (`--no-second-judge` turns it off).
 `regress.py run` takes `--bots a,b`, `--cases c1,c2` (only those cases, e.g. a re-test after a fix; such a run compares
 cases with the baseline but not scores, and can't itself be a baseline), `--repeats N`, `--no-judge`, `--no-compare`, `--no-second-judge`, `--no-confirm` and
 `--rewordings` / `--no-rewordings` (default: rewordings on when the bots' baseline runs used them, so the nightly
-run asks the same cases as its baseline). It first sends each bot "Hi": a bot that's down or out of quota skips the
+run asks the same cases as its baseline). It first asks each bot one real question from the suite (a "Hi" can pass with the bot's LLM out of quota): a bot that's down or out of quota skips the
 run and is reported (exit 3) instead of turning every case into a false regression. Set `REGRESSION_WEBHOOK` (e.g. in
 `.env`) to a Slack-style incoming-webhook URL to post the report when something regressed or a bot was down.
 
