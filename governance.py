@@ -489,12 +489,68 @@ def _git(*args):
         return ""
 
 
+CODE_FILES = (".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".toml", ".cfg", ".txt")
+SKIP_DIRS = {".git", ".venv", "venv", ".venv-local", "node_modules", "__pycache__", "chroma_db", "site-packages", "dist",
+             "build", ".pytest_cache"}
+
+
+def tree_sha256(root):
+    """Hash of a source tree's code files (not its virtualenvs, caches or databases), for code with no git history,
+    e.g. a bot unzipped from an archive."""
+    h = hashlib.sha256()
+    for d, dirs, files in os.walk(root):
+        dirs[:] = sorted(x for x in dirs if x not in SKIP_DIRS)
+        for name in sorted(f for f in files if f.endswith(CODE_FILES)):
+            path = os.path.join(d, name)
+            with open(path, "rb") as f:
+                h.update(os.path.relpath(path, root).encode() + b"\0" + hashlib.sha256(f.read()).digest())
+    return h.hexdigest()
+
+
+def source_info(source):
+    """Which code a bot under test ran: bots.json "source" ({"path", "sha256"?, "note"?}, or just the path).
+    A git checkout: its commit, branch, uncommitted changes and how far it is from its upstream (as last fetched).
+    Anything else: a hash of its code files, checked against the "sha256" pinned in bots.json. "own_code" is False when
+    the code isn't the owner's version (local commits, uncommitted changes or a hash that isn't the pinned one)."""
+    if isinstance(source, str):
+        source = {"path": source}
+    root = os.path.expanduser(source.get("path") or "")
+    out = {"path": source.get("path"), **({"note": source["note"]} if source.get("note") else {})}
+    if not os.path.isdir(root):
+        return {**out, "missing": True, "own_code": None}
+    if os.path.isdir(os.path.join(root, ".git")):
+        git = lambda *a: subprocess.run(["git", "-C", root, *a], capture_output=True, text=True, timeout=10).stdout.strip()
+        try:
+            counts = git("rev-list", "--left-right", "--count", "@{upstream}...HEAD").split()
+            out.update(kind="git", commit=git("rev-parse", "HEAD") or None, branch=git("rev-parse", "--abbrev-ref", "HEAD"),
+                       upstream=git("rev-parse", "--abbrev-ref", "@{upstream}") or None,
+                       dirty=bool(git("status", "--porcelain", "--untracked-files=no")))
+        except (OSError, subprocess.SubprocessError):
+            return {**out, "kind": "git", "own_code": None}
+        behind, ahead = (int(counts[0]), int(counts[1])) if len(counts) == 2 else (None, None)
+        out.update(ahead=ahead, behind=behind)
+        out["own_code"] = not out["dirty"] and ahead == 0 if out["upstream"] else None
+        return out
+    digest = tree_sha256(root)
+    pinned = source.get("sha256")
+    return {**out, "kind": "files", "sha256": digest, "pinned": pinned,
+            "own_code": (digest == pinned) if pinned else None}
+
+
 def provenance(bot_configs, suite_path):
-    """Everything needed to say later exactly what produced a run."""
+    """Everything needed to say later exactly what produced a run, including the code each bot ran."""
     commit = _git("rev-parse", "HEAD")
     policy = load_policy()
+    sources = {}
+    for b in bot_configs:
+        if b.get("source"):
+            try:
+                sources[b["id"]] = source_info(b["source"])
+            except OSError as e:
+                sources[b["id"]] = {"path": str(b["source"]), "error": str(e), "own_code": None}
     return {"git_commit": commit or None, "git_dirty": bool(_git("status", "--porcelain", "--untracked-files=no"))
             if commit else None,
             "suite_sha256": file_sha256(suite_path), "bots_sha256": sha256(bot_configs),
+            **({"bot_sources": sources} if sources else {}),
             "policy_version": policy.get("version"), "policy_sha256": file_sha256(POLICY_FILE),
             "started_by": current_actor()}

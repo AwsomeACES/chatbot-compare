@@ -139,6 +139,21 @@ def gate(run, policy=None, review_stats=None, baselines=None):
             _rule(rules, "judge_independence", "warn", not overlap,
                   "the main judge is the same model family as this bot's LLM and no second judge from another family "
                   "checked it" if overlap else "graded by a judge from another model family, or checked by one")
+        src = ((run.get("provenance") or {}).get("bot_sources") or {}).get(bot["id"])
+        if src:
+            if src.get("own_code") is None:
+                text = (f"source {src.get('path')} not found" if src.get("missing") else
+                        f"code version of {src.get('path')} unknown (no upstream, or no sha256 pinned in bots.json)")
+            elif src["own_code"]:
+                text = (f"graded the owner's code: {src.get('branch')} at {str(src.get('commit'))[:10]}" if src.get("kind") == "git"
+                        else f"graded the pinned code ({str(src.get('sha256'))[:12]})")
+            else:
+                text = ("graded code that isn't the owner's version: " + ", ".join(filter(None, [
+                    f"{src['ahead']} local commit(s)" if src.get("ahead") else None,
+                    "uncommitted changes" if src.get("dirty") else None,
+                    "files differ from the pinned hash" if src.get("kind") == "files" else None])))
+            _rule(rules, "bot_source", "warn", src.get("own_code"),
+                  text + (f" (behind its upstream by {src['behind']})" if src.get("behind") else ""))
         profile_id = configs.get(bot["id"], {}).get("profile")
         try:
             status, rv = profile_review(evaluator.load_suite(run["suite"]), profile_id) if profile_id else (None, None)

@@ -284,3 +284,36 @@ def test_the_head_is_published_off_the_machine_and_a_rewrite_is_caught_against_i
     assert not governance.verify_against(3, a["hash"])["ok"]
     failing = governance.anchor("x", post=lambda *_: (_ for _ in ()).throw(OSError("down")), put=lambda *_: "s3://ok")
     assert failing["errors"] == ["webhook: down"] and failing["sent"] == ["s3://ok"]
+
+
+def test_a_run_records_which_code_each_bot_ran_and_the_gate_flags_local_changes(tmp_path):
+    import subprocess
+    git = lambda *a, cwd: subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True)
+    upstream, bot = tmp_path / "upstream.git", tmp_path / "bot"
+    git("init", "-q", "--bare", str(upstream), cwd=tmp_path)
+    git("clone", "-q", str(upstream), str(bot), cwd=tmp_path)
+    (bot / "app.py").write_text("print('owner')\n")
+    for args in (["add", "."], ["-c", "user.email=o@x", "-c", "user.name=o", "commit", "-qm", "owner"], ["push", "-q", "origin", "HEAD"]):
+        git(*args, cwd=bot)
+    git("branch", "-q", "--set-upstream-to", "origin/" + subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=bot,
+        capture_output=True, text=True).stdout.strip(), cwd=bot)
+    assert governance.source_info(str(bot))["own_code"] is True
+
+    (bot / "app.py").write_text("print('ours')\n")  # the tester's change
+    info = governance.source_info(str(bot))
+    assert info["dirty"] and info["own_code"] is False
+
+    plain = tmp_path / "unzipped"
+    plain.mkdir()
+    (plain / "main.py").write_text("x = 1\n")
+    pin = governance.tree_sha256(str(plain))
+    assert governance.source_info({"path": str(plain), "sha256": pin})["own_code"] is True
+    (plain / "main.py").write_text("x = 2\n")
+    assert governance.source_info({"path": str(plain), "sha256": pin})["own_code"] is False
+
+    run = make_run()
+    run["provenance"] = governance.provenance([{"id": "good", "source": str(bot)},
+                                               {"id": "leaky", "source": {"path": str(plain), "sha256": pin}}], __file__)
+    rules = {b["id"]: {r["id"]: r for r in b["rules"]} for b in compliance.gate(run)["bots"]}
+    assert rules["good"]["bot_source"]["ok"] is False and "uncommitted changes" in rules["good"]["bot_source"]["text"]
+    assert rules["leaky"]["bot_source"]["ok"] is False and "pinned hash" in rules["leaky"]["bot_source"]["text"]

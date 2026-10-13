@@ -157,14 +157,17 @@ Reliance Digital multi-agent bot** (`~/projects/hussain-bot/digital-multi-agent-
 cd ~/projects/reliance-digital-chatbot && .venv/bin/uvicorn app:app --port 8000
 
 # 2. Hussain's chatbot (port 8001): digital-multi-agent-ai-main, unzipped from ~/Downloads into ~/projects/hussain-bot.
+#    It's Hussain's zip as he sent it, plus token-usage reporting (measurement only); the changes we tried on his bot
+#    are kept as a patch in ~/projects/hussain-bot/patches for him to take or leave. bots.json pins the code's hash.
 #    Its backend/.env needs GOOGLE_API_KEY (and ANTHROPIC/OPENAI keys for the Claude / GPT variants); the Linux paths
 #    below replace the Windows D:\ paths. Without a Chroma index its RAG agent falls back to keyword search.
 cd ~/projects/hussain-bot/digital-multi-agent-ai-main/backend
 RAG_DATA_ROOT="$PWD/../data" CHROMA_PATH="$PWD/../data/chroma_db" CLAUDE_MODEL=claude-sonnet-5 OPENAI_MODEL=gpt-5-mini \
   ~/projects/chatbot-compare/.bots/reliance222-venv/bin/uvicorn main:app --port 8001
 
-# Mounika's chatbot (port 5000): the GitHub version (github.com/Mounika6115/AI-customer-support-chatbot), cloned
-#    into ~/projects/mouni-bot/github-latest, packages in backend/.venv-local (the repo's own venv/ is broken). It
+# Mounika's chatbot (port 5000): her GitHub main (github.com/Mounika6115/AI-customer-support-chatbot, be890ac of
+#    2026-10-09; `git pull` for her latest), cloned into ~/projects/mouni-bot/github-latest, packages in
+#    backend/.venv-local (the repo's own venv/ is broken). It
 #    runs on a test database, compare-test.db, where the adapter closes each finished test chat of the test login
 #    (the app itself has no way to end one; the adapter refuses a database whose file name lacks "test"). The test
 #    login's password is BOT_MOUNI_PASSWORD in .env.
@@ -214,8 +217,14 @@ versions are re-scored with the current rules when the server loads them.
 The debug trace (white-box) needs the trace changes in each bot: VoltKart `app.py` (`debug` returns
 `trace.tools`), Hussain's `main.py` (its `meta` event names the routed agent) and Mouni's `routes/api.py` +
 `services/ai.py` (`debug` returns `trace.context`). Without them, gray-box checks still run and white-box ones are skipped.
-As of 2026-10-12 only VoltKart has them: the copies of Hussain's and Mouni's bots in `~/projects` return no debug
-trace, so those two get gray-box scores but no white-box or grounded score until their owners add it.
+Only VoltKart has them: Hussain's and Mouni's bots are graded as their owners ship them, so they return no debug
+trace and get gray-box scores but no white-box or grounded score until their owners add it.
+
+**Which code was graded.** Each bot's `"source"` in `bots.json` (its checkout, or `{"path", "sha256", "note"}` for code
+with no git history) is recorded in every run's provenance: the git commit, branch, uncommitted changes and distance
+from its upstream (as last fetched), or a hash of its code files against the pinned one. The release gate warns
+(`bot_source`) when a bot ran code that isn't its owner's version, so a tester's local fix to another team's bot can't
+slip into its score. Measurement-only hooks (token usage) are the one kind of change made to the others' bots.
 
 ## Regression alerts
 

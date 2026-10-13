@@ -308,7 +308,7 @@ class SupportFlowConversation(Conversation):
     The bot continues the customer's latest open conversation, so for this login only one test chat runs
     at a time, and each chat is retired (escalated) when it closes, so the next one starts fresh.
     Config: base_url, email, and password_env (the .env variable holding the test login's password; "password" in
-    bots.json still works). The GitHub version of 2026-10-06 has no escalate endpoint and no other way to end a chat,
+    bots.json still works). Her GitHub version (main, 2026-10-09) has no escalate endpoint and no other way to end a chat,
     so for it set "db_path" (the bot's SQLite file) and chats are retired by marking them CLOSED there. That writes
     into the system under test, so it is only done on a test database: the file name must contain "test" (e.g.
     compare-test.db), and only conversations this login opened are touched. Set "handoff": false as it never hands
