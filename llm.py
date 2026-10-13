@@ -1,26 +1,29 @@
 """The free models this app uses to grade and to write test cases, through any OpenAI-compatible chat API.
 
-Default: Google's Gemini free tier (an AI Studio key in GOOGLE_API_KEY). The same code talks to a local Ollama
-("http://localhost:11434/v1", no key) or Groq's free tier: set the base URL, model and key variable.
+Default main judge: Kimi K2.6 (Moonshot AI) on NVIDIA NIM's free API (a key from build.nvidia.com in NVIDIA_API_KEY).
+It's not the family of any bot under test (they run Gemini and Claude), so no bot is graded alone by its own model
+family; Gemini is the second judge (.env), which can dispute a verdict but never pass a Gemini bot on its own. The
+same code talks to Gemini's free tier, a local Ollama ("http://localhost:11434/v1", no key) or Groq: set the base URL,
+model and key variable.
 
-  JUDGE_BASE_URL     default https://generativelanguage.googleapis.com/v1beta/openai
-  JUDGE_MODEL        default gemini-3.7-flash,gemini-3.5-flash,gemini-2.5-flash: a comma-separated list. Only the
+  JUDGE_BASE_URL     default https://integrate.api.nvidia.com/v1
+  JUDGE_MODEL        default moonshotai/kimi-k2.6: a comma-separated list is allowed. Only the
                      first is used unless JUDGE_SWITCH_MODELS=1, so every conversation in a run is graded by the same
                      model; a quota that runs out leaves "judge error" cases for rejudge.py to grade later with it
   JUDGE_SWITCH_MODELS  1 = when a model is overloaded or rate-limited, try the next one in the list, then the
                      fallback judge. Each verdict records its model, and a run graded by more than one model is never
                      called a clear win (bots graded later, e.g. a one-chat-at-a-time bot, would get another grader)
-  JUDGE_API_KEY_ENV  env var holding the key, default GOOGLE_API_KEY ("" = no key, e.g. Ollama)
-  JUDGE_RPM          requests per minute to stay under (free tiers are rate-limited), default 10; 0 = no limit
+  JUDGE_API_KEY_ENV  env var holding the key, default NVIDIA_API_KEY ("" = no key, e.g. Ollama)
+  JUDGE_RPM          requests per minute to stay under (free tiers are rate-limited), default 30; 0 = no limit
   JUDGE_DAILY_LIMIT  requests a day the judge's plan allows (e.g. a free tier's daily quota); the dashboard warns
                      before a run that needs more. Unset = unknown, no warning
   JUDGE_FALLBACK_*   an optional fallback judge (off unless JUDGE_FALLBACK_MODEL is set; default base URL is the local
                      Ollama): when the main judge stays rate-limited or out of quota after its retries, the call goes to
                      it instead of failing, and the verdict records which model gave it
   SECOND_JUDGE_*     the same for the optional second judge (a different model family); off unless
-                     SECOND_JUDGE_MODEL is set, default base URL is the local Ollama. E.g. Kimi on NVIDIA NIM's free
-                     API: SECOND_JUDGE_BASE_URL=https://integrate.api.nvidia.com/v1,
-                     SECOND_JUDGE_MODEL=moonshotai/kimi-k2.6, SECOND_JUDGE_API_KEY_ENV=NVIDIA_API_KEY
+                     SECOND_JUDGE_MODEL is set, default base URL is the local Ollama. .env sets Gemini on its free tier:
+                     SECOND_JUDGE_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai,
+                     SECOND_JUDGE_MODEL=gemini-3.7-flash, SECOND_JUDGE_API_KEY_ENV=GOOGLE_API_KEY
 
 Every reply is constrained to a JSON schema (response_format json_schema), so a verdict always parses. Rate-limit
 and overload errors are retried with backoff; a daily quota that stays exhausted ends as a BotError, which the
@@ -41,6 +44,7 @@ from governance import is_local
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))  # also for rejudge.py / reword.py
 
 GEMINI = "https://generativelanguage.googleapis.com/v1beta/openai"
+NIM = "https://integrate.api.nvidia.com/v1"
 OLLAMA = "http://localhost:11434/v1"
 KEY_PAGES = {"GOOGLE_API_KEY": "https://aistudio.google.com/apikey", "NVIDIA_API_KEY": "https://build.nvidia.com"}
 TIMEOUT = float(os.environ.get("JUDGE_TIMEOUT", "300"))
@@ -171,6 +175,6 @@ def _endpoint(prefix, base_url, model, key_env, rpm, fallback=None):
 
 
 _FALLBACK = _endpoint("JUDGE_FALLBACK", OLLAMA, "", "", "0")
-JUDGE = _endpoint("JUDGE", GEMINI, "gemini-3.7-flash,gemini-3.5-flash,gemini-2.5-flash", "GOOGLE_API_KEY", "10",
+JUDGE = _endpoint("JUDGE", NIM, "moonshotai/kimi-k2.6", "NVIDIA_API_KEY", "30",
                   fallback=_FALLBACK or None)
 SECOND_JUDGE = _endpoint("SECOND_JUDGE", OLLAMA, "", "", "0")

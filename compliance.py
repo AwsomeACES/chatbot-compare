@@ -20,6 +20,7 @@ Usage:
   .venv/bin/python compliance.py anchor [--reason TEXT]            publish the log's head (webhook and/or S3)
   .venv/bin/python compliance.py purge [--dry-run]                 apply the retention policy
   .venv/bin/python compliance.py scan                              personal data in suites and store data files
+  .venv/bin/python compliance.py profile-sheet <suite> <profile> [-o FILE]   a review sheet to send the bot's owner
   .venv/bin/python compliance.py review-profile <suite> <profile> --reviewer NAME
       the bot's owner confirms its store profile: the facts its cases are filled with, the store data the judge
       sees and which skills count as "not supported". Saved in the suite with a hash of what was reviewed; the
@@ -29,6 +30,7 @@ Usage:
 import fnmatch
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -216,6 +218,54 @@ def profile_review(suite, profile_id):
     if not review:
         return "unreviewed", None
     return ("reviewed" if review.get("sha256") == profile_digest(profile) else "changed"), review
+
+
+def profile_sheet(suite_id, profile_id):
+    """A one-page Markdown review sheet for a bot's owner: the facts its cases are filled with, the skills it is
+    excused from (and the cases that drops), what the judge is told about its store, and how to confirm."""
+    suite = evaluator.load_suite(suite_id)
+    profile = (suite.get("profiles") or {}).get(profile_id)
+    if profile is None:
+        raise KeyError(profile_id)
+    caps = set(profile.get("capabilities") or [])
+    needs = sorted({r for c in suite["cases"] for r in c.get("requires", [])})
+    dropped = {r: [c["id"] for c in suite["cases"] if r in c.get("requires", [])] for r in needs if r not in caps}
+    used = {}
+    for c in suite["cases"]:
+        for name in re.findall(r"\{(\w+)(?:\|upper)?\}", json.dumps({k: c.get(k) for k in ("turns", "variants", "expect",
+                                                                                         "expect_trace", "rubric")})):
+            used.setdefault(name, set()).add(c["id"])
+    status, review = profile_review(suite, profile_id)
+    lines = [f"# Store profile review: {profile.get('name', profile_id)}", "",
+             f"Suite `{suite_id}`, profile `{profile_id}`. Status: **{status}**"
+             + (f" (by {review['by']} on {review['at'][:10]})" if review else "") + ".", "",
+             "Every test case is a template; this profile fills it in for your bot. Please check that each fact below is "
+             "true of your bot, that the skills it is excused from are really ones it doesn't have, and that the "
+             "description the judge reads is right. Anything wrong makes your bot fail cases it answered correctly (or pass "
+             "ones it didn't).", "",
+             "## Skills your bot is excused from", ""]
+    lines += ([f"- **{r}**: not asked, and left out of every bot's overall score: {', '.join(ids)}" for r, ids in dropped.items()]
+              or ["- None: every case applies to your bot."])
+    lines += ["", f"Skills it is marked as having: {', '.join(sorted(caps)) or 'none listed'}.", "",
+              "## Facts your cases are filled with", "", "| Placeholder | Your bot's value | Used in |", "|---|---|---|"]
+    for k, v in sorted((profile.get("vars") or {}).items()):
+        if v is None:
+            continue
+        shown = " / ".join(map(str, v)) if isinstance(v, list) else str(v)
+        cases = sorted(used.get(k, []))
+        lines.append(f"| `{k}` | {shown.replace('|', '\\|')[:160]} | {', '.join(cases[:6])}{' ...' if len(cases) > 6 else ''} |")
+    unset = sorted(k for k, v in (profile.get("vars") or {}).items() if v is None)
+    if unset:
+        lines += ["", f"Not set for your bot (those checks are skipped): {', '.join(f'`{k}`' for k in unset)}."]
+    lines += ["", "## What the judge is told about your store", "", "> " + (profile.get("context") or "(nothing)").replace("\n", "\n> "),
+              "", "The judge also reads these data files in full: "
+              + (", ".join(f"`{p}`" for p in profile.get("data_files", [])) or "none") + ".", "",
+              "## To confirm", "",
+              "Reply with corrections, or once it's right run (or ask the test owner to run, naming you):", "",
+              f"    .venv/bin/python compliance.py review-profile {suite_id} {profile_id} --reviewer \"<your name>\"", "",
+              "That records your review with a hash of this profile and its data files; any later change to them shows "
+              "as \"changed since reviewed\" on the release gate."]
+    return "\n".join(lines) + "\n"
 
 
 def review_profile(suite_id, profile_id, reviewer):
@@ -589,10 +639,19 @@ def main(args):
         v = governance.verify_log()
         print(f"Audit log: {v['entries']} entries, " + ("chain intact" if v["ok"] else f"BROKEN: {v['problem']}")
               + (f", head #{v['entries']} {v['head']}" if v.get("head") else ""))
+        head = None
         if _opt(args, "--head"):
             seq, _, h = _opt(args, "--head").partition(":")
-            check = governance.verify_against(int(seq), h)
-            print("Matches the published head" if check["ok"] else f"DOES NOT MATCH the published head: {check['problem']}")
+            head = {"seq": int(seq), "hash": h, "key": "--head"}
+        elif os.environ.get("AUDIT_ANCHOR_S3"):
+            try:
+                head = governance.latest_s3_anchor()
+            except Exception as e:
+                print(f"Could not read the published heads in AUDIT_ANCHOR_S3: {e}", file=sys.stderr)
+        if head:
+            check = governance.verify_against(head["seq"], head["hash"])
+            print(f"Matches the published head #{head['seq']} ({head['key']})" if check["ok"]
+                  else f"DOES NOT MATCH the published head #{head['seq']} ({head['key']}): {check['problem']}")
             v = {**v, "ok": v["ok"] and check["ok"]}
         for e in governance.read_log(int(_opt(args, "--limit", "20"))):
             print(f"  #{e['seq']} {e['at']} {e['actor']}: {e['action']} {e['target'] or ''}")
@@ -605,6 +664,19 @@ def main(args):
             verb = "Would delete" if "--dry-run" in args else "Deleted"
             print(f"{verb} {len(r['runs'])} run(s) older than {r['retention_days']} days"
                   + (f": {', '.join(r['runs'])}" if r["runs"] else "") + f"; kept {r['kept']} (baseline or signed off)")
+        return 0
+    if cmd == "profile-sheet" and len(args) > 2:
+        try:
+            text = profile_sheet(args[1], args[2])
+        except (KeyError, ValueError, FileNotFoundError) as err:
+            print(f"No sheet: {err}", file=sys.stderr)
+            return 3
+        if _opt(args, "-o"):
+            with open(_opt(args, "-o"), "w", encoding="utf-8") as f:
+                f.write(text)
+            print(f"Wrote {_opt(args, '-o')}")
+        else:
+            print(text)
         return 0
     if cmd == "review-profile" and len(args) > 2:
         try:

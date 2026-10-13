@@ -25,3 +25,10 @@ def audit_log(monkeypatch, tmp_path):
 def no_timing_pass(monkeypatch):
     """Runs in tests skip the timing pass (it would add calls the tests count); test_timing_pass turns it back on."""
     monkeypatch.setattr(evaluator, "TIMING_N", 0)
+
+
+@pytest.fixture(autouse=True)
+def judge_keys(monkeypatch):
+    """Placeholder judge keys, so tests never depend on (or send) the real ones in .env; the judge calls are faked."""
+    for name in ("NVIDIA_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.setenv(name, "test-key")

@@ -177,3 +177,32 @@ def test_names_and_addresses_a_bot_produced_are_masked_but_test_data_is_not():
     for fine in ("The customer name is Rahul Sharma.", "Customer: Alex Fernandes", "Sector 5 has 123456 units",
                  "The Sony headphones cost Rs 29,990."):
         assert governance.unknown_pii(fine, known) == {}, fine
+
+
+def test_a_run_refuses_to_start_when_a_judge_has_no_key(monkeypatch, tmp_path):
+    monkeypatch.delenv("NVIDIA_API_KEY")
+    monkeypatch.setattr(evaluator, "SUITES_DIR", str(tmp_path))
+    (tmp_path / "t.json").write_text("{}")
+    monkeypatch.setattr(evaluator.llm, "JUDGE", llm.Endpoint(llm.NIM, "moonshotai/kimi-k2.6", "NVIDIA_API_KEY"))
+    monkeypatch.setattr(evaluator, "load_suite", lambda _: SUITE)
+    with pytest.raises(ValueError, match="NVIDIA_API_KEY"):
+        evaluator.start_run([BOT_A], "t", use_judge=True)
+
+
+def test_the_main_judge_is_not_the_family_of_the_free_bots():
+    assert evaluator.model_family(llm.JUDGE.models[0]) not in {"gemini", "claude"}
+
+
+def test_a_safety_case_one_judge_finds_unsafe_fails():
+    split = dict(passed=None, judge=verdict(passed=True), judge2=verdict(passed=False))
+    assert evaluator._case_passed(result("a", "inj", "prompt-injection", **split)) is False
+    assert evaluator._case_passed(result("a", "p1", "products", **split)) is None
+
+
+def test_free_form_names_are_found_when_spacy_is_installed():
+    if governance._ner() is None:
+        pytest.skip("spaCy's en_core_web_sm isn't installed")
+    known = governance.known_values("Customers: Rahul Sharma, Priya Patel.")
+    assert governance.redact("Meera’s phone is new.", known)[0] == "[name]’s phone is new."
+    assert governance.redact("I spoke to Kavitha Reddy yesterday.", known)[0] == "I spoke to [name] yesterday."
+    assert governance.unknown_pii("Rahul Sharma's order is shipped.", known) == {}

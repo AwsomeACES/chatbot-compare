@@ -317,3 +317,9 @@ def test_a_run_records_which_code_each_bot_ran_and_the_gate_flags_local_changes(
     rules = {b["id"]: {r["id"]: r for r in b["rules"]} for b in compliance.gate(run)["bots"]}
     assert rules["good"]["bot_source"]["ok"] is False and "uncommitted changes" in rules["good"]["bot_source"]["text"]
     assert rules["leaky"]["bot_source"]["ok"] is False and "pinned hash" in rules["leaky"]["bot_source"]["text"]
+
+
+def test_a_profile_review_sheet_lists_excused_skills_and_facts():
+    sheet = compliance.profile_sheet("store_support", "hussain")
+    assert "Status: **unreviewed**" in sheet and "order_verification" in sheet and "order-wrong-phone" in sheet
+    assert "| `headphones_price` | 26,990 |" in sheet and "review-profile store_support hussain" in sheet

@@ -20,7 +20,7 @@ Reliance Digital multi-agent bot** (`~/projects/hussain-bot/digital-multi-agent-
      but doesn't fail a bias case by itself, so the fairness score measures fairness.
 2. **Every answer is checked three ways**
    - *Exact checks*: the reply must contain the right fact, or must not contain leaked data.
-   - *AI judge*: a free model (Gemini Flash on Google's free tier by default, see *Free models only* below) grades the conversation against a rubric for correctness, helpfulness and tone, 1–5,
+   - *AI judge*: a free model (Kimi K2.6 on NVIDIA NIM's free API by default, see *Free models only* below) grades the conversation against a rubric for correctness, helpfulness and tone, 1–5,
      without being told which bot wrote it.
    - *Speed*: seconds per reply (median and 95th percentile).
    - The judge also flags any *invented fact* (price, spec, stock, policy, date, courier, rating) in every
@@ -82,9 +82,11 @@ Reliance Digital multi-agent bot** (`~/projects/hussain-bot/digital-multi-agent-
      until set, then on by default) re-grades every conversation (`SECOND_JUDGE_SAMPLE`, default 1). Where the two
      judges disagree on pass/fail (fairness for bias cases, invented facts for the hallucination score), neither
      decides: the case counts on its exact checks alone, or is left out as not graded, and the scorecard lists these
-     *disputed* cases. The main judge (Gemini) is the same family as several bots (Gemini 3.6 / 2.5 Flash); without a
-     second judge from another family the scorecard and the release gate warn about that, since a judge can favour
-     answers from its own family.
+     *disputed* cases. On a **safety** case the stricter judge wins: an answer either judge finds unsafe fails.
+     The main judge is Kimi, a family none of the bots runs on (they run Gemini and Claude), and the second judge is
+     Gemini, so Gemini can dispute a verdict on a Gemini bot but never pass one on its own. Should the main judge
+     share a bot's family with no second judge from another family, the scorecard and the release gate warn, since a
+     judge can favour answers from its own family.
    - *One judge model per run*: only the first model in `JUDGE_MODEL` grades, so a bot whose cases finish late (a
      one-chat-at-a-time bot) isn't graded by a different, weaker model after a quota runs out; those cases get a
      judge error for `rejudge.py`. `JUDGE_SWITCH_MODELS=1` allows moving down the list and to the fallback judge;
@@ -188,25 +190,24 @@ Env vars: the judge settings in *Free models only* below, `SECOND_JUDGE_SAMPLE` 
 
 Nothing here calls a paid model by default:
 
-- **Judge, comparative judge and `reword.py`**: Gemini Flash on Google's free tier, through its OpenAI-compatible API
-  (`llm.py`). Put a free key from https://aistudio.google.com/apikey in `.env` as `GOOGLE_API_KEY`. Requests are paced
-  to `JUDGE_RPM` (default 10 a minute), so a full run takes a while; a daily quota that runs out leaves a "judge
-  error" on the remaining cases, and `rejudge.py <run_id>` grades just those the next day. Free-tier prompts may be
-  used by Google to improve its models, so keep real customer data out of the test cases.
+- **Judge, comparative judge and `reword.py`**: Kimi K2.6 (Moonshot AI) on NVIDIA NIM's free API, through its
+  OpenAI-compatible API (`llm.py`). Put a free key from https://build.nvidia.com in `.env` as `NVIDIA_API_KEY`; a run
+  with the judge on refuses to start without it. Requests are paced to `JUDGE_RPM` (default 30 a minute); a quota
+  that runs out leaves a "judge error" on the remaining cases, and `rejudge.py <run_id>` grades just those later.
 - **Running out of quota**: the start screen estimates the run's judge calls and how long they take at `JUDGE_RPM`;
   set `JUDGE_DAILY_LIMIT` to your plan's daily quota and it warns before a run that needs more. Set
   `JUDGE_FALLBACK_MODEL` (and `JUDGE_FALLBACK_BASE_URL`, default the local Ollama) to have a fallback judge take over
   when the main one stays out of quota; each verdict records which model gave it. For a bot whose own LLM is on a free
   tier, `"rpm": 10` on it in `bots.json` spaces out the test messages so the run doesn't hit the limit. The three
   Gemini bots have `rpm` 4–6 (Hussain's multi-agent bot makes several LLM calls per message); `nightly.sh` hands
-  them this project's `GOOGLE_API_KEY`, so they share one free-tier quota with the judge.
+  them this project's `GOOGLE_API_KEY`, so they share one free-tier quota with the second judge (Gemini).
 - **Another free judge**: set `JUDGE_BASE_URL`, `JUDGE_MODEL` and `JUDGE_API_KEY_ENV`, e.g. a local Ollama model
   (`http://localhost:11434/v1`, `JUDGE_API_KEY_ENV=` empty) or Groq's free tier. A small local model is a much weaker
   grader; check it in the Judge review tab before trusting its scores.
-- **Second judge**: off until `SECOND_JUDGE_MODEL` is set (then on by default, grading every conversation) (same `SECOND_JUDGE_*` settings; base URL defaults to the
-  local Ollama). `.env` sets it to Kimi K2.6 (Moonshot AI) on NVIDIA NIM's free API: put a key from
-  https://build.nvidia.com in `.env` as `NVIDIA_API_KEY`. Kimi is a different model family from Gemini, which is the
-  point of a second judge.
+- **Second judge**: off until `SECOND_JUDGE_MODEL` is set (then on by default, grading every conversation; same
+  `SECOND_JUDGE_*` settings, base URL defaulting to the local Ollama). `.env` sets it to Gemini 3.7 Flash on Google's
+  free tier: a free key from https://aistudio.google.com/apikey in `.env` as `GOOGLE_API_KEY`. Free-tier prompts may
+  be used by Google to improve its models, so keep real customer data out of the test cases.
 - **Bots**: VoltKart runs free on a local model (`mine-qwen-local`: `ollama pull qwen2.5:3b`; VoltKart's
   `providers.py` has a `qwen2.5-3b-local` model). It's slow on CPU, so it chats one test at a time. Hussain's and
   Mouni's chatbots use Gemini, which is free with an AI Studio key in their own `.env` files. The Bedrock-backed
@@ -343,7 +344,9 @@ Markdown for an assessor.
 - **Store profiles reviewed by their owners.** Whoever writes the suite also writes every bot's profile: its facts,
   the store data the judge sees, and which skills count as *not supported*. When that person owns one of the bots,
   the other owners should check theirs: `compliance.py review-profile store_support hussain --reviewer "Hussain"`
-  records it in the suite with a hash of the profile and its data files. The release gate warns about a bot whose
+  records it in the suite with a hash of the profile and its data files. `compliance.py profile-sheet store_support
+  hussain -o docs/profile-reviews/hussain.md` writes a one-page sheet to send the owner: the skills the bot is excused
+  from and the cases that drops, every fact its cases are filled with, and what the judge is told about its store. The release gate warns about a bot whose
   profile isn't reviewed, or changed since.
 - **Personal data.** A value shaped like an email, Indian phone number, card number (Luhn-checked), Aadhaar
   (Verhoeff-checked), PAN or UPI id that is already in the store data or test case is synthetic and sent as is. One that
@@ -352,7 +355,9 @@ Markdown for an assessor.
   saved run (so exports and the review queue don't hold it). Names and street addresses have no fixed shape, so only
   clear cases are caught: a capitalised name after "my name is", "customer" or a title (Mr, Mrs, Dr, Shri...), and an
   address with a street word and a 6-digit PIN code (or a labelled PIN code). A name or address that appears anywhere
-  in the store data or test case is test data.
+  in the store data or test case is test data. With spaCy installed (`pip install spacy` and
+  `python -m spacy download en_core_web_sm`, both in `requirements.txt`'s notes) names with no cue are found too
+  ("Meera called earlier"); its small model still misses some (`PII_NER=off` turns it off).
   `compliance.py scan` lists every such value in the suites and data files, so you can confirm all of it is synthetic.
 - **Retention.** Runs older than `data.retention_days` (90) are deleted by `nightly.sh`, or from the Governance tab,
   except baselines and runs with a sign-off, which are kept as evidence.
@@ -362,10 +367,12 @@ Markdown for an assessor.
   `~/.config/chatbot-compare/audit.key`, created on first use, readable by this OS user only), and the latest entry is
   recorded there too, so the chain can't be recomputed without the key and a log with its last lines cut off shows as
   broken. Someone who can log in as this OS user can read the key; for evidence that must hold against that, copy the
-  head hash off this machine: `compliance.py anchor` (run after every sign-off and by `nightly.sh`) posts it to
+  head hash off this machine (this install writes it to the S3 bucket `chatbot-compare-audit-965803922965`, Object Lock
+  in governance mode for 365 days): `compliance.py anchor` (run after every sign-off and by `nightly.sh`) posts it to
   `AUDIT_ANCHOR_WEBHOOK` (default `REGRESSION_WEBHOOK`) and/or writes it to `AUDIT_ANCHOR_S3` (`s3://bucket/prefix`;
   turn on Object Lock for the bucket), and `compliance.py audit --head SEQ:HASH` checks the log against a head copied
-  from there, which catches a log rewritten even by someone with the key. Each finished run is sealed with the hash of its results,
+  from there, which catches a log rewritten even by someone with the key. With `AUDIT_ANCHOR_S3` set,
+  `compliance.py audit` fetches the newest head from the bucket and checks against it by itself. Each finished run is sealed with the hash of its results,
   so a run file edited afterwards shows as *modified*. The actor is the HTTP Basic user name or the OS user for
   scripts. With `APP_PASSWORD` any user name is accepted as typed; set `APP_USERS` (`name:password,name2:password2`)
   for per-person logins, and then a sign-off's reviewer must be the person logged in. Every run also saves its `provenance`: git commit (and whether there were uncommitted changes), suite,

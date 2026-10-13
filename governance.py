@@ -154,6 +154,37 @@ LABELS = {"email": "email address", "upi": "UPI id", "card": "card number", "aad
 TEXT_MATCHED = {"name", "address"}  # known when the value appears anywhere in the store data or test case
 
 
+_NER = None  # the spaCy pipeline, loaded on first use; False when it isn't installed or PII_NER=off
+
+
+def _ner():
+    """spaCy's small English model, for names with no cue around them ("Meera called earlier"). Optional: without it
+    (pip install spacy && python -m spacy download en_core_web_sm), only the patterns above find names."""
+    global _NER
+    if _NER is None:
+        _NER = False
+        if os.environ.get("PII_NER", "auto").lower() not in ("off", "0", "false", "no"):
+            try:
+                import spacy
+                _NER = spacy.load("en_core_web_sm", disable=["parser", "lemmatizer", "tagger", "attribute_ruler"])
+            except (ImportError, OSError):
+                pass
+    return _NER or None
+
+
+def _person_names(text):
+    """(start, end) of each person's name spaCy finds."""
+    nlp = _ner()
+    if nlp is None or not text:
+        return []
+    out = []
+    for e in nlp(text.replace("\u2019", "'").replace("\u2018", "'")).ents:  # same length: offsets still match text
+        name = re.sub(r"['\u2019]s$", "", e.text)  # "Rahul Sharma's" is Rahul Sharma
+        if e.label_ == "PERSON" and name[:1].isupper() and len(name) > 2 and not name.isupper():
+            out.append((e.start_char, e.start_char + len(name)))
+    return out
+
+
 def find_pii(text):
     """[(kind, start, end, normalised value)] for everything in text shaped like personal data."""
     found, taken = [], []
@@ -165,6 +196,10 @@ def find_pii(text):
                 continue
             taken.append((start, end))
             found.append((kind, start, end, norm(m.group(g))))
+    for start, end in _person_names(text):
+        if not any(start < e and s < end for s, e in taken):
+            taken.append((start, end))
+            found.append(("name", start, end, _words(text[start:end])))
     return sorted(found, key=lambda f: f[1])
 
 
@@ -430,6 +465,27 @@ def _put_anchor_s3(target, record):
     key = f"{prefix.rstrip('/') + '/' if prefix else ''}audit-head-{record['seq']:08d}-{record['hash'][:16]}.json"
     boto3.client("s3").put_object(Bucket=bucket, Key=key, Body=canonical(record).encode(), ContentType="application/json")
     return f"s3://{bucket}/{key}"
+
+
+def latest_s3_anchor(target=None):
+    """The newest head written to AUDIT_ANCHOR_S3 ({"seq", "hash", ...}), or None when none is configured or found."""
+    target = target or os.environ.get("AUDIT_ANCHOR_S3")
+    if not target:
+        return None
+    import boto3
+    bucket, _, prefix = target.removeprefix("s3://").partition("/")
+    prefix = (prefix.rstrip("/") + "/" if prefix else "") + "audit-head-"
+    s3, keys, token = boto3.client("s3"), [], None
+    while True:
+        page = s3.list_objects_v2(Bucket=bucket, Prefix=prefix, **({"ContinuationToken": token} if token else {}))
+        keys += [o["Key"] for o in page.get("Contents", [])]
+        token = page.get("NextContinuationToken")
+        if not token:
+            break
+    if not keys:
+        return None
+    key = max(keys)  # zero-padded seq: the newest sorts last
+    return {**json.loads(s3.get_object(Bucket=bucket, Key=key)["Body"].read()), "key": f"s3://{bucket}/{key}"}
 
 
 def anchor(reason, post=None, put=None):
