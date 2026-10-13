@@ -18,6 +18,10 @@ Usage:
   .venv/bin/python compliance.py audit [--limit N]                 verify the audit log and show recent entries
   .venv/bin/python compliance.py purge [--dry-run]                 apply the retention policy
   .venv/bin/python compliance.py scan                              personal data in suites and store data files
+  .venv/bin/python compliance.py review-profile <suite> <profile> --reviewer NAME
+      the bot's owner confirms its store profile: the facts its cases are filled with, the store data the judge
+      sees and which skills count as "not supported". Saved in the suite with a hash of what was reviewed; the
+      release gate warns about a bot whose profile nobody but the test author has checked, or that changed since
 """
 
 import fnmatch
@@ -128,6 +132,22 @@ def gate(run, policy=None, review_stats=None, baselines=None):
                   if compared else "no baseline to compare with", len(crit) if compared else None)
         if g.get("approved_models_only"):
             _model_rules(rules, run, configs.get(bot["id"], {}), bot["id"], policy)
+        if run.get("judge") and done:
+            overlap = b.get("label") in ((run.get("summary") or {}).get("judge_overlap") or [])
+            _rule(rules, "judge_independence", "warn", not overlap,
+                  "the main judge is the same model family as this bot's LLM and no second judge from another family "
+                  "checked it" if overlap else "graded by a judge from another model family, or checked by one")
+        profile_id = configs.get(bot["id"], {}).get("profile")
+        try:
+            status, rv = profile_review(evaluator.load_suite(run["suite"]), profile_id) if profile_id else (None, None)
+        except (OSError, ValueError):
+            status, rv = None, None
+        if status:
+            _rule(rules, "profile_reviewed", "warn", status == "reviewed",
+                  f"store profile '{profile_id}' reviewed by {rv['by']} on {rv['at'][:10]}" if status == "reviewed" else
+                  f"store profile '{profile_id}' changed since {rv['by']} reviewed it" if status == "changed" else
+                  f"store profile '{profile_id}' (its facts and which skills count as not supported) hasn't been "
+                  "reviewed by the bot's owner: compliance.py review-profile")
         if "max_unknown_pii" in warn:
             pii = b.get("unknown_pii")
             n = sum(pii.values()) if pii is not None else None
@@ -158,6 +178,47 @@ def gate_text(result):
         lines += [f"    {'BLOCK' if r['level'] == 'block' else 'WARN'}: {r['text']}"
                   for r in b["rules"] if r["ok"] is False]
     return "\n".join(lines)
+
+
+# ---------- Store profile review ----------
+# Whoever writes the suite also writes every bot's profile, including the capabilities that decide which cases count
+# for that bot. When that person owns one of the bots, the other bots' owners should confirm their profiles.
+
+def profile_digest(profile):
+    """Hash of what a profile review covers: the profile (without its review) and its data files' contents."""
+    files = {p: governance.file_sha256(os.path.expanduser(p)) for p in profile.get("data_files", [])}
+    return governance.sha256({"profile": {k: v for k, v in profile.items() if k != "review"}, "files": files})
+
+
+def profile_review(suite, profile_id):
+    """("reviewed" | "changed" | "unreviewed", the review or None) for one of a suite's profiles."""
+    profile = (suite.get("profiles") or {}).get(profile_id)
+    if profile is None:
+        return None, None
+    review = profile.get("review")
+    if not review:
+        return "unreviewed", None
+    return ("reviewed" if review.get("sha256") == profile_digest(profile) else "changed"), review
+
+
+def review_profile(suite_id, profile_id, reviewer):
+    path = os.path.join(evaluator.SUITES_DIR, f"{evaluator.load_suite(suite_id) and suite_id}.json")
+    with open(path, encoding="utf-8") as f:
+        suite = json.load(f)
+    if profile_id not in (suite.get("profiles") or {}):
+        raise KeyError(profile_id)
+    reviewer = (reviewer or "").strip()[:100]
+    if not reviewer:
+        raise ValueError("Name the reviewer (the bot's owner)")
+    profile = suite["profiles"][profile_id]
+    profile["review"] = {"by": reviewer, "at": time.strftime("%Y-%m-%dT%H:%M:%S"), "sha256": profile_digest(profile)}
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(suite, f, indent=1, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp, path)
+    governance.record("profile.review", f"{suite_id}/{profile_id}", reviewer=reviewer, sha256=profile["review"]["sha256"])
+    return profile["review"]
 
 
 # ---------- Sign-off ----------
@@ -512,6 +573,14 @@ def main(args):
             verb = "Would delete" if "--dry-run" in args else "Deleted"
             print(f"{verb} {len(r['runs'])} run(s) older than {r['retention_days']} days"
                   + (f": {', '.join(r['runs'])}" if r["runs"] else "") + f"; kept {r['kept']} (baseline or signed off)")
+        return 0
+    if cmd == "review-profile" and len(args) > 2:
+        try:
+            r = review_profile(args[1], args[2], _opt(args, "--reviewer", ""))
+        except (KeyError, ValueError, FileNotFoundError) as err:
+            print(f"Not recorded: {err}", file=sys.stderr)
+            return 3
+        print(f"Profile {args[2]} in {args[1]} reviewed by {r['by']} ({r['sha256'][:12]})")
         return 0
     if cmd == "scan":
         for f in scan():

@@ -4,9 +4,12 @@ Default: Google's Gemini free tier (an AI Studio key in GOOGLE_API_KEY). The sam
 ("http://localhost:11434/v1", no key) or Groq's free tier: set the base URL, model and key variable.
 
   JUDGE_BASE_URL     default https://generativelanguage.googleapis.com/v1beta/openai
-  JUDGE_MODEL        default gemini-3.7-flash,gemini-3.5-flash,gemini-2.5-flash: a comma-separated list; when one
-                     is overloaded or rate-limited the next is tried (free tiers often are), and each verdict
-                     records which model gave it
+  JUDGE_MODEL        default gemini-3.7-flash,gemini-3.5-flash,gemini-2.5-flash: a comma-separated list. Only the
+                     first is used unless JUDGE_SWITCH_MODELS=1, so every conversation in a run is graded by the same
+                     model; a quota that runs out leaves "judge error" cases for rejudge.py to grade later with it
+  JUDGE_SWITCH_MODELS  1 = when a model is overloaded or rate-limited, try the next one in the list, then the
+                     fallback judge. Each verdict records its model, and a run graded by more than one model is never
+                     called a clear win (bots graded later, e.g. a one-chat-at-a-time bot, would get another grader)
   JUDGE_API_KEY_ENV  env var holding the key, default GOOGLE_API_KEY ("" = no key, e.g. Ollama)
   JUDGE_RPM          requests per minute to stay under (free tiers are rate-limited), default 10; 0 = no limit
   JUDGE_DAILY_LIMIT  requests a day the judge's plan allows (e.g. a free tier's daily quota); the dashboard warns
@@ -69,8 +72,10 @@ def spent_from(error):
 class Endpoint:
     """One model behind an OpenAI-compatible API, with its own request pacing."""
 
-    def __init__(self, base_url, model, api_key_env="", rpm=0, fallback=None, daily_limit=None):
+    def __init__(self, base_url, model, api_key_env="", rpm=0, fallback=None, daily_limit=None, switch=True):
         self.models = [m.strip() for m in model.split(",") if m.strip()]
+        if not switch:  # pinned: one model grades everything
+            self.models, fallback = self.models[:1], None
         self.base_url, self.model, self.api_key_env = base_url.rstrip("/"), ",".join(self.models), api_key_env
         self.rpm, self.daily_limit = rpm, daily_limit
         self.fallback = fallback  # another Endpoint, asked when this one stays rate-limited or out of quota
@@ -159,9 +164,10 @@ class Endpoint:
 
 def _endpoint(prefix, base_url, model, key_env, rpm, fallback=None):
     daily = os.environ.get(f"{prefix}_DAILY_LIMIT", "").strip()
+    switch = os.environ.get(f"{prefix}_SWITCH_MODELS", "0").strip().lower() in ("1", "true", "yes")
     return Endpoint(os.environ.get(f"{prefix}_BASE_URL", base_url), os.environ.get(f"{prefix}_MODEL", model),
                     os.environ.get(f"{prefix}_API_KEY_ENV", key_env), float(os.environ.get(f"{prefix}_RPM", rpm)),
-                    fallback=fallback, daily_limit=int(daily) if daily else None)
+                    fallback=fallback, daily_limit=int(daily) if daily else None, switch=switch)
 
 
 _FALLBACK = _endpoint("JUDGE_FALLBACK", OLLAMA, "", "", "0")

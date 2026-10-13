@@ -2,12 +2,17 @@
 
 Usage:
   .venv/bin/python regress.py run [--bots a,b] [--cases c1,c2] [--suite store_support] [--repeats N] [--no-judge] [--no-compare]
-                                  [--rewordings | --no-rewordings] [--second-judge]
+                                  [--rewordings | --no-rewordings] [--no-second-judge] [--no-confirm]
       Runs the suite (default: every bot that has a baseline) and checks it. Each bot is sent "Hi" first; if one is
       down or out of quota the run is skipped and reported (exit 3), rather than scored as a wall of failures.
       Rewordings are used when the bots' baseline runs used them, unless --rewordings / --no-rewordings says.
   .venv/bin/python regress.py check <run_id>      Checks a saved run against the baselines.
   .venv/bin/python regress.py baseline <run_id>   Makes a finished run the baseline for its bots.
+
+A critical break in a run asked once is re-tested before it is reported: the broken cases are asked CONFIRM_REPEATS
+more times (default 3). A case that passes most of them is reported as a flaky warning, not critical, so one unlucky
+LLM answer doesn't page anyone (--no-confirm turns this off). The second judge (llm.SECOND_JUDGE) grades the run
+whenever one is configured (--no-second-judge turns it off).
 
 Exit code: 0 no regressions, 1 warnings only, 2 critical (a safety, hallucination or bias case broke), 3 error.
 The report ends with the release gate (compliance.py) for each bot; it doesn't change the exit code.
@@ -27,6 +32,7 @@ from adapters import BotError, open_conversation
 from app import load_bots
 
 POLL_S = 5
+CONFIRM_REPEATS = int(os.environ.get("CONFIRM_REPEATS", "3"))
 
 
 def notify(text):
@@ -41,8 +47,42 @@ def notify(text):
         print(f"Could not post to REGRESSION_WEBHOOK: {e}", file=sys.stderr)
 
 
-def report(run, always_notify=False):
+def wait(run):
+    while run["status"] == "running":
+        time.sleep(POLL_S)
+        print(f"  {run['progress']['done']}/{run['progress']['total']}", end="\r", flush=True)
+    print()
+
+
+def confirm(run, rep, bots):
+    """Re-ask each critical break CONFIRM_REPEATS times; one that passes in most of them becomes a "flaky" warning."""
+    by_id = {b["id"]: b for b in bots}
+    for entry in rep["bots"]:
+        broken = [x["case_id"] for x in entry["broken"] if x.get("critical")]
+        if not broken or entry["id"] not in by_id:
+            continue
+        print(f"Re-testing {len(broken)} critical case(s) for {entry['label']}: {', '.join(broken)}")
+        again = evaluator.start_run([by_id[entry["id"]]], run["suite"], bool(run.get("judge")), repeats=CONFIRM_REPEATS,
+                                    comparative=False, rewordings=run.get("rewordings"), case_ids=broken,
+                                    second_judge=bool(run.get("second_judge_model")), timing=False)
+        wait(again)
+        shares, _ = evaluator._case_outcomes(again, entry["id"])
+        for a in entry["alerts"]:
+            case = a["text"].split(" ", 1)[0]
+            if a["level"] == "critical" and case in shares and shares[case] >= 0.5:
+                a["level"] = "warning"
+                a["text"] += f" (flaky: passed {round(100 * shares[case])}% of {CONFIRM_REPEATS} re-tests, run {again['id']})"
+            elif a["level"] == "critical" and case in shares:
+                a["text"] += f" (confirmed: re-test run {again['id']})"
+    rep["critical"] = sum(a["level"] == "critical" for e in rep["bots"] for a in e["alerts"])
+    rep["warnings"] = sum(a["level"] == "warning" for e in rep["bots"] for a in e["alerts"])
+    return rep
+
+
+def report(run, always_notify=False, bots=None):
     rep = evaluator.regressions(run)
+    if bots and rep["critical"] and run.get("repeats", 1) < CONFIRM_REPEATS:
+        rep = confirm(run, rep, bots)
     text = evaluator.regression_text(run, rep)
     try:
         text += "\n" + compliance.gate_text(compliance.gate(run))
@@ -109,19 +149,16 @@ def cmd_run(args):
     run = evaluator.start_run(bots, option(args, "--suite", "store_support"),
                               "--no-judge" not in args, repeats=int(option(args, "--repeats", "1")),
                               comparative="--no-compare" not in args, rewordings=rewordings,
-                              second_judge="--second-judge" in args,
+                              second_judge=bool(evaluator.llm.SECOND_JUDGE) and "--no-second-judge" not in args,
                               case_ids=option(args, "--cases", "").split(",") if option(args, "--cases") else None)
     print(f"Run {run['id']}: {', '.join(ids)}" + (" (with rewordings)" if run.get("rewordings") else ""))
-    while run["status"] == "running":
-        time.sleep(POLL_S)
-        print(f"  {run['progress']['done']}/{run['progress']['total']}", end="\r", flush=True)
-    print()
+    wait(run)
     if run["status"] != "done":
         text = f"Chatbot Compare run {run['id']} {run['status']}: {run.get('failure', '')}"
         print(text)
         notify(text)
         return 3
-    return report(run, "--always-notify" in args)
+    return report(run, "--always-notify" in args, None if "--no-confirm" in args else bots)
 
 
 def main(args):

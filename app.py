@@ -31,7 +31,7 @@ import governance
 import prices
 import quickbot
 import review
-from adapters import BotError, open_conversation, validate
+from adapters import BotError, bot_key_allowed, open_conversation, validate
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("chatbot_compare")
@@ -45,6 +45,9 @@ RATING_BASE = 1000  # Bradley-Terry strengths shown on the Elo scale: +400 = 10x
 ARENA_TTL_S = float(os.environ.get("ARENA_TTL", "1800"))  # an idle battle's bot sessions are closed after this
 BATTLE_KEEP_S = 24 * 3600  # an unvoted battle can still be voted on (from its saved transcript) for this long
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "")  # set it whenever the app is reachable from other machines
+# Per-person logins, "name:password,name2:password2": the user name is then proven, so the audit log's actor and a
+# sign-off's reviewer are who logged in. With only APP_PASSWORD, any user name is accepted (and recorded as typed).
+APP_USERS = dict(u.split(":", 1) for u in os.environ.get("APP_USERS", "").split(",") if ":" in u)
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]").split(",") if h.strip()]
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
@@ -65,9 +68,13 @@ async def guard(request: Request, call_next):
             user, _, password = base64.b64decode(value).decode().partition(":")
         except (binascii.Error, UnicodeDecodeError):
             pass
-    governance.actor.set(f"{user.strip()[:60]} (dashboard)" if user.strip() else "dashboard")
-    if (APP_PASSWORD and request.url.path != "/api/health"
-            and not secrets.compare_digest(password.encode(), APP_PASSWORD.encode())):
+    user = user.strip()[:60]
+    if APP_USERS:
+        ok = user in APP_USERS and secrets.compare_digest(password.encode(), APP_USERS[user].encode())
+    else:
+        ok = not APP_PASSWORD or secrets.compare_digest(password.encode(), APP_PASSWORD.encode())
+    governance.actor.set((f"{user} (login)" if APP_USERS else f"{user} (dashboard)") if user and ok else "dashboard")
+    if not ok and request.url.path != "/api/health":
         return JSONResponse({"detail": "Login required"}, status_code=401,
                             headers={"WWW-Authenticate": 'Basic realm="Chatbot Compare"'})
     if request.method in UNSAFE_METHODS and not request.headers.get("content-type", "").startswith("application/json"):
@@ -138,9 +145,22 @@ def bots():
                       "unpriced": evaluator.unpriced([], evaluator.pinned_judge_pricing(snapshot, True), True, True)}}
 
 
+class PingRequest(BaseModel):
+    consent: bool = False  # needed for a bot that isn't on this machine (the "Hi" leaves it)
+
+
+def require_send_consent(bots, consent):
+    remote = governance.remote_bots(bots)
+    if remote and not consent:
+        raise HTTPException(400, f"{', '.join(remote)} {'is' if len(remote) == 1 else 'are'} not on this machine: "
+                                 "allow sending it messages first")
+
+
 @app.post("/api/bots/{bot_id}/ping")
-def ping(bot_id: str):
-    conv = open_conversation(find_bots([bot_id])[0])
+def ping(bot_id: str, req: PingRequest | None = None):
+    bot = find_bots([bot_id])[0]
+    require_send_consent([bot], req and req.consent)
+    conv = open_conversation(bot)
     try:
         reply = conv.send("Hi")
         return {"ok": True, "reply": reply.text[:200], "latency_ms": reply.latency_ms}
@@ -169,8 +189,10 @@ def detect_bot(req: DetectRequest):
     """Send one test message to the URL and work out how to chat with it (see quickbot.py)."""
     if governance.remote_bots([{"id": "new", "url": req.url}]) and not req.send_ok:
         raise HTTPException(400, "This URL is not on this machine: allow sending it a test message first")
-    if req.api_key_env and not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", req.api_key_env):
-        raise HTTPException(400, "The API key variable must be a name like MY_BOT_API_KEY (set it in .env)")
+    if req.api_key_env and not (re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", req.api_key_env)
+                                and bot_key_allowed(req.api_key_env)):
+        raise HTTPException(400, "The API key variable must be named BOT_... (e.g. BOT_MYBOT_API_KEY, set in .env) or "
+                                 "be listed in BOT_KEY_VARS, so this app's own keys are never sent to a pasted URL")
     try:
         return quickbot.detect(req.url, req.model.strip() or None, req.api_key_env or None)
     except BotError as e:
@@ -229,6 +251,7 @@ class RunRequest(BaseModel):
     second_judge: bool = False  # a judge from another model family re-grades a sample
     rewordings: bool = False  # also ask every reworded version of the cases that have them
     cases: list[str] | None = None  # only these case ids (default: the whole suite)
+    timing: bool = True  # time a few replies per bot on their own after the chats (the speed score)
     budget_usd: float | None = None  # stop starting new cases once the estimated spend reaches this
     consent: dict = {}  # {"send_to_bots": bool, "share_with_judge": bool}: needed for bots / a judge off this machine
 
@@ -262,7 +285,7 @@ def start_run(req: RunRequest):
         run = evaluator.start_run(find_bots(list(dict.fromkeys(req.bots))), req.suite, req.judge,
                                   repeats=req.repeats, comparative=req.comparative, second_judge=req.second_judge,
                                   rewordings=req.rewordings, case_ids=req.cases, budget_usd=req.budget_usd,
-                                  consent=req.consent)
+                                  consent=req.consent, timing=req.timing)
     except ValueError as e:  # e.g. a bot with no matching profile
         raise HTTPException(400, str(e))
     except FileNotFoundError as e:  # e.g. a profile's data file has moved
@@ -458,6 +481,8 @@ def run_gate(run_id: str):
 
 @app.post("/api/runs/{run_id}/signoff")
 def run_signoff(run_id: str, req: SignoffRequest):
+    if APP_USERS and req.reviewer.strip().lower() != governance.current_actor().removesuffix(" (login)").lower():
+        raise HTTPException(403, "Sign off under your own login: the reviewer must be the user you logged in as")
     try:
         return compliance.signoff(run_id, req.bot_id, req.decision, req.reviewer, req.note, req.override)
     except KeyError:
@@ -476,7 +501,8 @@ def audit(limit: int = 100, target: str | None = None):
 # Live battles: battle_id -> {"bots": [bot_a, bot_b], "convs": [...], "voted": bool, "last_used": monotonic seconds}.
 # Every battle is also saved to BATTLES_FILE (bot ids and transcript), so a vote still counts after a restart.
 battles: dict[str, dict] = {}
-arena_lock = threading.Lock()
+arena_lock = threading.Lock()  # the saved votes and battles files
+battles_lock = threading.Lock()  # the live battles dict
 
 
 def close_battle(battle):
@@ -490,11 +516,14 @@ def close_battle(battle):
 def purge_battles(now=None):
     """Close battles nobody voted on, so they don't hold bot sessions (or a one-chat-at-a-time bot) forever."""
     now = time.monotonic() if now is None else now
-    for bid, battle in list(battles.items()):
-        if battle["voted"] or now - battle["last_used"] > ARENA_TTL_S:
-            if not battle["voted"]:
-                close_battle(battle)
+    with battles_lock:
+        done = [(bid, b) for bid, b in battles.items() if b["voted"] or now - b["last_used"] > ARENA_TTL_S]
+        for bid, _ in done:
             battles.pop(bid, None)
+    for _, battle in done:
+        if not battle["voted"]:
+            with battle["lock"]:  # not while a message to it is still under way
+                close_battle(battle)
 
 
 def _read_json(path, default):
@@ -577,6 +606,7 @@ class BattleRequest(BaseModel):
     message: str
     battle_id: str | None = None
     bots: list[str] | None = None  # pool to draw two from; default all bots
+    consent: bool = False  # needed when a bot in the pool isn't on this machine
 
 
 class VoteRequest(BaseModel):
@@ -589,7 +619,8 @@ def arena_message(req: BattleRequest):
     if not req.message.strip():
         raise HTTPException(400, "Type a message")
     purge_battles()
-    battle = battles.get(req.battle_id) if req.battle_id else None
+    with battles_lock:
+        battle = battles.get(req.battle_id) if req.battle_id else None
     if battle is None and req.battle_id and req.battle_id in load_saved_battles():
         raise HTTPException(409, "This chat can't continue: the bots' sessions were closed (the server restarted or "
                                  "it sat idle). Vote on what you've seen, or send again to start a new battle.")
@@ -597,11 +628,13 @@ def arena_message(req: BattleRequest):
         pool = find_bots(req.bots) if req.bots else load_bots()
         if len(pool) < 2:
             raise HTTPException(400, "Need at least 2 bots for the arena")
+        require_send_consent(pool, req.consent)
         pair = pick_pair(pool, load_arena()["votes"])
         battle = {"bots": pair, "convs": [open_conversation(b) for b in pair], "voted": False, "log": [],
-                  "created": time.time()}
+                  "created": time.time(), "lock": threading.Lock(), "last_used": time.monotonic()}
         req.battle_id = uuid.uuid4().hex
-        battles[req.battle_id] = battle
+        with battles_lock:
+            battles[req.battle_id] = battle
     battle["last_used"] = time.monotonic()
 
     def send(conv):
@@ -614,11 +647,15 @@ def arena_message(req: BattleRequest):
             log.exception("Arena message failed")
             return {"text": "", "latency_ms": None, "error": f"{type(e).__name__}: {e}"}
 
-    with ThreadPoolExecutor(2) as pool:
-        a, b = pool.map(send, battle["convs"])
-    battle["log"].append({"user": req.message, "a": a, "b": b})
-    save_battle(req.battle_id, {"bots": [x["id"] for x in battle["bots"]], "labels": [x["label"] for x in battle["bots"]],
-                                "log": battle["log"], "created": battle["created"]})
+    with battle["lock"]:  # one message at a time per battle, so the two transcripts stay in step
+        if battle["voted"]:
+            raise HTTPException(409, "This battle was just voted on; send again to start a new one")
+        with ThreadPoolExecutor(2) as pool:
+            a, b = pool.map(send, battle["convs"])
+        battle["log"].append({"user": req.message, "a": a, "b": b})
+        save_battle(req.battle_id, {"bots": [x["id"] for x in battle["bots"]],
+                                    "labels": [x["label"] for x in battle["bots"]],
+                                    "log": battle["log"], "created": battle["created"]})
     return {"battle_id": req.battle_id, "a": a, "b": b}
 
 
@@ -635,24 +672,30 @@ def arena_battle(battle_id: str):
 def arena_vote(req: VoteRequest):
     if req.winner not in ("a", "b", "tie", "both_bad"):
         raise HTTPException(400, "winner must be a, b, tie or both_bad")
-    battle = battles.get(req.battle_id)
-    if battle is not None and battle["voted"]:
-        raise HTTPException(400, "Already voted")
-    saved = load_saved_battles().get(req.battle_id)
-    if battle is None and saved is None:
-        raise HTTPException(404, "Battle not found (or it is more than a day old)")
-    if battle is not None:
-        battle["voted"] = True
-        close_battle(battle)
-        ids, labels = [b["id"] for b in battle["bots"]], [b["label"] for b in battle["bots"]]
-    else:
-        ids, labels = saved["bots"], saved["labels"]
-    save_battle(req.battle_id)
+    # Checked and recorded under one lock, so two votes sent at once can't both count.
+    with battles_lock:
+        battle = battles.get(req.battle_id)
+        if battle is not None and battle["voted"]:
+            raise HTTPException(400, "Already voted")
+        if battle is not None:
+            battle["voted"] = True
     with arena_lock:
+        saved_all = load_saved_battles()
+        saved = saved_all.pop(req.battle_id, None)
+        if battle is None and saved is None:
+            raise HTTPException(404, "Battle not found, already voted on, or more than a day old")
+        if battle is not None:
+            ids, labels = [b["id"] for b in battle["bots"]], [b["label"] for b in battle["bots"]]
+        else:
+            ids, labels = saved["bots"], saved["labels"]
+        _write_json(BATTLES_FILE, saved_all)
         data = load_arena()
         data["votes"].append({"a": ids[0], "b": ids[1], "winner": req.winner, "labels": dict(zip(ids, labels)),
-                              "at": time.strftime("%Y-%m-%dT%H:%M:%S")})
+                              "at": time.strftime("%Y-%m-%dT%H:%M:%S"), "by": governance.current_actor()})
         save_arena(data)
+    if battle is not None:
+        with battle["lock"]:
+            close_battle(battle)
     return {"a": {"id": ids[0], "label": labels[0]}, "b": {"id": ids[1], "label": labels[1]}}
 
 

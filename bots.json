@@ -104,7 +104,7 @@
       "trace": true,
       "base_url": "http://localhost:5000",
       "email": "customer@example.com",
-      "password": "Demo123!",
+      "password_env": "BOT_MOUNI_PASSWORD",
       "max_concurrency": 1,
       "db_path": "~/projects/mouni-bot/github-latest/backend/compare-test.db",
       "handoff": false,

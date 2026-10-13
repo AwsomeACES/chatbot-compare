@@ -22,7 +22,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx2
 
-from adapters import BotError, normalize_usage, open_conversation, validate
+from adapters import BotError, bot_key_allowed, normalize_usage, open_conversation, validate
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 QUICK_FILE = os.path.join(ROOT, "bots.quick.json")
@@ -58,6 +58,9 @@ def _reply_path(data):
 
 
 def _headers(api_key_env):
+    if api_key_env and not bot_key_allowed(api_key_env):
+        raise BotError(f"Name the key variable BOT_... (e.g. BOT_MYBOT_API_KEY) or list it in BOT_KEY_VARS; "
+                       f"{api_key_env} can't be sent to a bot added by URL")
     if not api_key_env:
         return {}
     key = os.environ.get(api_key_env, "").strip()
@@ -262,6 +265,8 @@ def add(label, cfg, taken_ids):
     bot = {"id": bot_id, "label": label, **{k: v for k, v in cfg.items() if k in allowed},
            "description": "Added by URL from the dashboard", "quick": True}
     validate(bot)
+    if bot.get("api_key_env") and not bot_key_allowed(bot["api_key_env"]):
+        raise BotError(f"Name the key variable BOT_... or list it in BOT_KEY_VARS, not {bot['api_key_env']}")
     _write(load() + [bot])
     return bot
 

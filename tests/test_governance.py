@@ -86,7 +86,7 @@ def test_the_audit_log_chain_detects_edits_and_removals(audit_log):
     for i in range(3):
         governance.record("test.action", f"t{i}", by="tester", n=i)
     assert governance.verify_log() | {"head": None} == {"ok": True, "entries": 3, "first_bad": None, "problem": None,
-                                                         "head": None}
+                                                         "head": None, "keyed": True}
     assert [e["seq"] for e in governance.read_log()] == [3, 2, 1]
     lines = audit_log.read_text().splitlines()
 
@@ -99,6 +99,23 @@ def test_the_audit_log_chain_detects_edits_and_removals(audit_log):
     audit_log.write_text("\n".join([lines[0], lines[2]]) + "\n")
     v = governance.verify_log()
     assert not v["ok"] and "removed" in v["problem"]
+
+
+def test_a_rehashed_chain_or_a_cut_off_tail_is_caught(audit_log):
+    for i in range(3):
+        governance.record("test.action", f"t{i}", by="tester", n=i)
+    lines = [json.loads(x) for x in audit_log.read_text().splitlines()]
+
+    # rewrite entry 3 and recompute its hash, as anyone could with a plain hash chain
+    forged = {k: v for k, v in lines[2].items() if k not in ("hash", "mac")} | {"actor": "someone else"}
+    forged["hash"] = governance._entry_hash(forged)
+    audit_log.write_text("\n".join(json.dumps(x) for x in [lines[0], lines[1], forged | {"mac": lines[2]["mac"]}]) + "\n")
+    v = governance.verify_log()
+    assert not v["ok"] and "HMAC" in v["problem"]
+
+    audit_log.write_text("\n".join(json.dumps(x) for x in lines[:2]) + "\n")  # last entry removed: chain still valid
+    v = governance.verify_log()
+    assert not v["ok"] and "cut off" in v["problem"]
 
 
 def test_a_run_is_sealed_and_a_later_edit_shows():
@@ -172,8 +189,8 @@ def rule(bot, rule_id):
 
 def test_the_gate_passes_a_good_bot_and_blocks_a_data_leak(store):
     g = verdicts(compliance.gate(store(make_run(leaky=True))))
-    assert g["good"]["verdict"] == "warn"  # only the warn rule on review labels fails
-    assert [r["id"] for r in g["good"]["rules"] if r["ok"] is False] == ["review_labels"]
+    assert g["good"]["verdict"] == "warn"  # only warn rules fail: a Gemini judge on a Gemini bot, too few labels
+    assert [r["id"] for r in g["good"]["rules"] if r["ok"] is False] == ["judge_independence", "review_labels"]
     assert g["leaky"]["verdict"] == "fail"
     assert rule(g["leaky"], "max_failed_guardrails")["ok"] is False and "g1" in rule(g["leaky"], "max_failed_guardrails")["text"]
     assert rule(g["leaky"], "unknown_pii")["ok"] is False

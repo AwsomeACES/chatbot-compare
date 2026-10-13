@@ -21,6 +21,13 @@ Audit log (runs/audit.jsonl): one JSON line per action (run started / finished /
 sign-off, purge...). Each line holds the SHA-256 of the previous line, so editing or deleting a past line breaks the
 chain, which verify_log() reports. Each finished run is sealed with the hash of its results, so a run file edited
 after the fact shows up as modified.
+
+A plain hash chain can be recomputed by anyone who can write the file, and cutting lines off its end leaves a valid
+chain. So each line also carries an HMAC with a secret key kept outside the project (AUDIT_KEY, else a key file
+created in AUDIT_KEY_DIR, default ~/.config/chatbot-compare, readable by this OS user only), and the latest entry's
+seq and hash are kept there too ("audit.head"). Rewriting the chain then needs the key, and a shortened log no
+longer reaches the head. Someone who can log in as this OS user can still read the key: for evidence that must hold
+against that, copy the head (compliance.py audit prints it) somewhere they can't write, e.g. the release ticket.
 """
 
 import contextvars
@@ -28,6 +35,8 @@ import fcntl
 import functools
 import getpass
 import hashlib
+import hmac
+import secrets
 import json
 import os
 import re
@@ -39,6 +48,7 @@ from urllib.parse import urlparse
 ROOT = os.path.dirname(os.path.abspath(__file__))
 POLICY_FILE = os.path.join(ROOT, "governance.json")
 AUDIT_FILE = os.path.join(ROOT, "runs", "audit.jsonl")
+KEY_DIR = os.path.expanduser(os.environ.get("AUDIT_KEY_DIR", "~/.config/chatbot-compare"))
 _lock = threading.Lock()
 
 # Who is acting: the server sets it per request (the HTTP Basic user name); scripts default to the OS user.
@@ -177,7 +187,8 @@ def redact(text, known):
 
 def is_local(base_url):
     host = (urlparse(base_url or "").hostname or "").lower()
-    return host in ("localhost", "127.0.0.1", "::1") or host.endswith(".local")
+    # Only this machine. A "*.local" (mDNS) name is another machine on the network, so it needs consent too.
+    return host in ("localhost", "127.0.0.1", "::1") or host.startswith("127.")
 
 
 CLOUD_BOT_TYPES = {"claude_bedrock"}  # bots this app reaches through a cloud API, with no URL of their own
@@ -254,7 +265,41 @@ def _last_entry(f):
 
 
 def _entry_hash(entry):
-    return sha256({k: v for k, v in entry.items() if k != "hash"})
+    return sha256({k: v for k, v in entry.items() if k not in ("hash", "mac")})
+
+
+def _audit_key(create=False):
+    """The secret the log's HMACs use: AUDIT_KEY, else KEY_DIR/audit.key (made on first use, mode 600)."""
+    if os.environ.get("AUDIT_KEY"):
+        return os.environ["AUDIT_KEY"].encode()
+    path = os.path.join(KEY_DIR, "audit.key")
+    try:
+        with open(path, "rb") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        if not create:
+            return None
+    os.makedirs(KEY_DIR, mode=0o700, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(secrets.token_hex(32).encode())
+    return _audit_key()
+
+
+def _mac(key, entry_hash):
+    return hmac.new(key, entry_hash.encode(), hashlib.sha256).hexdigest()
+
+
+def _head_path():
+    return os.path.join(KEY_DIR, "audit.head")
+
+
+def _read_head():
+    try:
+        with open(_head_path()) as f:
+            return json.load(f)
+    except (FileNotFoundError, ValueError):
+        return None
 
 
 def record(action, target=None, by=None, **details):
@@ -269,10 +314,17 @@ def record(action, target=None, by=None, **details):
                      "actor": by or current_actor(), "action": action, "target": target,
                      "details": details, "prev": last["hash"] if last else None}
             entry["hash"] = _entry_hash(entry)
+            key = _audit_key(create=True)
+            entry["mac"] = _mac(key, entry["hash"])
             f.seek(0, os.SEEK_END)
             f.write((canonical(entry) + "\n").encode())
             f.flush()
             os.fsync(f.fileno())
+            head = {"file": os.path.abspath(AUDIT_FILE), "seq": entry["seq"], "hash": entry["hash"]}
+            tmp = _head_path() + ".tmp"
+            with open(tmp, "w") as h:
+                json.dump({**head, "mac": _mac(key, canonical(head))}, h)
+            os.replace(tmp, _head_path())
         finally:
             fcntl.flock(f, fcntl.LOCK_UN)
     return entry
@@ -292,7 +344,10 @@ def read_log(limit=None, target=None, action=None):
 
 
 def verify_log():
-    """Walks the hash chain. {"ok", "entries", "first_bad": seq or None, "problem"}."""
+    """Walks the hash chain and checks each line's HMAC, then that the log still reaches the recorded head.
+    {"ok", "entries", "first_bad": seq or None, "problem", "head"}. Lines written before HMACs existed are accepted
+    without one, but once a line has one every later line must."""
+    key, keyed = _audit_key(), False
     prev, seq, n = None, 0, 0
     try:
         f = open(AUDIT_FILE, encoding="utf-8")
@@ -304,14 +359,28 @@ def verify_log():
                 e = json.loads(line)
             except ValueError:
                 return {"ok": False, "entries": n, "first_bad": seq + 1, "problem": f"line {n} is not valid JSON"}
+            keyed = keyed or "mac" in e
             problem = ("its hash doesn't match its contents (edited)" if e.get("hash") != _entry_hash(e)
                        else "it doesn't follow the previous entry (an entry was removed or reordered)"
-                       if e.get("prev") != prev or e.get("seq") != seq + 1 else None)
+                       if e.get("prev") != prev or e.get("seq") != seq + 1
+                       else "it has no HMAC although earlier entries do (rewritten)" if keyed and "mac" not in e
+                       else "its HMAC doesn't match (rewritten without the audit key)"
+                       if "mac" in e and key and not hmac.compare_digest(e["mac"], _mac(key, e["hash"])) else None)
             if problem:
                 return {"ok": False, "entries": n, "first_bad": e.get("seq", seq + 1),
                         "problem": f"entry {e.get('seq', '?')}: {problem}"}
             prev, seq = e["hash"], e["seq"]
-    return {"ok": True, "entries": n, "first_bad": None, "problem": None, "head": prev}
+    head = _read_head()
+    if head and key and head.get("file") == os.path.abspath(AUDIT_FILE):
+        signed = {k: head.get(k) for k in ("file", "seq", "hash")}
+        if not hmac.compare_digest(str(head.get("mac")), _mac(key, canonical(signed))):
+            return {"ok": False, "entries": n, "first_bad": None, "problem": "the recorded head was edited"}
+        if seq < head["seq"]:
+            return {"ok": False, "entries": n, "first_bad": seq + 1,
+                    "problem": f"the log ends at entry {seq} but entry {head['seq']} was written (entries cut off)"}
+        if seq == head["seq"] and prev != head["hash"]:
+            return {"ok": False, "entries": n, "first_bad": seq, "problem": "the last entry isn't the one recorded"}
+    return {"ok": True, "entries": n, "first_bad": None, "problem": None, "head": prev, "keyed": bool(key and keyed)}
 
 
 # ---------- Provenance ----------
