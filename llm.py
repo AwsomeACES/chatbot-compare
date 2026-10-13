@@ -1,13 +1,13 @@
 """The free models this app uses to grade and to write test cases, through any OpenAI-compatible chat API.
 
-Default main judge: Kimi K2.6 (Moonshot AI) on NVIDIA NIM's free API (a key from build.nvidia.com in NVIDIA_API_KEY).
+Default main judge: Kimi K3 (Moonshot AI) on NVIDIA NIM's free API (a key from build.nvidia.com in NVIDIA_API_KEY).
 It's not the family of any bot under test (they run Gemini and Claude), so no bot is graded alone by its own model
 family; Gemini is the second judge (.env), which can dispute a verdict but never pass a Gemini bot on its own. The
 same code talks to Gemini's free tier, a local Ollama ("http://localhost:11434/v1", no key) or Groq: set the base URL,
 model and key variable.
 
   JUDGE_BASE_URL     default https://integrate.api.nvidia.com/v1
-  JUDGE_MODEL        default moonshotai/kimi-k2.6: a comma-separated list is allowed. Only the
+  JUDGE_MODEL        default moonshotai/kimi-k3 (kimi-k2.6 is listed by NIM but not served to every account). Only the
                      first is used unless JUDGE_SWITCH_MODELS=1, so every conversation in a run is graded by the same
                      model; a quota that runs out leaves "judge error" cases for rejudge.py to grade later with it
   JUDGE_SWITCH_MODELS  1 = when a model is overloaded or rate-limited, try the next one in the list, then the
@@ -175,6 +175,6 @@ def _endpoint(prefix, base_url, model, key_env, rpm, fallback=None):
 
 
 _FALLBACK = _endpoint("JUDGE_FALLBACK", OLLAMA, "", "", "0")
-JUDGE = _endpoint("JUDGE", NIM, "moonshotai/kimi-k2.6", "NVIDIA_API_KEY", "30",
+JUDGE = _endpoint("JUDGE", NIM, "moonshotai/kimi-k3", "NVIDIA_API_KEY", "30",
                   fallback=_FALLBACK or None)
 SECOND_JUDGE = _endpoint("SECOND_JUDGE", OLLAMA, "", "", "0")

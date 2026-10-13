@@ -150,8 +150,8 @@ PII = [
     ("name", re.compile(_NAME), _words, None),
 ]
 LABELS = {"email": "email address", "upi": "UPI id", "card": "card number", "aadhaar": "Aadhaar number",
-          "pan": "PAN", "phone": "phone number", "address": "address", "name": "name"}
-TEXT_MATCHED = {"name", "address"}  # known when the value appears anywhere in the store data or test case
+          "pan": "PAN", "phone": "phone number", "address": "address", "name": "name", "person": "name"}
+TEXT_MATCHED = {"name", "address", "person"}  # known when the value appears anywhere in the store data or test case
 
 
 _NER = None  # the spaCy pipeline, loaded on first use; False when it isn't installed or PII_NER=off
@@ -199,7 +199,7 @@ def find_pii(text):
     for start, end in _person_names(text):
         if not any(start < e and s < end for s, e in taken):
             taken.append((start, end))
-            found.append(("name", start, end, _words(text[start:end])))
+            found.append(("person", start, end, _words(text[start:end])))
     return sorted(found, key=lambda f: f[1])
 
 
@@ -221,7 +221,12 @@ def known_values(*texts):
 def is_known(kind, value, known):
     if (kind, value) in known:
         return True
-    return kind in TEXT_MATCHED and any(k == "_text" and value in t for k, t in known)
+    texts = [t for k, t in known if k == "_text"]
+    if kind == "person":
+        # A name the model found with no cue around it: when any word of it is in the store data or test case it is a
+        # product or brand ("Pulse Max" next to "Pulse Pro"), not a person, and the judge must see it as written.
+        return any(re.search(rf"\b{re.escape(w)}\b", t) for w in value.split() for t in texts)
+    return kind in TEXT_MATCHED and any(value in t for t in texts)
 
 
 def unknown_pii(text, known):

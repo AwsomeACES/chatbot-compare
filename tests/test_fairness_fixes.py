@@ -206,3 +206,11 @@ def test_free_form_names_are_found_when_spacy_is_installed():
     assert governance.redact("Meera’s phone is new.", known)[0] == "[name]’s phone is new."
     assert governance.redact("I spoke to Kavitha Reddy yesterday.", known)[0] == "I spoke to [name] yesterday."
     assert governance.unknown_pii("Rahul Sharma's order is shipped.", known) == {}
+
+
+def test_an_invented_product_is_shown_to_the_judge_not_masked_as_a_name():
+    if governance._ner() is None:
+        pytest.skip("spaCy's en_core_web_sm isn't installed")
+    known = governance.known_values("Pulse Pro headphones Rs 149.", "How much are the Pulse Pro headphones?")
+    reply = "They're Rs 99 this week, and the Pulse Max is Rs 199."
+    assert governance.redact(reply, known)[0] == reply
