@@ -26,8 +26,10 @@ A plain hash chain can be recomputed by anyone who can write the file, and cutti
 chain. So each line also carries an HMAC with a secret key kept outside the project (AUDIT_KEY, else a key file
 created in AUDIT_KEY_DIR, default ~/.config/chatbot-compare, readable by this OS user only), and the latest entry's
 seq and hash are kept there too ("audit.head"). Rewriting the chain then needs the key, and a shortened log no
-longer reaches the head. Someone who can log in as this OS user can still read the key: for evidence that must hold
-against that, copy the head (compliance.py audit prints it) somewhere they can't write, e.g. the release ticket.
+longer reaches the head. Someone who can log in as this OS user can still read the key, so the head is also
+published off this machine (anchor()): after every sign-off and nightly run it goes to AUDIT_ANCHOR_WEBHOOK (default
+REGRESSION_WEBHOOK, a team chat channel) and/or AUDIT_ANCHOR_S3 (s3://bucket/prefix; give the bucket Object Lock so
+nobody can change what was written). verify_against(seq, hash) then checks the log against a head copied from there.
 """
 
 import contextvars
@@ -121,6 +123,17 @@ def _verhoeff(digits):
 
 
 _digits = lambda s: re.sub(r"\D", "", s)
+_words = lambda s: re.sub(r"\s+", " ", s).strip().lower()
+
+# Names and street addresses have no fixed shape, so only the clear cases are matched: a capitalised name right after
+# "my name is" / "customer" / a title (Mr, Mrs, Dr, Shri...), and an address with a street word and a 6-digit PIN
+# code, or a PIN code labelled as one. The value is the named group "v" when there is one.
+_NAME = (r"(?i:\b(?:(?:my|his|her|their|the customer'?s?|customer)\s+name\s+is|name\s*:|customer\s*:?)\s+"
+         r"|\b(?:mr|mrs|ms|miss|dr|shri|smt)\.?\s+)"
+         r"(?P<v>[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b")
+_STREET = r"(?:road|rd|street|st|nagar|colony|lane|marg|sector|layout|block|apartments?|society|flat|floor|main|cross)"
+_ADDRESS = (r"\b\d{1,4}[A-Za-z]?[,/ ]+[A-Za-z0-9 .,'/-]{2,80}?\b" + _STREET + r"\b[A-Za-z0-9 .,'/-]{0,80}?\b[1-9]\d{5}\b"
+            r"|\b(?:pin\s*code|pincode|pin)\s*[:-]?\s*(?P<v>[1-9]\d{5})\b")
 
 # Checked in this order; a span already taken by an earlier kind isn't matched again (a card number contains
 # Aadhaar-shaped and phone-shaped runs of digits).
@@ -133,9 +146,12 @@ PII = [
     ("pan", re.compile(r"\b[A-Z]{3}[ABCFGHLJPT][A-Z]\d{4}[A-Z]\b"), str.upper, None),
     ("phone", re.compile(r"(?<![\w-])(?:\+?91[ -]?|0)?[6-9]\d{4}[ -]?\d{5}(?![\d-])"),
      lambda v: _digits(v)[-10:], None),
+    ("address", re.compile(_ADDRESS, re.I), _words, None),
+    ("name", re.compile(_NAME), _words, None),
 ]
 LABELS = {"email": "email address", "upi": "UPI id", "card": "card number", "aadhaar": "Aadhaar number",
-          "pan": "PAN", "phone": "phone number"}
+          "pan": "PAN", "phone": "phone number", "address": "address", "name": "name"}
+TEXT_MATCHED = {"name", "address"}  # known when the value appears anywhere in the store data or test case
 
 
 def find_pii(text):
@@ -143,10 +159,12 @@ def find_pii(text):
     found, taken = [], []
     for kind, pattern, norm, valid in PII:
         for m in pattern.finditer(text or ""):
-            if any(m.start() < e and s < m.end() for s, e in taken) or (valid and not valid(m.group())):
+            g = "v" if "v" in pattern.groupindex and m.group("v") else 0
+            start, end = m.start(g), m.end(g)
+            if any(start < e and s < end for s, e in taken) or (valid and not valid(m.group(g))):
                 continue
-            taken.append((m.start(), m.end()))
-            found.append((kind, m.start(), m.end(), norm(m.group())))
+            taken.append((start, end))
+            found.append((kind, start, end, norm(m.group(g))))
     return sorted(found, key=lambda f: f[1])
 
 
@@ -156,19 +174,26 @@ def _known(text):
 
 
 def known_values(*texts):
-    """The personal-data values in these texts (store data, test case): synthetic, safe to send to a judge."""
+    """The personal-data values in these texts (store data, test case): synthetic, safe to send to a judge. Also holds
+    each text itself ("_text"), so a name or address counts as known when it appears there in any form."""
     out = set()
     for t in texts:
         if t:
-            out |= _known(t)
+            out |= _known(t) | {("_text", _words(t))}
     return out
+
+
+def is_known(kind, value, known):
+    if (kind, value) in known:
+        return True
+    return kind in TEXT_MATCHED and any(k == "_text" and value in t for k, t in known)
 
 
 def unknown_pii(text, known):
     """{kind: count} of personal data in text that isn't in known."""
     out = {}
     for kind, _, _, value in find_pii(text):
-        if (kind, value) not in known:
+        if not is_known(kind, value, known):
             out[kind] = out.get(kind, 0) + 1
     return out
 
@@ -177,7 +202,7 @@ def redact(text, known):
     """text with unknown personal data replaced by a typed placeholder such as [phone number], and {kind: count}."""
     parts, counts, pos = [], {}, 0
     for kind, start, end, value in find_pii(text):
-        if (kind, value) in known:
+        if is_known(kind, value, known):
             continue
         parts += [text[pos:start], f"[{LABELS[kind]}]"]
         counts[kind] = counts.get(kind, 0) + 1
@@ -381,6 +406,56 @@ def verify_log():
         if seq == head["seq"] and prev != head["hash"]:
             return {"ok": False, "entries": n, "first_bad": seq, "problem": "the last entry isn't the one recorded"}
     return {"ok": True, "entries": n, "first_bad": None, "problem": None, "head": prev, "keyed": bool(key and keyed)}
+
+
+def verify_against(seq, head_hash):
+    """Is entry seq still the one whose hash was published? Catches a log rewritten by someone who had the key."""
+    for e in read_log():
+        if e.get("seq") == seq:
+            ok = e.get("hash") == head_hash
+            return {"ok": ok, "problem": None if ok else f"entry {seq} differs from the published head (log rewritten)"}
+    return {"ok": False, "problem": f"entry {seq} is missing (log cut off or rewritten)"}
+
+
+def _post_anchor(url, text):
+    import urllib.request
+    req = urllib.request.Request(url, data=json.dumps({"text": text}).encode(),
+                                 headers={"Content-Type": "application/json"})
+    urllib.request.urlopen(req, timeout=20).close()
+
+
+def _put_anchor_s3(target, record):
+    import boto3
+    bucket, _, prefix = target.removeprefix("s3://").partition("/")
+    key = f"{prefix.rstrip('/') + '/' if prefix else ''}audit-head-{record['seq']:08d}-{record['hash'][:16]}.json"
+    boto3.client("s3").put_object(Bucket=bucket, Key=key, Body=canonical(record).encode(), ContentType="application/json")
+    return f"s3://{bucket}/{key}"
+
+
+def anchor(reason, post=None, put=None):
+    """Publish the log's current head off this machine. Returns {"seq", "hash", "sent": [where]} or None when the log is
+    empty or broken (a broken log is reported, not anchored). Failures to publish are returned in "errors", never
+    raised: the action that triggered it has already happened."""
+    v = verify_log()
+    if not v["ok"] or not v.get("head"):
+        return None
+    record = {"seq": v["entries"], "hash": v["head"], "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+              "reason": reason, "host": os.uname().nodename}
+    sent, errors = [], []
+    url = os.environ.get("AUDIT_ANCHOR_WEBHOOK") or os.environ.get("REGRESSION_WEBHOOK")
+    if url:
+        try:
+            (post or _post_anchor)(url, f"Chatbot Compare audit head #{record['seq']}: {record['hash']} ({reason}). "
+                                        f"Check it with: compliance.py audit --head {record['seq']}:{record['hash']}")
+            sent.append("webhook")
+        except Exception as e:
+            errors.append(f"webhook: {e}")
+    if target := os.environ.get("AUDIT_ANCHOR_S3"):
+        try:
+            sent.append((put or _put_anchor_s3)(target, record))
+        except Exception as e:
+            errors.append(f"S3: {e}")
+    return {**record, "sent": sent, **({"errors": errors} if errors else {})}
 
 
 # ---------- Provenance ----------

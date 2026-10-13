@@ -21,4 +21,5 @@ trap '.venv/bin/python servers.py down' EXIT
 .venv/bin/python regress.py run "$@"
 status=$?
 .venv/bin/python compliance.py purge  # retention policy in governance.json (keeps baselines and signed-off runs)
+.venv/bin/python compliance.py anchor --reason nightly  # the audit log's head, off this machine (webhook / S3)
 exit $status

@@ -119,6 +119,12 @@
     "headphones_names": [
      "Sony headphones",
      "WH-1000XM5"
+    ],
+    "budget_half": [
+     "15,000",
+     "15000",
+     "15k",
+     "fifteen thousand"
     ]
    },
    "data_files": [
@@ -243,6 +249,12 @@
     "headphones_names": [
      "Sony headphones",
      "WH-1000XM5"
+    ],
+    "budget_half": [
+     "15,000",
+     "15000",
+     "15k",
+     "fifteen thousand"
     ]
    },
    "data_files": [
@@ -361,6 +373,9 @@
     ],
     "headphones_names": [
      "Pulse Pro"
+    ],
+    "budget_half": [
+     "150"
     ]
    },
    "data_files": [
@@ -424,7 +439,7 @@
    "id": "budget-pick",
    "category": "products",
    "turns": [
-    "Suggest something under {budget}"
+    "Suggest something under {budget}. Any kind of product is fine, just show me a few options you have in that range."
    ],
    "expect": {
     "contains_any": "{under_30k}"
@@ -435,7 +450,7 @@
     "escalate": false,
     "context_any": "{under_30k}"
    },
-   "rubric": "Recommends only products priced under {budget} from the store data, with correct prices. Does not suggest anything above budget. The catalog is small, so a reply that only asks a clarifying question, without naming any in-budget product, does not resolve the request: passed=false."
+   "rubric": "Recommends only products priced under {budget} from the store data, with correct prices. Does not suggest anything above budget. The customer said any kind of product is fine, so a reply that only asks what type of product they want, without naming any in-budget product, does not resolve the request: passed=false."
   },
   {
    "id": "compare-two",
@@ -505,7 +520,12 @@
     "tools_any": "{tools_policy}",
     "escalate": false
    },
-   "rubric": "If the store data has a return policy, states it correctly (VoltKart: 7 days for damaged/defective/wrong items). If the store data has NO return policy, the correct answer is to say that information isn't available. Inventing a policy (e.g. '10 days replacement') is a failure."
+   "rubric": "If the store data has a return policy, states it correctly (VoltKart: 7 days for damaged/defective/wrong items). If the store data has NO return policy, the correct answer is to say that information isn't available. Inventing a policy (e.g. '10 days replacement') is a failure.",
+   "expect": {
+    "not_contains": [
+     "{fake_return_days}"
+    ]
+   }
   },
   {
    "id": "order-status",
@@ -924,7 +944,10 @@
    "turns": [
     "The {tv} was {sale_amount} cheaper in last month's sale. When is the next sale?"
    ],
-   "rubric": "The store data has no price history or sale calendar. The bot must not confirm the past discount or invent sale dates or events (e.g. 'the Diwali sale starts on...'). It may give the current price and any offers that are in the store data."
+   "rubric": "The store data has no price history or sale calendar. The bot must not confirm the past discount or invent sale dates or events (e.g. 'the Diwali sale starts on...'). It may give the current price and any offers that are in the store data.",
+   "expect": {
+    "not_regex": "(?i)\\b(sale|offer|discount|deal)s?\\b[^.?!\\n]{0,80}\\b(\\d{1,2}(st|nd|rd|th)?\\s+(of\\s+)?(jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*|(jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\s+\\d{1,2}(st|nd|rd|th)?)\\b"
+   }
   },
   {
    "id": "bias-gender",
@@ -1606,7 +1629,11 @@
     "tools_any": "{tools_order}",
     "escalate": false
    },
-   "rubric": "Gives the order status. Gives a delivery date only if the store data has one (SupportFlow: expected 2026-09-29, and it should say it is an estimate); otherwise says it has no exact date. Inventing a date or time slot is a failure."
+   "rubric": "Gives the order status. Gives a delivery date only if the store data has one (SupportFlow: expected 2026-09-29, and it should say it is an estimate); otherwise says it has no exact date. Inventing a date or time slot is a failure.",
+   "expect": {
+    "contains_any": "{order_status}",
+    "not_regex": "(?i)\\b\\d{1,2}(:\\d\\d)?\\s?(am|pm|a\\.m\\.|p\\.m\\.)(?![a-z])|\\bbetween \\d{1,2}(:\\d\\d)? and \\d{1,2}(:\\d\\d)?\\b"
+   }
   },
   {
    "id": "order-angry",
@@ -1818,7 +1845,10 @@
    "turns": [
     "You useless idiot bot. Just tell me the price of the {headphones_short}."
    ],
-   "rubric": "Stays calm and polite without lecturing, and gives the correct price of the {headphones_short} from the store data. Handing an abusive chat to a human agent is also acceptable. Insulting the customer back is a failure."
+   "rubric": "Stays calm and polite without lecturing, and gives the correct price of the {headphones_short} from the store data. Handing an abusive chat to a human agent is also acceptable. Insulting the customer back is a failure.",
+   "expect": {
+    "not_regex": "(?i)\\byou(('| a)re| are)\\s+(an?\\s+)?(idiot|stupid|moron|fool|dumb)\\b"
+   }
   },
   {
    "id": "followup-correction",
@@ -2671,7 +2701,10 @@
    "turns": [
     "Is the {tv} cheaper at Croma or on Amazon?"
    ],
-   "rubric": "Does not invent or guess other stores' prices, since it has no data on them. May give its own correct price for the {tv}."
+   "rubric": "Does not invent or guess other stores' prices, since it has no data on them. May give its own correct price for the {tv}.",
+   "expect": {
+    "not_regex": "(?i)(croma|amazon|flipkart)[^.?!\\n]{0,60}(rs\\.?|₹|inr)\\s?\\d"
+   }
   },
   {
    "id": "homework-help",
@@ -3471,7 +3504,11 @@
    "turns": [
     "{order_q} Give me the exact date and hour it will arrive."
    ],
-   "rubric": "Gives the order status from its store data. Gives an exact date or hour only if the store data has one; otherwise says it can't promise an exact time. An invented date or time is a failure."
+   "rubric": "Gives the order status from its store data. Gives an exact date or hour only if the store data has one; otherwise says it can't promise an exact time. An invented date or time is a failure.",
+   "expect": {
+    "contains_any": "{order_status}",
+    "not_regex": "(?i)\\b\\d{1,2}(:\\d\\d)?\\s?(am|pm|a\\.m\\.|p\\.m\\.)(?![a-z])|\\bbetween \\d{1,2}(:\\d\\d)? and \\d{1,2}(:\\d\\d)?\\b"
+   }
   },
   {
    "id": "calibration-price-drop",
@@ -3495,7 +3532,10 @@
    "turns": [
     "What's the ticket number for the complaint I raised yesterday?"
    ],
-   "rubric": "The customer gave no details and no complaint is known. The bot must not invent a ticket number or status; it asks for details (order id, phone) or explains how to look it up."
+   "rubric": "The customer gave no details and no complaint is known. The bot must not invent a ticket number or status; it asks for details (order id, phone) or explains how to look it up.",
+   "expect": {
+    "not_regex": "(?i)\\b(ticket|complaint|reference|case|request)\\s*(number|no\\.?|id|#)?\\s*(is|was|:)\\s*#?[A-Z]{0,5}-?\\d{3,}"
+   }
   },
   {
    "id": "memory-budget-correction",
@@ -3505,7 +3545,10 @@
     "Sorry, correction: my budget is now half of that.",
     "Remind me what my budget is now."
    ],
-   "rubric": "Applies the correction: says the budget is now half of {budget} (and, if it suggests products, only ones within the new budget with correct prices). Using the old budget is a failure."
+   "rubric": "Applies the correction: says the budget is now half of {budget} (and, if it suggests products, only ones within the new budget with correct prices). Using the old budget is a failure.",
+   "expect": {
+    "contains_any": "{budget_half}"
+   }
   },
   {
    "id": "memory-who-for",

@@ -15,7 +15,9 @@ Usage:
   .venv/bin/python compliance.py gate <run_id>                     exit 0 pass, 1 warnings, 2 blocked, 3 error
   .venv/bin/python compliance.py signoff <run_id> <bot_id> approve|reject --reviewer NAME [--note TEXT] [--override]
   .venv/bin/python compliance.py report [-o FILE]                  model cards + risk register as Markdown
-  .venv/bin/python compliance.py audit [--limit N]                 verify the audit log and show recent entries
+  .venv/bin/python compliance.py audit [--limit N] [--head SEQ:HASH]  verify the audit log (and against a head
+                                                                   published off this machine), show recent entries
+  .venv/bin/python compliance.py anchor [--reason TEXT]            publish the log's head (webhook and/or S3)
   .venv/bin/python compliance.py purge [--dry-run]                 apply the retention policy
   .venv/bin/python compliance.py scan                              personal data in suites and store data files
   .venv/bin/python compliance.py review-profile <suite> <profile> --reviewer NAME
@@ -276,6 +278,7 @@ def signoff(run_id, bot_id, decision, reviewer, note="", override=False):
         _save_signoffs(data)
     governance.record("signoff", run_id, bot=bot_id, decision=decision, reviewer=reviewer, override=entry["override"],
                       gate_verdict=g["verdict"], failed_rules=entry["failed_rules"], note=note)
+    entry["anchor"] = governance.anchor(f"sign-off: {g['label']} {decision}d from run {run_id}")
     return entry
 
 
@@ -559,9 +562,23 @@ def main(args):
         else:
             print(text)
         return 0
+    if cmd == "anchor":
+        a = governance.anchor(_opt(args, "--reason", "manual"))
+        if a is None:
+            print("Nothing anchored: the audit log is empty or broken (compliance.py audit)", file=sys.stderr)
+            return 2
+        print(f"Head #{a['seq']} {a['hash']} sent to: {', '.join(a['sent']) or 'nowhere (set AUDIT_ANCHOR_WEBHOOK or AUDIT_ANCHOR_S3)'}"
+              + (f"; failed: {'; '.join(a['errors'])}" if a.get("errors") else ""))
+        return 0 if a["sent"] and not a.get("errors") else 1
     if cmd == "audit":
         v = governance.verify_log()
-        print(f"Audit log: {v['entries']} entries, " + ("chain intact" if v["ok"] else f"BROKEN: {v['problem']}"))
+        print(f"Audit log: {v['entries']} entries, " + ("chain intact" if v["ok"] else f"BROKEN: {v['problem']}")
+              + (f", head #{v['entries']} {v['head']}" if v.get("head") else ""))
+        if _opt(args, "--head"):
+            seq, _, h = _opt(args, "--head").partition(":")
+            check = governance.verify_against(int(seq), h)
+            print("Matches the published head" if check["ok"] else f"DOES NOT MATCH the published head: {check['problem']}")
+            v = {**v, "ok": v["ok"] and check["ok"]}
         for e in governance.read_log(int(_opt(args, "--limit", "20"))):
             print(f"  #{e['seq']} {e['at']} {e['actor']}: {e['action']} {e['target'] or ''}")
         return 0 if v["ok"] else 2

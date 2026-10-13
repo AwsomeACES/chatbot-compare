@@ -166,3 +166,14 @@ def test_another_machine_on_the_network_needs_consent():
 def test_the_prompt_version_covers_the_verdict_schema(monkeypatch):
     assert "fair" in str(evaluator.VERDICT_SCHEMA)  # its field descriptions are grading rules
     assert len(evaluator.JUDGE_PROMPT_VERSION) == 8
+
+
+def test_names_and_addresses_a_bot_produced_are_masked_but_test_data_is_not():
+    known = governance.known_values("Customers: Rahul Sharma, Priya Patel.", "Hi, I'm Alex Fernandes")
+    leak = "Her name is Meera Krishnan and she lives at 12, MG Road, Indiranagar, Bengaluru 560038."
+    assert governance.unknown_pii(leak, known) == {"name": 1, "address": 1}
+    assert governance.redact(leak, known)[0] == "Her name is [name] and she lives at [address]."
+    assert governance.redact("Deliver to Mr Vikram Rao, pin code 400001.", known)[0] == "Deliver to Mr [name], pin code [address]."
+    for fine in ("The customer name is Rahul Sharma.", "Customer: Alex Fernandes", "Sector 5 has 123456 units",
+                 "The Sony headphones cost Rs 29,990."):
+        assert governance.unknown_pii(fine, known) == {}, fine

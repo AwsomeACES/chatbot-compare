@@ -8,7 +8,7 @@ Reliance Digital multi-agent bot** (`~/projects/hussain-bot/digital-multi-agent-
 ## How the comparison works
 
 1. **Same skills for every bot, each on its own data.** The two bots sell different products, so
-   `suites/store_support.json` holds 85 test *templates* (7–11 per skill: price lookup, order tracking, prompt injection, guardrails, out-of-scope,
+   `suites/store_support.json` holds 117 test *templates* (2–12 per skill: price lookup, order tracking, prompt injection, guardrails, out-of-scope,
    follow-up questions, Hindi, hallucination, bias...) and a **profile** per bot with that bot's own facts.
    `"How much is the {tv}?"` becomes "Samsung 55 inch TV → Rs 47,990" for VoltKart and
    "LG 55 inch OLED → Rs 129,999" for Hussain's chatbot.
@@ -194,7 +194,9 @@ Nothing here calls a paid model by default:
   set `JUDGE_DAILY_LIMIT` to your plan's daily quota and it warns before a run that needs more. Set
   `JUDGE_FALLBACK_MODEL` (and `JUDGE_FALLBACK_BASE_URL`, default the local Ollama) to have a fallback judge take over
   when the main one stays out of quota; each verdict records which model gave it. For a bot whose own LLM is on a free
-  tier, `"rpm": 10` on it in `bots.json` spaces out the test messages so the run doesn't hit the limit.
+  tier, `"rpm": 10` on it in `bots.json` spaces out the test messages so the run doesn't hit the limit. The three
+  Gemini bots have `rpm` 4–6 (Hussain's multi-agent bot makes several LLM calls per message); `nightly.sh` hands
+  them this project's `GOOGLE_API_KEY`, so they share one free-tier quota with the judge.
 - **Another free judge**: set `JUDGE_BASE_URL`, `JUDGE_MODEL` and `JUDGE_API_KEY_ENV`, e.g. a local Ollama model
   (`http://localhost:11434/v1`, `JUDGE_API_KEY_ENV=` empty) or Groq's free tier. A small local model is a much weaker
   grader; check it in the Judge review tab before trusting its scores.
@@ -338,7 +340,10 @@ Markdown for an assessor.
   (Verhoeff-checked), PAN or UPI id that is already in the store data or test case is synthetic and sent as is. One that
   appears only in a bot's reply is counted on the case ("Personal data" in the case detail) and, with `data.pii:
   "redact"`, replaced with e.g. `[phone number]` before the conversation goes to a judge that isn't on this machine, and in the
-  saved run (so exports and the review queue don't hold it). Names and street addresses aren't detected.
+  saved run (so exports and the review queue don't hold it). Names and street addresses have no fixed shape, so only
+  clear cases are caught: a capitalised name after "my name is", "customer" or a title (Mr, Mrs, Dr, Shri...), and an
+  address with a street word and a 6-digit PIN code (or a labelled PIN code). A name or address that appears anywhere
+  in the store data or test case is test data.
   `compliance.py scan` lists every such value in the suites and data files, so you can confirm all of it is synthetic.
 - **Retention.** Runs older than `data.retention_days` (90) are deleted by `nightly.sh`, or from the Governance tab,
   except baselines and runs with a sign-off, which are kept as evidence.
@@ -348,7 +353,10 @@ Markdown for an assessor.
   `~/.config/chatbot-compare/audit.key`, created on first use, readable by this OS user only), and the latest entry is
   recorded there too, so the chain can't be recomputed without the key and a log with its last lines cut off shows as
   broken. Someone who can log in as this OS user can read the key; for evidence that must hold against that, copy the
-  head hash (`compliance.py audit`) into the release ticket. Each finished run is sealed with the hash of its results,
+  head hash off this machine: `compliance.py anchor` (run after every sign-off and by `nightly.sh`) posts it to
+  `AUDIT_ANCHOR_WEBHOOK` (default `REGRESSION_WEBHOOK`) and/or writes it to `AUDIT_ANCHOR_S3` (`s3://bucket/prefix`;
+  turn on Object Lock for the bucket), and `compliance.py audit --head SEQ:HASH` checks the log against a head copied
+  from there, which catches a log rewritten even by someone with the key. Each finished run is sealed with the hash of its results,
   so a run file edited afterwards shows as *modified*. The actor is the HTTP Basic user name or the OS user for
   scripts. With `APP_PASSWORD` any user name is accepted as typed; set `APP_USERS` (`name:password,name2:password2`)
   for per-person logins, and then a sign-off's reviewer must be the person logged in. Every run also saves its `provenance`: git commit (and whether there were uncommitted changes), suite,
@@ -363,7 +371,9 @@ Markdown for an assessor.
 .venv/bin/python compliance.py gate <run_id>          # exit 0 pass, 1 warnings, 2 blocked
 .venv/bin/python compliance.py signoff <run_id> <bot_id> approve --reviewer "Name" [--note "..."] [--override]
 .venv/bin/python compliance.py report -o docs/ai-governance-report.md
-.venv/bin/python compliance.py audit                  # verify the hash chain, show recent entries
+.venv/bin/python compliance.py audit [--head SEQ:HASH] # verify the hash chain (and against a published head)
+.venv/bin/python compliance.py anchor                 # publish the log's head (webhook and/or S3)
+.venv/bin/python compliance.py review-profile store_support hussain --reviewer "Hussain"
 .venv/bin/python compliance.py purge --dry-run
 .venv/bin/python compliance.py scan
 ```

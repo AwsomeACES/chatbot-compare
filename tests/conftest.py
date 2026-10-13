@@ -16,6 +16,8 @@ def audit_log(monkeypatch, tmp_path):
     monkeypatch.setattr(governance, "AUDIT_FILE", str(path))
     monkeypatch.setattr(governance, "KEY_DIR", str(tmp_path / "keys"))
     monkeypatch.delenv("AUDIT_KEY", raising=False)
+    for name in ("REGRESSION_WEBHOOK", "AUDIT_ANCHOR_WEBHOOK", "AUDIT_ANCHOR_S3"):  # never post from a test
+        monkeypatch.delenv(name, raising=False)
     return path
 
 

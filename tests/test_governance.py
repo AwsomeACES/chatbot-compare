@@ -263,3 +263,24 @@ def test_report_has_release_status_risks_and_model_cards(store, monkeypatch):
     assert ov["bots"][1]["card"]["limitations"]
     md = compliance.report_markdown(ov)
     assert "## Risk register" in md and "### Leaky" in md and "FAIL" in md
+
+
+def test_the_head_is_published_off_the_machine_and_a_rewrite_is_caught_against_it(audit_log, monkeypatch):
+    for i in range(3):
+        governance.record("test.action", f"t{i}", by="tester", n=i)
+    monkeypatch.setenv("AUDIT_ANCHOR_WEBHOOK", "https://chat.example/hook")
+    monkeypatch.setenv("AUDIT_ANCHOR_S3", "s3://evidence/chatbot-compare")
+    posted, stored = [], []
+    a = governance.anchor("test", post=lambda url, text: posted.append(text),
+                          put=lambda target, rec: stored.append(rec) or "s3://evidence/x")
+    assert a["seq"] == 3 and a["sent"] == ["webhook", "s3://evidence/x"] and a["hash"] in posted[0]
+    assert stored[0]["hash"] == a["hash"] and governance.verify_against(3, a["hash"])["ok"]
+
+    # someone with the key rewrites the whole log: it verifies on its own, but not against the published head
+    audit_log.unlink()
+    for i in range(3):
+        governance.record("test.action", f"t{i}", by="someone else", n=i)
+    assert governance.verify_log()["ok"]
+    assert not governance.verify_against(3, a["hash"])["ok"]
+    failing = governance.anchor("x", post=lambda *_: (_ for _ in ()).throw(OSError("down")), put=lambda *_: "s3://ok")
+    assert failing["errors"] == ["webhook: down"] and failing["sent"] == ["s3://ok"]
