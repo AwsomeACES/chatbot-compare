@@ -1,0 +1,3 @@
+title = "Studio local secret rules v1"
+[extend]
+useDefault = true

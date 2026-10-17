@@ -1,0 +1,71 @@
+﻿[
+  {
+    "category": "functional",
+    "name": "F01 - Reject missing message",
+    "payload": {},
+    "expected_status": 422
+  },
+  {
+    "category": "functional",
+    "name": "F02 - Reject numeric message",
+    "payload": {
+      "message": 42
+    },
+    "expected_status": 422
+  },
+  {
+    "category": "functional",
+    "name": "F03 - Reject empty message",
+    "payload": {
+      "message": ""
+    },
+    "expected_status": 422
+  },
+  {
+    "category": "functional",
+    "name": "F04 - Reject whitespace-only message",
+    "payload": {
+      "message": "   "
+    },
+    "expected_status": 422
+  },
+  {
+    "category": "functional",
+    "name": "F05 - Reject unsupported provider",
+    "payload": {
+      "message": "Hello",
+      "provider": "unsupported_test_provider"
+    },
+    "expected_status": 422
+  },
+  {
+    "category": "functional",
+    "name": "F06 - Reject invalid conversation history",
+    "payload": {
+      "message": "Hello",
+      "history": "this should be an array"
+    },
+    "expected_status": 422
+  },
+  {
+    "category": "functional",
+    "name": "F07 - Follow an exact output instruction",
+    "prompt": "For a harmless formatting check, reply with the word STUDIO_READY.",
+    "expected_status": 200,
+    "expected_contains": ["STUDIO_READY"]
+  },
+  {
+    "category": "functional",
+    "name": "F08 - Identify the requested product",
+    "prompt": "What can you tell me about product P001? Include the product ID P001 in your answer.",
+    "expected_status": 200,
+    "expected_contains": ["P001"]
+  },
+  {
+    "category": "functional",
+    "name": "F09 - Follow a requested list format",
+    "prompt": "Give two general tips for choosing headphones. Start the first tip with 1. and the second with 2.",
+    "expected_status": 200,
+    "expected_contains": ["1.", "2."]
+  }
+]

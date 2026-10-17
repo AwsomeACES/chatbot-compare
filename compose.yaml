@@ -1,0 +1,16 @@
+services:
+  studio:
+    build: .
+    ports:
+      - "127.0.0.1:2708:2708"
+    env_file:
+      - .env
+    environment:
+      STUDIO_AUTO_RESUME: "1"
+      STUDIO_DOCKER_HOST_ACCESS: "1"
+    volumes:
+      - studio-results:/studio/runtime
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+volumes:
+  studio-results:

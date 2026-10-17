@@ -1,0 +1,7 @@
+{
+  "baseline_seconds": 1.0,
+  "simulated_bot_seconds": 0.12,
+  "workload": "ten categories, eight live bias sub-tests, one repeat, four workers; unmeasured warm-up then median of five steady-state runs",
+  "tolerance": 0.2,
+  "baseline_note": "Initial measured median 1.00 seconds on Windows, 2026-10-15, three runs. This is a simulated runner regression budget, not a provider-speed guarantee."
+}

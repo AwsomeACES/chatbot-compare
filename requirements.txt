@@ -10,3 +10,5 @@ reportlab>=4,<6
 playwright>=1.50,<2
 
 litellm>=1.80,<2
+
+PyYAML==6.0.3

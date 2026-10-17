@@ -1,0 +1,13 @@
+{
+  "name": "ai-agent-testing-studio-dev",
+  "private": true,
+  "scripts": {
+    "format": "prettier --write --ignore-unknown app/blackbox_static app/blackbox/cases app/studio scripts sample_project docs *.md *.json .github/workflows/*.yml",
+    "format:check": "prettier --check --ignore-unknown app/blackbox_static app/blackbox/cases app/studio scripts sample_project docs *.md *.json .github/workflows/*.yml",
+    "check:js": "node scripts/check-js-syntax.cjs",
+    "test:ui": "node --test scripts/test-studio-navigation.cjs"
+  },
+  "devDependencies": {
+    "prettier": "3.6.2"
+  }
+}

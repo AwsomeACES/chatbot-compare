@@ -1,0 +1,5 @@
+FROM python:3.12.8-slim
+RUN pip install --no-cache-dir bandit==1.8.3
+USER 65534:65534
+WORKDIR /tmp
+# Trusted worker and rules are mounted read-only. Uploaded code is never executed.

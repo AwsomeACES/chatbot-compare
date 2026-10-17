@@ -1,0 +1,122 @@
+# AI Agent Studio — Product requirements
+
+Purpose: describe what the product does, why it matters, and what remains to build.
+Owner: AI Agent Studio maintainers; named product owner: TODO: confirm.
+Last updated: 2026-10-17.
+
+## Contents
+
+- [Summary and users](#summary-and-users)
+- [Terms and scope](#terms-and-scope)
+- [User stories](#user-stories)
+- [Functional requirements](#functional-requirements)
+- [Quality requirements](#quality-requirements)
+- [Success measures and risks](#success-measures-and-risks)
+- [Questions and history](#questions-and-history)
+
+## Summary and users
+
+AI Agent Studio tests chatbots and AI agents and presents evidence that owners can review. It combines conversations, optional private information, and optional source-code scans without running uploaded application code. It reports scores, coverage, costs, uncertainty and review decisions so users can decide what to investigate next.
+
+The problem is that a convincing answer, a clean source scan, or a high score alone does not establish a reliable bot. Missing evidence, provider outages and false-positive scanner alerts must remain visible.
+
+| User                    | Need                                                                    |
+| ----------------------- | ----------------------------------------------------------------------- |
+| Non-technical bot owner | Add a bot, understand results and share actionable findings.            |
+| Developer               | Find reproducible problems, source locations and missing configuration. |
+| Auditor or reviewer     | Trace inputs, judges, evidence, costs and later review decisions.       |
+
+## Terms and scope
+
+- **Run:** one saved assessment with its inputs and results.
+- **Case:** a test scenario; a repeat is another execution of that scenario.
+- **Category:** a group of related Cases, such as Bias.
+- **Engine:** a component that plans and runs checks. Black-box tests use the chat interface without source access. Gray-box tests also use supplied prompts, configuration, knowledge or logs. White-box tests inspect source files without executing the submitted application.
+- **Finding:** one check's result, evidence, explanation and suggested fix.
+- **Judge:** a model or deterministic check (a fixed rule) that evaluates evidence.
+- **Assurance badge:** a label for selected evidence modes, not certification.
+- **API:** a program-to-program connection. An endpoint is its address. ZIP is an archive of files. JSON is structured text used for configuration and exchange. Tokens are units used by model providers to measure text processing.
+- **Implemented:** a code path exists, with verification limits stated. **Partial:** part exists but the whole requirement is not established. **Planned:** not implemented. Historical test reports are not new validation.
+
+Goals are understandable evidence, fair comparisons, recoverable execution and honest cost reporting. Non-goals are certification, legal compliance decisions, actuarial pricing (insurance-risk pricing), guaranteed safety, universal bot compatibility, guaranteed provider availability, and running arbitrary uploaded programs. White source results do not establish live behavior. The Studio is a local application, not a verified multi-tenant hosted service.
+
+Current facts refer to the inspected working tree, including existing uncommitted changes. [Architecture](Architecture.md) identifies source paths; [Design](Design.md) describes presentation; [Rules](Rules.md) governs changes; [tasks](tasks.md) tracks delivery.
+
+## User stories
+
+| ID    | Story                                                 | Testable acceptance criteria                                                                                                                                                                                |
+| ----- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| US-01 | As an owner, I can test one bot without reading code. | Given a working supported connection and consent, When I start Black-box testing, Then a Run records every planned Case and a result or explicit missing-evidence reason.                                   |
+| US-02 | As an owner, I can compare bots fairly.               | Given two to four bots on the same protocol, When results are summarized, Then the weighted scores and coverage appear and a winner is withheld for incomplete or incompatible judge evidence.              |
+| US-03 | As a developer, I can inspect private source safely.  | Given a valid source ZIP and installed scanners, When I select White-box testing, Then trusted scanners inspect read-only source and the uploaded application is never imported, built or executed.         |
+| US-04 | As an owner, I control private-data sharing.          | Given Gray inputs and no cloud opt-in, When a Judge is needed, Then only local judges are considered and their absence produces Not tested.                                                                 |
+| US-05 | As a reviewer, I can challenge a Finding.             | Given a saved Finding, When I submit a review with a written reason, Then its original value is preserved and the old/new decision is audited.                                                              |
+| US-06 | As an owner, I can understand expenses.               | Given calls with known and unknown usage, When I view costs, Then bot and evaluation costs are separate and an unknown total is not displayed as zero.                                                      |
+| US-07 | As an operator, I can recover interrupted work.       | Given retained compatible inputs and credentials, When I resume a Run, Then completed bot answers are reused only for their original Case/repeat and outstanding work is accounted for.                     |
+| US-08 | As a reviewer, I can export and reproduce evidence.   | Given a retained Run, When I export or reproduce it, Then exports redact supported personal-data patterns and reproduction preserves the saved protocol while requesting any missing inputs or credentials. |
+
+## Functional requirements
+
+| ID    | Area and requirement                                                                                                                                                 | Current state and acceptance boundary                                                                                                                                                                                                                                                                                                     |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FR-01 | Bot input: accept one to four named targets by chat link, REST API or OpenAI-compatible API; REST means an HTTP request/response service.                            | Implemented through target connectors; web widgets use Playwright, a browser automation library. Custom selectors/fields may be needed. A source ZIP is not a running endpoint.                                                                                                                                                           |
+| FR-02 | Source input: accept a ZIP or public GitHub source import for White checks.                                                                                          | Implemented bounded intake with hashes. Private repositories can be supplied as ZIPs. Planned: isolated application execution; never execute ZIP code on the host.                                                                                                                                                                        |
+| FR-03 | Black-box: present ten default Categories with configurable repeats, default three, while keeping historical protocols readable.                                     | Implemented in the simple protocol. Ten Categories do not mean exactly ten bot calls; Bias expands and multi-turn Cases make several calls.                                                                                                                                                                                               |
+| FR-04 | Bias: report nine tagged sub-types under one aggregate Category, paired evidence, reasons, severity and order randomization.                                         | Implemented: gender, racial/ethnic, age, socioeconomic, cultural, cognitive/confirmation, media framing, selection/sampling, algorithmic/AI disparity. Eight executable probes plus one derived aggregate; the derived result is not an independent test or extra weight.                                                                 |
+| FR-05 | Gray inputs: accept system prompt, config, tool declarations, knowledge and structured logs.                                                                         | Implemented per-bot input IDs and hashes; missing inputs produce explicit Findings. Private cloud opt-in is separate from bot-message consent.                                                                                                                                                                                            |
+| FR-06 | Gray checks: test declared rules, targeted injection, tool misuse, knowledge grounding/unknown answers, traces, canary logging, model drift and token/cost evidence. | Implemented targeted conversations and trace/declaration checks. HHEM, a local hallucination classifier, is optional and unverified without installed reviewed weights. A synthetic canary is a test marker; logging evidence must match the current Run.                                                                                 |
+| FR-07 | White scanners: run Gitleaks, Semgrep, Bandit, OSV, Trivy and trusted control rules.                                                                                 | Implemented 14 planned checks; Docker (isolated process containers), tools and offline databases must exist. Source-pattern matches do not prove effective controls. No supported target or insufficient evidence yields Not tested.                                                                                                      |
+| FR-08 | Judges: select one or more cloud/local models and allow model/key changes during a Run.                                                                              | Implemented configurable OpenAI, Claude, Gemini, Google Gemma and Ollama choices, discovery, live updates, prompt evidence validation and metering. Installed/account-accessible models determine availability; no fixed universal model list is promised.                                                                                |
+| FR-09 | Fallback: retry bounded failures and use permitted local backup models.                                                                                              | Implemented selected local fallbacks and installed-only Ollama discovery, health cooldowns and audited switches. No automatic weight downloads; Judge fallback never changes the target bot's provider.                                                                                                                                   |
+| FR-10 | Cost/tokens: separate bot and evaluation charges, model usage, price snapshots and measurement provenance.                                                           | Implemented reported/count-based/estimated usage and Unknown costs. Hidden internal bot calls need telemetry (usage information from the bot); local API fee zero excludes unmetered hardware cost.                                                                                                                                       |
+| FR-11 | Compare: two to four bots, weighted scores, ties, confidence and per-Category comparison.                                                                            | Implemented overall winner gating, comparative bars and a per-Category winner/tie column. Simple protocol uses category-level resampling despite a scenario-cluster label. Planned: reconcile that label/statistical unit and use the saved protocol tie margin consistently in Category results. Legacy comparison is a separate method. |
+| FR-12 | Dashboard: understandable progress, score bars, comparison, token/cost charts, tables and summaries.                                                                 | Implemented Evaluate/Results/Governance shell, shared history and Black/Gray/White/Combined results. More specialized views are sections rather than separate pages.                                                                                                                                                                      |
+| FR-13 | AI explanation: attach a supported reason and evidence to verdicts.                                                                                                  | Implemented Black/Gray evidence validation and scanner explanations. Partial: White UI can display optional AI source review, but the VoltKart review used external task-specific helpers; a general automatic White AI review service is Planned.                                                                                        |
+| FR-14 | Governance: hash-chained audit, model cards, configuration/prompt/price provenance, same-family warnings and judge agreement.                                        | Implemented. A hash is an integrity fingerprint, not a digital signature. Agreement is pass/fail agreement among distinct actual models, not proof of correctness. Framework mappings are informational.                                                                                                                                  |
+| FR-15 | Human review: require a reason, preserve original Findings/scores, display override decisions and audit them.                                                        | Implemented review queue and review/override routes. Do not delete a Finding to hide an alert; explicit whole-Run privacy deletion remains supported.                                                                                                                                                                                     |
+| FR-16 | Export/privacy: JSON and PDF (Portable Document Format) reports, personal-data redaction, retention and Run deletion.                                                | Implemented base exports and retention. Planned: verify parity of optional AI source explanations across exports; current special VoltKart HTML is not the product PDF. Redaction uses patterns and is not complete anonymization.                                                                                                        |
+| FR-17 | Reproduce/resume: retain protocol/input hashes, re-run compatible settings, recover saved work.                                                                      | Implemented with credentials and deleted-input re-entry requirements. Reproduction is not guaranteed byte-identical output and does not freeze all upstream models, rules or databases.                                                                                                                                                   |
+| FR-18 | Readiness/status: preview required inputs and show why a check cannot be measured.                                                                                   | Partial: engine plans, readiness controls and explicit missing Findings exist. Planned: unified Ready / Needs input / Not applicable / Tool unavailable presentation with applicability rules before all modes start.                                                                                                                     |
+
+The ten Black-box Categories are Hallucination, Prompt injection, Multi-turn jailbreak, Safety guardrails, Bias, Conversation memory, Language and tone, Personal data protection, Helpful on safe requests, and Knowing when to say I don't know. Verified reference facts strengthen hallucination checks; without them, the default probes unsupported claims rather than all factual knowledge. Personal data protection covers PII, meaning personally identifiable information. The language probe deliberately asks for Hinglish; that test content is separate from the English-only interface.
+
+## Quality requirements
+
+| ID     | Requirement             | Current state and testable target                                                                                                                                                                                                                                        |
+| ------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| NFR-01 | Speed                   | Concurrent conversations/judges with provider limits and caching exist; White tools are serial per source to bound memory. Keep the simulated benchmark at no more than 20% above its recorded baseline. This is not a live-provider speed guarantee.                    |
+| NFR-02 | Reliability             | Aim for 100% planned-check accounting: a measured verdict or Not tested with reason. Timeouts, retries, checkpoints and resume exist; 100% successfully judged outcomes during outages are not promised. Stop/deadline controls remain effective.                        |
+| NFR-03 | Privacy                 | Local judges by default for private Gray inputs, explicit opt-in for cloud review, credential masking, redacted exports and controlled retention. General private White AI review is Planned; standard White scanning makes no LLM call. LLM means large language model. |
+| NFR-04 | Security                | Never execute uploaded application code. Bound archive extraction, scanner resources, output and network access; record ownership/permission. Missing safeguards must block the operation or produce Not tested.                                                         |
+| NFR-05 | Portability             | Provide `./start.sh` for macOS/Linux and optional Docker hosting. These files exist; native startup/scanner verification of the current working tree is TODO: confirm. Windows launch is supported separately.                                                           |
+| NFR-06 | Maintainability         | Keep code modular, typed, formatted, linted and configuration-driven. CI (automated repository checks) exists; some thresholds and check registries remain in code. Planned: improve configuration coverage without claiming every value is externalized.                |
+| NFR-07 | Usability/accessibility | English interface, preserved technical names, keyboard access, responsive layout and text alongside color. No certified accessibility or measured contrast-compliance claim. Planned: systematic accessibility audit and glossary.                                       |
+
+## Success measures and risks
+
+These are acceptance measures, not invented production statistics:
+
+| Measure                   | Target / present evidence                                                                                                                                    |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Planned-check accounting  | Every plan item has a saved terminal result/reason; distinguish processed, measured and passed.                                                              |
+| Honest billing            | Every unknown-price/usage regression remains Unknown; known zero remains explicitly explained.                                                               |
+| Repeat integrity          | Different repeat indices issue fresh bot calls; resuming the same repeat may reuse its checkpoint.                                                           |
+| Review traceability       | Every score/Finding review keeps original evidence and an audit event with a reason.                                                                         |
+| Documentation consistency | All requirement IDs have tasks and local document links resolve.                                                                                             |
+| Operator ease             | TODO: confirm measured first-run completion time and usability target with representative users.                                                             |
+| Performance               | Fixed simulated 1.0-second baseline plus 20% tolerance from `app/studio/benchmark.json`; current-host result requires a new run, not a historical assertion. |
+
+Main risks: provider failures (bounded retry/local fallback), scanner false positives (source evidence and review), unknown dependency versions (lockfiles and qualified advisories), private-data leaks (opt-in/redaction/local defaults), statistical overconfidence (coverage and confidence notes), and history drift (versioned snapshots and explicit provenance). Local audit hashes detect report changes against the database anchor; replacing both database and backups is outside that protection.
+
+## Questions and history
+
+- TODO: confirm named product owner and reviewer for requirement changes.
+- TODO: confirm native macOS/Linux startup, browser dependencies and White scanner setup for this revision.
+- TODO: confirm a supported fully resolved Python dependency lock; currently most dependencies use ranges.
+- TODO: confirm benchmark results on the current host and the intended resampling unit for winner confidence.
+- TODO: confirm a tested user-facing setup-time target and accessibility acceptance standard.
+- A Hinglish interface toggle is **Planned, not enabled**, and conflicts with the standing English-only UI preference. Keep it inactive unless that preference is explicitly changed. Original-language test evidence remains intact.
+
+| Date       | Version             | Change                                                                                                                          |
+| ---------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-10-17 | Document revision 1 | Initial requirements reconciled against current local code and historical progress notes. This is not a product release number. |

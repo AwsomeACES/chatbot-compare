@@ -1,0 +1,9 @@
+.venv/
+runtime/
+node_modules/
+__pycache__/
+*.py
+*.ps1
+*.zip
+*.png
+*.jpg

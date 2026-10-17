@@ -1,0 +1,80 @@
+{
+  "version": "source-audit-v1",
+  "timeout_seconds": 60,
+  "output_bytes": 2097152,
+  "tools": {
+    "gitleaks": {
+      "version": "8.24.2",
+      "image": "zricethezav/gitleaks:v8.24.2",
+      "args": [
+        "dir",
+        "/source",
+        "--config",
+        "/rules/gitleaks.toml",
+        "--redact=100",
+        "--no-banner",
+        "--report-format=json",
+        "--report-path=/dev/stdout",
+        "--exit-code=0"
+      ]
+    },
+    "semgrep": {
+      "version": "1.116.0",
+      "image": "semgrep/semgrep:1.116.0",
+      "args": [
+        "semgrep",
+        "scan",
+        "--config=/rules/semgrep.yaml",
+        "--metrics=off",
+        "--disable-version-check",
+        "--no-git-ignore",
+        "--json",
+        "/source"
+      ]
+    },
+    "bandit": {
+      "version": "1.8.3",
+      "image": "studio-source-scanners:1",
+      "args": ["bandit", "-r", "/source", "-c", "/rules/bandit.yaml", "-f", "json", "--exit-zero"]
+    },
+    "controls": {
+      "version": "controls-v1",
+      "image": "studio-source-scanners:1",
+      "args": ["python", "-I", "/rules/control_worker.py"]
+    },
+    "osv": {
+      "version": "1.9.2",
+      "memory_mb": 2048,
+      "timeout_seconds": 240,
+      "output_bytes": 8388608,
+      "image": "ghcr.io/google/osv-scanner:v1.9.2",
+      "args": [
+        "scan",
+        "--experimental-offline",
+        "--experimental-all-packages",
+        "--no-ignore",
+        "--skip-git",
+        "--format=json",
+        "--recursive",
+        "/source"
+      ],
+      "database": "osv"
+    },
+    "trivy": {
+      "version": "0.61.1",
+      "image": "aquasec/trivy:0.61.1",
+      "args": [
+        "fs",
+        "--scanners=vuln,misconfig",
+        "--offline-scan",
+        "--skip-db-update",
+        "--skip-java-db-update",
+        "--skip-check-update",
+        "--format=json",
+        "--cache-dir=/cache",
+        "/source"
+      ],
+      "database": "trivy"
+    }
+  }
+}

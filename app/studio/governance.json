@@ -1,0 +1,77 @@
+{
+  "disclaimer": "Informational engineering mapping only; not certification, legal advice or a claim of EU AI Act compliance. Applicability depends on deployment and intended use.",
+  "sources": [
+    "https://www.nist.gov/itl/ai-risk-management-framework",
+    "https://www.iso.org/standard/81230.html",
+    "https://eur-lex.europa.eu/eli/reg/2024/1689/oj"
+  ],
+  "categories": {
+    "hallucination": {
+      "NIST AI RMF": ["GOVERN", "MAP", "MEASURE", "MANAGE"],
+      "ISO/IEC 42001 themes": ["AI risk assessment", "Monitoring and documented information"],
+      "EU AI Act themes": ["Risk management", "Record keeping", "Human oversight"],
+      "engineering_focus": "Grounded evidence and information reliability"
+    },
+    "injection": {
+      "NIST AI RMF": ["GOVERN", "MAP", "MEASURE", "MANAGE"],
+      "ISO/IEC 42001 themes": ["AI risk assessment", "Monitoring and documented information"],
+      "EU AI Act themes": ["Risk management", "Record keeping", "Human oversight"],
+      "engineering_focus": "Instruction integrity"
+    },
+    "jailbreak": {
+      "NIST AI RMF": ["GOVERN", "MAP", "MEASURE", "MANAGE"],
+      "ISO/IEC 42001 themes": ["AI risk assessment", "Monitoring and documented information"],
+      "EU AI Act themes": ["Risk management", "Record keeping", "Human oversight"],
+      "engineering_focus": "Multi-turn safety resilience"
+    },
+    "guardrails": {
+      "NIST AI RMF": ["GOVERN", "MAP", "MEASURE", "MANAGE"],
+      "ISO/IEC 42001 themes": ["AI risk assessment", "Monitoring and documented information"],
+      "EU AI Act themes": ["Risk management", "Record keeping", "Human oversight"],
+      "engineering_focus": "Declared safety policy and authorization boundaries"
+    },
+    "bias": {
+      "NIST AI RMF": ["GOVERN", "MAP", "MEASURE", "MANAGE"],
+      "ISO/IEC 42001 themes": ["AI risk assessment", "Monitoring and documented information"],
+      "EU AI Act themes": [
+        "Risk management",
+        "Record keeping",
+        "Human oversight",
+        "Data governance and non-discrimination"
+      ],
+      "engineering_focus": "Counterfactual fairness and human review"
+    },
+    "memory": {
+      "NIST AI RMF": ["GOVERN", "MAP", "MEASURE", "MANAGE"],
+      "ISO/IEC 42001 themes": ["AI risk assessment", "Monitoring and documented information"],
+      "EU AI Act themes": ["Risk management", "Record keeping", "Human oversight"],
+      "engineering_focus": "Conversation state reliability"
+    },
+    "language": {
+      "NIST AI RMF": ["GOVERN", "MAP", "MEASURE", "MANAGE"],
+      "ISO/IEC 42001 themes": ["AI risk assessment", "Monitoring and documented information"],
+      "EU AI Act themes": ["Risk management", "Record keeping", "Human oversight"],
+      "engineering_focus": "Accessibility and respectful communication"
+    },
+    "pii": {
+      "NIST AI RMF": ["GOVERN", "MAP", "MEASURE", "MANAGE"],
+      "ISO/IEC 42001 themes": ["AI risk assessment", "Monitoring and documented information"],
+      "EU AI Act themes": ["Risk management", "Record keeping", "Human oversight"],
+      "engineering_focus": "Data minimization and privacy"
+    },
+    "over_refusal": {
+      "NIST AI RMF": ["GOVERN", "MAP", "MEASURE", "MANAGE"],
+      "ISO/IEC 42001 themes": ["AI risk assessment", "Monitoring and documented information"],
+      "EU AI Act themes": ["Risk management", "Record keeping", "Human oversight"],
+      "engineering_focus": "Proportionate restrictions and user access"
+    },
+    "calibration": {
+      "NIST AI RMF": ["GOVERN", "MAP", "MEASURE", "MANAGE"],
+      "ISO/IEC 42001 themes": ["AI risk assessment", "Monitoring and documented information"],
+      "EU AI Act themes": ["Risk management", "Record keeping", "Human oversight"],
+      "engineering_focus": "Transparency about uncertainty"
+    }
+  },
+  "version": "informational-mapping-v1",
+  "checked_on": "2026-10-15"
+}

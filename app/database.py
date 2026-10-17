@@ -1,27 +1,119 @@
+"""Thread-owned SQLite leases: durable transactions without repeated WAL setup."""
+
+import atexit
 import json
 import sqlite3
+import threading
+from contextlib import contextmanager
+from dataclasses import dataclass
+
 from .config import RUNTIME
 
+
+@dataclass
+class Lease:
+    connection: sqlite3.Connection
+    busy: bool = True
+    retiring: bool = False
+
+
+_pools: dict[tuple[str, int], list[Lease]] = {}
+_pool_lock = threading.Lock()
+
+
+def acquire(path: str) -> Lease:
+    """A connection is never leased concurrently or across request threads."""
+    key = (path, threading.get_ident())
+    with _pool_lock:
+        entries = _pools.setdefault(key, [])
+        for lease in entries:
+            if not lease.busy:
+                lease.busy = True
+                return lease
+        # Disabling the SQLite thread guard only permits shutdown cleanup from
+        # another thread. Operations remain owned by the lease's thread above.
+        connection = sqlite3.connect(path, timeout=30, check_same_thread=False)
+        try:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA synchronous=FULL")
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS records (kind TEXT, id TEXT PRIMARY KEY, body TEXT)"
+            )
+            connection.commit()
+        except BaseException:
+            connection.close()
+            raise
+        lease = Lease(connection)
+        entries.append(lease)
+        return lease
+
+
+def close() -> None:
+    """Close idle handles; active leases finish their transaction before closing."""
+    with _pool_lock:
+        for entries in _pools.values():
+            for lease in entries:
+                lease.retiring = True
+                if not lease.busy:
+                    lease.connection.close()
+        _pools.clear()
+
+
+atexit.register(close)
+
+
+@contextmanager
 def connect():
-    db = sqlite3.connect(RUNTIME / 'studio.db', timeout=30)
-    db.execute('PRAGMA journal_mode=WAL')
-    db.execute('CREATE TABLE IF NOT EXISTS records (kind TEXT, id TEXT PRIMARY KEY, body TEXT)')
-    return db
+    path = str((RUNTIME / "studio.db").resolve())
+    lease = acquire(path)
+    try:
+        with lease.connection:
+            yield lease.connection
+    finally:
+        with _pool_lock:
+            lease.busy = False
+            if lease.retiring:
+                lease.connection.close()
+
 
 def save(kind, value):
     with connect() as db:
-        db.execute('INSERT OR REPLACE INTO records VALUES (?, ?, ?)', (kind, value['id'], json.dumps(value)))
+        db.execute(
+            "INSERT OR REPLACE INTO records VALUES (?, ?, ?)",
+            (kind, value["id"], json.dumps(value)),
+        )
+
 
 def get(kind, ident):
     with connect() as db:
-        row = db.execute('SELECT body FROM records WHERE kind=? AND id=?', (kind, str(ident))).fetchone()
+        row = db.execute(
+            "SELECT body FROM records WHERE kind=? AND id=?", (kind, str(ident))
+        ).fetchone()
     return json.loads(row[0]) if row else None
+
 
 def all_records(kind):
     with connect() as db:
-        rows = db.execute('SELECT body FROM records WHERE kind=? ORDER BY rowid DESC', (kind,)).fetchall()
+        rows = db.execute(
+            "SELECT body FROM records WHERE kind=? ORDER BY rowid DESC", (kind,)
+        ).fetchall()
     return [json.loads(row[0]) for row in rows]
+
+
+def record_summaries(kind: str, fields: tuple[str, ...]) -> list[dict]:
+    """Read history metadata without decoding every transcript and audit log."""
+    if not fields or any(not field.isidentifier() for field in fields):
+        raise ValueError("Summary fields must be simple JSON property names.")
+    projection = ", ".join("?, json_extract(body, ?)" for _ in fields)
+    parameters = [value for field in fields for value in (field, f"$.{field}")]
+    with connect() as connection:
+        rows = connection.execute(
+            f"SELECT json_object({projection}) FROM records WHERE kind=? ORDER BY rowid DESC",
+            [*parameters, kind],
+        ).fetchall()
+    return [json.loads(row[0]) for row in rows]
+
 
 def delete(kind, ident):
     with connect() as db:
-        db.execute('DELETE FROM records WHERE kind=? AND id=?', (kind, str(ident)))
+        db.execute("DELETE FROM records WHERE kind=? AND id=?", (kind, str(ident)))

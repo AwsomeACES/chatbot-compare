@@ -1,121 +1,54 @@
 # AI Agent Studio
 
-Local, single-user black-box chatbot evaluation on **http://127.0.0.1:2708**. Test one chatbot or compare two using conversations and evidence. Source scanning and uploaded unit-test execution are retired.
+[![Code quality and regression tests](https://github.com/Simali2724/AI-Agent-Testing-Studio/actions/workflows/quality.yml/badge.svg?branch=master)](https://github.com/Simali2724/AI-Agent-Testing-Studio/actions/workflows/quality.yml?query=branch%3Amaster)
 
-## Start on Windows
+Test one chatbot or compare up to four using the same **10 categories**. Each category runs **3 repeats** by default; change the repeat number on screen.
 
-```powershell
-Set-Location "D:\AI-Agent-Testing-Studio"
-powershell -ExecutionPolicy Bypass -File .\run.ps1 -Port 2708
-```
+Choose **Black-box testing** for chat behavior, **Gray-box testing** for declarations, knowledge and traces, or **White-box testing** for read-only source scans. Any combination is supported. Confirm ownership or written permission before testing. [Read the short assurance guide](docs/assurance-guide.md) for inputs, evidence labels, privacy and optional scanner setup.
 
-For a fresh installation (Python 3.12+):
+## Check the latest code on GitHub
 
-```powershell
-Set-Location "D:\AI-Agent-Testing-Studio"
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-if (!(Test-Path .env)) { Copy-Item .env.example .env }
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 2708
-```
+Open **Actions → Code quality and regression tests → Run workflow**, select **master**, then click **Run workflow**. This starts checks for the current code. Use the status badge above to find recent runs.
 
-Never overwrite an existing .env containing your settings. Installed Chrome is used for browser tests; otherwise install the Playwright Chromium browser separately.
+**Re-run jobs** inside an older failed run tests that run's original commit and workflow again. It does not pick up later fixes. For example, historical run #3 uses `663d90d`; the dependency-isolation fix was added afterward. Old failed records keep their original result.
 
-## Simple workflow
+## Start
 
-1. Open the Studio and paste the running chatbot page or full API URL. Select Compare to add a second link.
-2. Allow sending test messages. Enable the saved AI judge if you authorize sending prompts, reference facts and bot replies to the displayed provider.
-3. Optionally enable speed and reliability checks. Click **Start testing**.
-4. See progress, the outcome donut, category score bars and response-time graph. Open any case for its exact transcript and evidence; polling preserves open cases.
-5. Download JSON or PDF, or use Previous results to reopen a saved run.
-
-Default checks are hallucination, bias, guardrails and prompt injection, with 30 cases each. All 16 categories remain available under Advanced. Each includes template variations, not a guarantee of comprehensive coverage. Set a longer time limit for large suites or slow targets. Only one evaluation runs at a time.
-
-Advanced settings hold optional API credentials, JSON fields, conversation state fields, browser selectors, reference facts, policy, scope, judge overrides and limits. Selecting more categories does not eliminate their evidence requirements.
-
-## Automatic setup and remaining requirements
-
-REST JSON, OpenAI-compatible chat-completions and identifiable web chat widgets are supported. Common response fields are detected. Authentication, ambiguous web controls, custom payloads or multiple target models can require a one-time Advanced setting. Arbitrary chat websites are not universally supported.
-
-For a recognized Reliance service on localhost:8000 (or its localhost:3000 frontend), Studio configures its streaming endpoint, Gemini provider and conversation history fields. If no references were supplied for a single Reliance target, it loads the public synthetic product catalogue. These bot-supplied facts are **not independently verified retail facts**; setup notes are saved with the run and exported. Compare mode does not invent a shared reference dataset.
-
-For other bots, upload verified prompt/reference cases to evaluate factual accuracy or business correctness. A generic Studio safety baseline is used when no policy is provided; replace it with your actual rules when needed. Scope tests require your scope description. Missing evidence stays Not tested with a reason and contributes zero.
-
-A ZIP can be uploaded and validated, but **no isolated execution runner is available** on this machine. Studio does not execute uploaded code on the host or claim a virtual environment is a sandbox. Start your trusted chatbot separately and paste its running link to evaluate it.
-
-## Save an AI judge once on the backend
-
-The judge accepts an OpenAI-compatible chat-completions endpoint. Configure these in .env and restart Studio:
-
-```dotenv
-STUDIO_JUDGE_URL=http://127.0.0.1:1234/v1/chat/completions
-STUDIO_JUDGE_MODEL=your-installed-model-id
-STUDIO_JUDGE_API_KEY=
-```
-
-For an existing trusted server-side environment file, STUDIO_JUDGE_ENV_FILE and STUDIO_JUDGE_KEY_NAME may identify the key to read; this path is never supplied by a web client. The current machine can reuse its previously configured provider. No key is returned by the defaults API. The displayed saved model is configuration, not proof that provider quota is available. No local model is automatically started.
-
-External judges receive data only with explicit judge-sharing consent. Performance-only testing does not need a judge. A free chatbot website account does not imply free API access. Costs remain unavailable unless verified billable usage and pricing are provided.
-
-## Dashboard and scoring
-
-The donut counts Passed, Needs improvement, Not tested and Waiting. Category bars show scores plus scored/planned counts. Response-time charts use recorded requests in seconds and work offline without a chart CDN. Current-attempt charts and retry-inclusive reliability totals are distinguished.
-
-Each category score is the sum of all planned case scores divided by planned cases. Not tested contributes zero. Overall is the equal-weight mean of selected categories. A missing-evidence penalty is not a measured unsafe response. AI rubric scores are estimates; they are not an independent quality certification. Pass threshold is 80. Compare runs use identical cases and swapped/randomized A/B judging; missing pairwise judgments are not ties.
-
-Saved results retain transcripts, reasons, timing, case identifiers and evidence digests. Historical results from the old source-testing platform use different scoring and are labelled separately.
-
-## Architecture
-
-- app/main.py exposes app/blackbox_app.py (FastAPI).
-- app/blackbox: schema, automatic setup, connectors, case catalogue, judge, runner, reports.
-- app/blackbox_static: HTML, CSS, vanilla JavaScript and dependency-free SVG charts.
-- SQLite persists runs and upload metadata under runtime.
-- Runtime also stores ZIPs, reports, logs and archived legacy code.
-
-Key endpoints: GET /api/health; GET /api/blackbox/capabilities; GET /api/blackbox/defaults; POST /api/blackbox/easy-run; POST /api/blackbox/runs; GET /api/blackbox/runs; GET /api/blackbox/runs/{id}; POST stop/resume under that run; GET download?format=json|pdf; POST /api/blackbox/upload.
-
-## Verification
+**Windows:** open PowerShell in this folder:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q
-node --check app/blackbox_static/app.js
-node --check app/blackbox_static/dashboard.js
-node scripts/check-simple-ui.cjs
+powershell -ExecutionPolicy Bypass -File .\run.ps1
 ```
 
-The optional browser regression requires Node Playwright (`npm install --no-save playwright`) or STUDIO_PLAYWRIGHT_MODULE pointing to an installed module, Chrome, and this workspace's saved 150-case Reliance run. STUDIO_BASE_URL and STUDIO_RUN_ID can override its server and record. A fresh clone does not include private run data; use the self-contained pytest suite there. It mocks progress/compare responses in the browser to verify UI behavior; it does not store fabricated benchmark results or call an external judge. Backend tests isolate their database and exercise local protocol fixtures.
+**macOS / Linux:** install Python 3.12+, then:
 
-## Troubleshooting and limitations
+```sh
+chmod +x start.sh
+./start.sh
+```
 
-- Could not connect: start the target, check its exact URL and credentials. A reachable homepage does not prove that chat works.
-- Not tested: open the case reason. Supply references, rules, scope or a working judge as requested; quota failures cannot be repaired by changing a score.
-- ZIP stored but unavailable: use a running link; isolated execution requires a separately implemented runner.
-- Blank or stale page: restart Studio, then refresh the browser. Static responses disable caching.
-- Browser widget detection is deliberately limited to clear chat inputs and assistant outputs; it does not solve login or CAPTCHA.
-- Runs are bounded and sequential; this is not heavy-load stress testing.
-- Framework package presence is not integration proof. DeepEval, DeepTeam, Garak, HHEM and QwenGuard adapters/models are not claimed as executed by the current rubric runner.
-- Keep Studio bound to loopback. This is not a public multi-user production service.
+Open **http://127.0.0.1:2708/**.
 
-Next improvements: verified isolated ZIP workers, more authenticated interface adapters, calibrated independent judging and bot-side telemetry for hidden internal costs. Design decisions and corrections are recorded in DECISIONS.md. Older documentation is archived under runtime/retired-pre-blackbox.
+1. Start your chatbot, then paste its chat page or complete API link.
+2. Check the selected **AI judge**. Open **Change model or API key** only if you want to change it; saved settings are reused.
+3. Set repeats, allow test messages/judge access, then click **Start test**.
+4. Open **Results** for scores, comparison and evidence. **Tokens and cost** keeps bot and judge costs separate. Download PDF or JSON.
+5. Open **Governance** for audit integrity and data controls. Use **Previous tests** to choose another result, or **Refresh history** to reload the list. Your selection stays the same across views.
 
-## Cost ($) tracking
+**Advanced settings** are optional, collapsed controls inside Evaluate. Selecting a saved result keeps your current draft. The interface is English; original test prompts and bot answers retain their original language.
 
-New runs have a **Cost ($)** results tab. Bot cost and Evaluation cost are separate. Old runs show **Unavailable**, because no reliable usage ledger existed when they ran.
+For automatic local fallback, install a model in Ollama and run `ollama serve`. On a failed judge call, Studio can discover installed text models; it never downloads weights. Explicit fallback choices take priority. Judge fallback cannot repair an unavailable chatbot API.
 
-1. Open **Advanced settings > Cost settings**.
-2. For a REST or web bot, map its model using **Chatbot A/B model or alias**. Use the exact name in the pricing catalogue, or add explicit per-million-token overrides. This estimates only visible traffic; hidden internal calls need bot-side telemetry.
-3. Optionally set a maximum run budget, local compute dollars/hour, manual INR/USD rate and qualifying quality-score threshold. Mark a model local only if it actually runs locally without cloud charges.
-4. Save settings. **Update prices from LiteLLM** refreshes prices for future runs; existing runs retain their pinned snapshot.
-5. Start a run and review its estimated cost. Existing target, judge-sharing and speed-test permissions still apply.
-6. Open **Cost ($)** to inspect tokens, model/role/category/case breakdowns, top five cases, retries, failed calls and per-answer/per-conversation costs. Compare mode shows the two target costs separately, with quality-per-dollar and measurement warnings.
+**Not tested contributes 0 to the configured evaluation index.** Its reason and measured coverage are shown separately. An incomplete comparison has no winner. Repeats measure consistency and do not prove broad safety or fairness.
 
-Unknown model pricing or uncertain provider billing displays **Unknown**, never free. A finite budget blocks calls with unknown cost and stops new calls at the estimated allowance. Remaining cases stay **Not tested: budget limit**, with the existing zero contribution. It is not a provider-enforced hard billing cap.
+Unknown usage/prices show **Unknown**, not $0. Hidden bot calls require that bot's own telemetry. Keys entered in password fields stay out of Git and reports. Never put credentials in reference facts or extra request JSON.
 
-Token sources: **reported** = provider usage; **counted** = known tokenizer; **estimated** = unknown/opaque visible text. Counted and estimated costs are not invoices. Local API charges are zero; optional compute cost is a separate estimate. PDF and JSON include the pinned source/date and counts-only ledger. No API keys or prompt/answer text are stored in `usage_events`.
+ZIPs imported through White are scanned as source inside a restricted, networkless Docker sandbox. They are never executed. Start trusted bots yourself and paste their running link for behavioral checks. Missing tools or inputs are recorded as **Not tested**. Docker is optional for normal Black/Gray use.
 
-API: `GET/PUT /api/cost/settings`, `POST /api/cost/prices/update`, `POST /api/cost/estimate`. Mutating requests retain the `X-Studio-Request: 1` header and local-origin protections.
+Read [the detailed simple guide](docs/simple-guide.md) for configuration, recovery and optional Docker. [Previous documentation](docs/legacy-guide.md) and the older interface at `/index.html` remain available for historical runs.
 
-Dependency: `litellm>=1.80,<2`. Standard install command remains `& .\.venv\Scripts\python.exe -m pip install -r requirements.txt`.
+Need to change a key? [API keys and testing-file locations](docs/api-keys.md) explains independent Studio judge accounts and chatbot authentication. Studio does not need another chatbot's .env.
 
-Integration scope: the active HTTP, browser and rubric pathways are metered. Optional DeepEval/DeepTeam/Garak custom-model adapters and local HHEM/guard/embedding hooks are provided in `app/blackbox/cost_adapters.py`, but those engines are not active or installed here. Adapter fixture tests do not establish real framework-internal integration. Any future engine must inject the metered adapter for every model role and add provider-call-count integration tests before activation. See `DECISIONS.md` for provider normalization, pricing and budget limitations.
+[PROGRESS.md](PROGRESS.md) records changes and verification. [HANDOFF.md](HANDOFF.md) describes remaining work.
+
+Bias now includes nine sub-tests under one bar. Open **Governance** to inspect audit integrity, reproduce runs, set retention or delete local results. See [the bias and governance guide](docs/bias-governance.md).

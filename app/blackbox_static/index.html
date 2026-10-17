@@ -1,13 +1,510 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Agent Studio</title><link rel="stylesheet" href="/style.css"></head><body>
-<header><strong>AI Agent Studio</strong><nav><a href="#setup">Test a chatbot</a><a href="#results">Dashboard</a><button id="history">Previous results</button></nav><span id="online">Connecting</span></header>
-<main><div class="intro"><p class="eyebrow">CHATBOT TESTING, MADE SIMPLE</p><h1>Paste a link. See how your bot performs.</h1><p>Automatic connection setup, clear scores, and the actual conversations behind every result.</p></div><div id="notice" role="alert" hidden></div>
-<section id="setup" class="card"><div class="section-head"><h2>Choose your chatbot</h2><label>Test mode<select id="mode"><option value="single">Test one chatbot</option><option value="compare">Compare two chatbots</option></select></label></div><div class="columns" id="targets"></div><p class="help">We detect supported connections automatically. Private bots may need a login or API key in Advanced settings. ZIPs are stored safely; running them requires an isolated runner, which is not available on this machine.</p>
-<div class="quick-options"><label><input id="consent" type="checkbox"> Allow test messages to this chatbot</label><label><input id="judge-consent" type="checkbox"> Use the saved AI judge to evaluate answers <small id="judge-status">Checking saved setup...</small></label><label><input id="performance-consent" type="checkbox"> Include speed and reliability checks</label></div>
-<p class="help">Default checks: <strong>Hallucination, bias, guardrails and prompt injection.</strong> Change the selection in Advanced.</p><div class="actions"><button id="start" class="primary">Start testing</button><span id="planned"></span></div><p class="help">Starting sends test prompts to the chatbot. Enabling the AI judge sends prompts, reference facts and replies to the provider shown above. Missing requirements are explained; no results are invented.</p>
-<details id="advanced"><summary>Advanced settings — optional, only if automatic setup needs help</summary>
-<details id="cost-settings"><summary>Cost settings: prices, model aliases and budget</summary><p class="help">Map each bot to its model to estimate visible-interface cost. Hidden internal calls still require bot telemetry. Rates are USD per 1 million tokens.</p><p id="cost-price-source"></p><button type="button" id="update-prices">Update prices from LiteLLM</button><div class="columns"><label>Chatbot A model or alias<input id="cost-model-0" placeholder="Exact model name in pricing catalogue"></label><label>Chatbot B model or alias<input id="cost-model-1"></label><label><input type="checkbox" id="cost-local-0"> A is a locally hosted model (zero API charges)</label><label><input type="checkbox" id="cost-local-1"> B is a locally hosted model (zero API charges)</label><label>Judge pricing model alias<input id="cost-judge-alias"></label><label><input type="checkbox" id="cost-judge-local"> Judge is a local model (zero API charges)</label><label>Max run budget, USD (optional)<input id="cost-budget" type="number" min="0" step="0.01" placeholder="No budget limit"></label><label>Local compute USD / hour (optional)<input id="cost-compute" type="number" min="0" step="0.01" value="0"></label><label>INR per USD (manual, optional)<input id="cost-inr" type="number" min="0" step="0.01"></label><label>Minimum quality score for cheapest-bot comparison<input id="cost-threshold" type="number" min="0" max="100" value="80"></label><label>Estimated input tokens per call<input id="cost-average-input" type="number" min="0" value="1000"></label><label>Estimated output tokens per call<input id="cost-average-output" type="number" min="0" value="300"></label></div><details><summary>Override a model price</summary><label>Exact pricing model name<input id="price-model"></label><div class="columns"><label>Input USD / 1M tokens<input id="price-input" type="number" min="0" step="any" placeholder="Keep catalogue price"></label><label>Cached input USD / 1M tokens<input id="price-cached_input" type="number" min="0" step="any" placeholder="Keep catalogue price"></label><label>Output USD / 1M tokens<input id="price-output" type="number" min="0" step="any" placeholder="Keep catalogue price"></label><label>Reasoning USD / 1M tokens<input id="price-reasoning" type="number" min="0" step="any" placeholder="Keep catalogue price"></label><label>Cache write (5 min) USD / 1M tokens<input id="price-cache_write" type="number" min="0" step="any" placeholder="Keep catalogue price"></label><label>Cache write (1 hour) USD / 1M tokens<input id="price-cache_write_1h" type="number" min="0" step="any" placeholder="Keep catalogue price"></label></div><p class="help">Blank fields keep existing catalogue rates. Unknown rates are never assumed free.</p></details><button id="save-cost-settings" type="button">Save cost settings</button><p id="cost-settings-message" role="status"></p></details><h3>Connections</h3><div id="connection-settings" class="columns"></div>
-<details><summary>Reference facts and your rules</summary><p class="help">For Reliance, supported API fields and its synthetic product catalogue are detected automatically. For other bots, upload verified facts to measure answer accuracy.</p><div class="columns"><label>Reference cases (JSON)<input type="file" id="references-file" accept=".json,application/json"><textarea id="references" rows="4" placeholder='[{"prompt":"What is the warranty?","reference":{"warranty_months":24}}]'></textarea></label><div><label>Safety rules (optional override)<textarea id="policy" rows="3" placeholder="A generic safety baseline is used unless you supply your own rules."></textarea></label><label>Bot's scope<textarea id="scope" rows="2" placeholder="What this bot is allowed to help with"></textarea></label></div></div></details>
-<details><summary>Choose test categories</summary><p>Core checks are selected. Each category has 30 cases by default; template variations do not guarantee comprehensive coverage.</p><div class="suites" id="categories"></div></details>
-<details><summary>AI judge and run limits</summary><p class="help">Leave judge fields blank to use the saved backend configuration. Keys are never shown in reports.</p><div class="columns"><label>Judge endpoint override<input id="judge-url" placeholder="Uses saved backend setting"></label><label>Judge model override<input id="judge-model" placeholder="Uses saved backend setting"></label><label>Judge API key override<input id="judge-token" type="password" autocomplete="off"></label><label>Cases per category<input id="count" type="number" min="30" max="100" value="30"></label><label>Request timeout (seconds)<input id="timeout" type="number" min="1" max="60" value="30"></label><label>Maximum run duration (minutes)<input id="minutes" type="number" min="1" max="120" value="40"></label></div><p id="capabilities" class="help"></p></details></details></section>
-<section class="card" id="progress-panel" hidden><div class="section-head"><h2>Testing progress</h2><button id="stop">Stop after current case</button></div><p id="stage"></p><progress id="progress" max="100" value="0"></progress><p class="help">You can open any test below while progress updates. Your open test will stay open.</p></section>
-<section id="results" hidden><div class="section-head"><h2>Your results dashboard</h2><div><a id="json" class="button">Download JSON</a> <a id="pdf" class="button">Download PDF</a></div></div><p id="result-context" class="help"></p><p class="help">AI scores are estimates against the configured facts and rules. Not tested contributes zero; it does not prove the bot gave an unsafe answer.</p><div class="result-tabs" role="tablist" aria-label="Result view"><button id="evaluation-tab" role="tab" aria-selected="true" aria-controls="evaluation-panel">Evaluation</button><button id="cost-tab" role="tab" aria-selected="false" aria-controls="cost-panel">Cost ($)</button></div><div id="cost-panel" role="tabpanel" hidden></div><div id="evaluation-panel" role="tabpanel"><div id="preflight" class="card" hidden></div><div id="charts"></div><details><summary>How scores are calculated</summary><p id="formula"></p></details><div id="summaries" class="columns"></div><div id="comparison" class="card" hidden></div><section class="card"><h2>Test cases and conversations</h2><div class="filters"><input id="search" placeholder="Search answers, cases or reasons" aria-label="Search evidence"><select id="filter"><option value="">All categories</option></select></div><div id="cases"></div></section></div></section><section id="history-panel" class="card" hidden></section></main><footer>Single-user local workspace. AI scores are estimates, not a certification. <span id="version">Black-box Studio</span></footer><dialog id="cost-preview"><h2>Estimated run cost</h2><div id="cost-preview-body"></div><div class="actions"><button id="cost-preview-go" class="primary">Start testing</button><button id="cost-preview-cancel">Cancel</button></div></dialog><script src="/costs.js"></script><script src="/dashboard.js"></script><script src="/app.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>AI Agent Studio</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header>
+      <strong>AI Agent Studio</strong>
+      <nav>
+        <a href="#setup">Test a chatbot</a><a href="#results">Dashboard</a
+        ><button id="history">Previous results</button>
+      </nav>
+      <span id="online">Connecting</span>
+    </header>
+    <main>
+      <div class="intro">
+        <p class="eyebrow">CHATBOT TESTING, MADE SIMPLE</p>
+        <h1>Paste a link. See how your bot performs.</h1>
+        <p>
+          Automatic connection setup, clear scores, and the actual conversations behind every
+          result.
+        </p>
+      </div>
+      <div id="notice" role="alert" hidden></div>
+      <section id="setup" class="card">
+        <div class="section-head">
+          <h2>Choose your chatbot</h2>
+          <label
+            >Test mode<select id="mode">
+              <option value="single">Test one chatbot</option>
+              <option value="compare">Compare two chatbots</option>
+              <option value="compare3">Compare three chatbots</option>
+              <option value="compare4">Compare four chatbots</option>
+            </select></label
+          >
+        </div>
+        <div class="columns" id="targets"></div>
+        <p class="help">
+          We detect supported connections automatically. Private bots may need a login or API key in
+          Advanced settings. ZIPs are stored safely; running them requires an isolated runner, which
+          is not available on this machine.
+        </p>
+        <label
+          >Evaluation method<select id="evaluation-method">
+            <option value="combined">Exact checks + AI judge</option>
+            <option value="exact">Exact checks only (no AI judge)</option>
+          </select></label
+        >
+        <p class="help">
+          Exact-only scores cover configured required/forbidden text, canaries and speed. Other
+          cases remain untested; this is not semantic factuality scoring.
+        </p>
+        <div class="quick-options">
+          <label
+            ><input id="ownership" type="checkbox" /> I own these bots/code or have written
+            permission to test them.</label
+          >
+          <label><input id="consent" type="checkbox" /> Allow test messages to this chatbot</label
+          ><label
+            ><input id="judge-consent" type="checkbox" /> Use the saved AI judge to evaluate answers
+            <small id="judge-status">Checking saved setup...</small></label
+          ><label
+            ><input id="performance-consent" type="checkbox" /> Include speed and reliability
+            checks</label
+          >
+        </div>
+        <p class="help">
+          Default checks:
+          <strong>Hallucination, bias, guardrails and prompt injection.</strong> Change the
+          selection in Tests, API provider and recovery below.
+        </p>
+        <div class="actions">
+          <button id="start" class="primary">Start testing</button><span id="planned"></span>
+        </div>
+        <p class="help">
+          Starting sends test prompts to the chatbot. Enabling the AI judge sends prompts, reference
+          facts and replies to the provider shown above. Missing requirements are explained; no
+          results are invented.
+        </p>
+        <details id="advanced">
+          <summary>Advanced settings — optional, only if automatic setup needs help</summary>
+          <details id="cost-settings">
+            <summary>Cost settings: prices, model aliases and budget</summary>
+            <p class="help">
+              Map each bot to its model to estimate visible-interface cost. Hidden internal calls
+              still require bot telemetry. Rates are USD per 1 million tokens.
+            </p>
+            <p id="cost-price-source"></p>
+            <button type="button" id="update-prices">Update prices from LiteLLM</button>
+            <div class="columns">
+              <label
+                >Chatbot A model or alias<input
+                  id="cost-model-0"
+                  placeholder="Exact model name in pricing catalogue" /></label
+              ><label>Chatbot B model or alias<input id="cost-model-1" /></label
+              ><label
+                ><input type="checkbox" id="cost-local-0" /> A is a locally hosted model (zero API
+                charges)</label
+              ><label
+                ><input type="checkbox" id="cost-local-1" /> B is a locally hosted model (zero API
+                charges)</label
+              ><label>Judge pricing model alias<input id="cost-judge-alias" /></label
+              ><label
+                ><input type="checkbox" id="cost-judge-local" /> Judge is a local model (zero API
+                charges)</label
+              ><label
+                >Max run budget, USD (optional)<input
+                  id="cost-budget"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="No budget limit" /></label
+              ><label
+                >Local compute USD / hour (optional)<input
+                  id="cost-compute"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value="0" /></label
+              ><label
+                >INR per USD (manual, optional)<input
+                  id="cost-inr"
+                  type="number"
+                  min="0"
+                  step="0.01" /></label
+              ><label
+                >Minimum quality score for cheapest-bot comparison<input
+                  id="cost-threshold"
+                  type="number"
+                  min="0"
+                  max="100"
+                  value="80" /></label
+              ><label
+                >Estimated input tokens per call<input
+                  id="cost-average-input"
+                  type="number"
+                  min="0"
+                  value="1000" /></label
+              ><label
+                >Estimated output tokens per call<input
+                  id="cost-average-output"
+                  type="number"
+                  min="0"
+                  value="300"
+              /></label>
+            </div>
+            <details>
+              <summary>Override a model price</summary>
+              <label>Exact pricing model name<input id="price-model" /></label>
+              <div class="columns">
+                <label
+                  >Input USD / 1M tokens<input
+                    id="price-input"
+                    type="number"
+                    min="0"
+                    step="any"
+                    placeholder="Keep catalogue price" /></label
+                ><label
+                  >Cached input USD / 1M tokens<input
+                    id="price-cached_input"
+                    type="number"
+                    min="0"
+                    step="any"
+                    placeholder="Keep catalogue price" /></label
+                ><label
+                  >Output USD / 1M tokens<input
+                    id="price-output"
+                    type="number"
+                    min="0"
+                    step="any"
+                    placeholder="Keep catalogue price" /></label
+                ><label
+                  >Reasoning USD / 1M tokens<input
+                    id="price-reasoning"
+                    type="number"
+                    min="0"
+                    step="any"
+                    placeholder="Keep catalogue price" /></label
+                ><label
+                  >Cache write (5 min) USD / 1M tokens<input
+                    id="price-cache_write"
+                    type="number"
+                    min="0"
+                    step="any"
+                    placeholder="Keep catalogue price" /></label
+                ><label
+                  >Cache write (1 hour) USD / 1M tokens<input
+                    id="price-cache_write_1h"
+                    type="number"
+                    min="0"
+                    step="any"
+                    placeholder="Keep catalogue price"
+                /></label>
+              </div>
+              <p class="help">
+                Blank fields keep existing catalogue rates. Unknown rates are never assumed free.
+              </p>
+            </details>
+            <button id="save-cost-settings" type="button">Save cost settings</button>
+            <p id="cost-settings-message" role="status"></p>
+          </details>
+          <h3>Connections</h3>
+          <div id="connection-settings" class="columns"></div>
+          <details>
+            <summary>Reference facts and your rules</summary>
+            <p class="help">
+              For Reliance, supported API fields and its synthetic product catalogue are detected
+              automatically. For other bots, upload verified facts to measure answer accuracy.
+            </p>
+            <div class="columns">
+              <label
+                >Reference cases (JSON)<input
+                  type="file"
+                  id="references-file"
+                  accept=".json,application/json"
+                /><textarea
+                  id="references"
+                  rows="4"
+                  placeholder='[{"prompt":"What is the warranty?","reference":{"warranty_months":24}}]'
+                ></textarea>
+              </label>
+              <div>
+                <label
+                  >Safety rules (optional override)<textarea
+                    id="policy"
+                    rows="3"
+                    placeholder="A generic safety baseline is used unless you supply your own rules."
+                  ></textarea></label
+                ><label
+                  >Bot's scope<textarea
+                    id="scope"
+                    rows="2"
+                    placeholder="What this bot is allowed to help with"
+                  ></textarea>
+                </label>
+              </div>
+            </div>
+          </details>
+          <details>
+            <summary>Import test cases (JSON)</summary>
+            <p>
+              Use category, name, turns, expected, optional reference and parallel fields. Imported
+              cases replace built-ins for their category. Prompts are untrusted test data; review
+              before running.
+            </p>
+            <a href="/api/blackbox/case-set" download="studio-case-set.json"
+              >Download the 46-case starter set</a
+            >
+            |
+            <a href="/api/blackbox/case-set/exact" download="exact-check-examples.json"
+              >Download exact-only examples (synthetic facts)</a
+            ><input id="case-set-file" type="file" accept=".json,application/json" /><button
+              id="case-set-clear"
+              type="button"
+            >
+              Clear imported cases
+            </button>
+            <p id="case-set-status">Using built-in cases.</p>
+          </details>
+          <details>
+            <summary>Choose test categories</summary>
+            <p>
+              Core checks are selected. Core categories use explicit scenarios: 10 hallucination, 12
+              bias, 12 injection and 12 guardrails. No padding; uploaded references or case sets can
+              change these counts.
+            </p>
+            <label
+              ><input type="checkbox" id="template-variations" />Include legacy wording variations
+              for non-core categories (not independent coverage)</label
+            >
+            <div class="suites" id="categories"></div>
+          </details>
+          <details>
+            <summary>Second judge and regression settings</summary>
+            <label
+              ><input id="second-enabled" type="checkbox" />Measure agreement with a second model
+              family</label
+            >
+            <div class="columns">
+              <label
+                >Primary model family<input
+                  id="primary-family"
+                  placeholder="For example: Gemini" /></label
+              ><label
+                >Second model family<input
+                  id="second-family"
+                  placeholder="For example: Qwen" /></label
+              ><label>Second judge model ID<input id="second-model" /></label
+              ><label
+                >Second judge endpoint<input
+                  id="second-url"
+                  value="http://127.0.0.1:1234/v1/chat/completions" /></label
+              ><label
+                >Second judge API key<input
+                  id="second-token"
+                  type="password"
+                  autocomplete="off" /></label
+              ><label
+                >Sample percentage<input
+                  id="second-sample"
+                  type="number"
+                  min="1"
+                  max="100"
+                  value="20" /></label
+              ><label>Second judge price alias<input id="second-alias" /></label
+              ><label><input id="second-local" type="checkbox" />Second judge runs locally</label
+              ><label
+                >Regression alert: drop in percentage points<input
+                  id="regression-threshold"
+                  type="number"
+                  min="0"
+                  max="100"
+                  value="5"
+              /></label>
+            </div>
+            <label
+              ><input id="second-consent" type="checkbox" />Send sampled transcripts and reference
+              facts to this second judge</label
+            >
+            <p class="help">
+              Model families are operator-declared. Agreement on pass/fail at 80 is not proof that
+              either judge is correct. Sampling is repeatable from the run seed. Regression
+              baselines require the same bot name, URL and evaluation protocol.
+            </p>
+          </details>
+          <details>
+            <summary>AI judge and run limits</summary>
+            <p class="help">
+              Leave judge fields blank to use the saved backend configuration. Keys are never shown
+              in reports.
+            </p>
+            <div class="columns">
+              <label
+                >Judge endpoint override<input
+                  id="judge-url"
+                  placeholder="Uses saved backend setting" /></label
+              ><label
+                >Judge model override<input
+                  id="judge-model"
+                  placeholder="Uses saved backend setting" /></label
+              ><label
+                >Judge API key override<input
+                  id="judge-token"
+                  type="password"
+                  autocomplete="off" /></label
+              ><label
+                >Cases in parallel<input
+                  id="case-concurrency"
+                  type="number"
+                  min="1"
+                  max="16"
+                  value="4" /></label
+              ><label
+                >Conversations per target<input
+                  id="target-concurrency"
+                  type="number"
+                  min="1"
+                  max="8"
+                  value="4" /></label
+              ><label
+                >Concurrent judge calls<input
+                  id="judge-concurrency"
+                  type="number"
+                  min="1"
+                  max="8"
+                  value="4" /></label
+              ><label
+                >Gap between target messages (seconds)<input
+                  id="target-pause"
+                  type="number"
+                  min="0.25"
+                  max="60"
+                  step="0.25"
+                  value="0.25" /></label
+              ><label
+                >Gap between judge calls (seconds)<input
+                  id="judge-pause"
+                  type="number"
+                  min="0.25"
+                  max="60"
+                  step="0.25"
+                  value="0.25" /></label
+              ><label
+                >Maximum cases per category<input
+                  id="count"
+                  type="number"
+                  min="1"
+                  max="100"
+                  value="30" /></label
+              ><label
+                >Request timeout (seconds)<input
+                  id="timeout"
+                  type="number"
+                  min="1"
+                  max="120"
+                  value="90" /></label
+              ><label
+                >Maximum run duration (minutes)<input
+                  id="minutes"
+                  type="number"
+                  min="1"
+                  max="720"
+                  value="180"
+              /></label>
+            </div>
+            <p class="help">
+              Quality cases run in parallel. Shared target/judge hosts use the strictest active
+              limit. Speed tests run alone, sequentially, with queue time excluded. Raise gaps or
+              lower concurrency for providers with small quotas. Multiple runs can be managed from
+              Previous results.
+            </p>
+            <p id="capabilities" class="help"></p>
+          </details>
+        </details>
+      </section>
+      <section class="card" id="progress-panel" hidden>
+        <div class="section-head">
+          <h2>Testing progress</h2>
+          <button id="stop">Stop this run</button>
+        </div>
+        <p id="stage"></p>
+        <progress id="progress" max="100" value="0"></progress>
+        <p class="help">
+          You can open any test below while progress updates. Your open test will stay open.
+        </p>
+      </section>
+      <section id="results" hidden>
+        <div class="section-head">
+          <h2>Your results dashboard</h2>
+          <div>
+            <a id="json" class="button">Download JSON</a>
+            <a id="pdf" class="button">Download PDF</a>
+          </div>
+        </div>
+        <p id="result-context" class="help"></p>
+        <p class="help">
+          AI scores are estimates against the configured facts and rules. Not tested has no quality
+          score and reduces coverage only.
+        </p>
+        <div class="result-tabs" role="tablist" aria-label="Result view">
+          <button
+            id="evaluation-tab"
+            role="tab"
+            aria-selected="true"
+            aria-controls="evaluation-panel"
+          >
+            Evaluation</button
+          ><button id="cost-tab" role="tab" aria-selected="false" aria-controls="cost-panel">
+            Cost ($)
+          </button>
+        </div>
+        <div id="cost-panel" role="tabpanel" hidden></div>
+        <div id="evaluation-panel" role="tabpanel">
+          <div id="preflight" class="card" hidden></div>
+          <div id="charts"></div>
+          <details>
+            <summary>How scores are calculated</summary>
+            <p id="formula"></p>
+          </details>
+          <div id="summaries" class="columns"></div>
+          <div id="comparison" class="card" hidden></div>
+          <div id="judge-agreement" class="card"></div>
+          <div id="regressions" class="card"></div>
+          <section class="card">
+            <h2>Test cases and conversations</h2>
+            <div class="filters">
+              <input
+                id="search"
+                placeholder="Search answers, cases or reasons"
+                aria-label="Search evidence"
+              /><select id="filter">
+                <option value="">All categories</option>
+              </select>
+            </div>
+            <div id="cases"></div>
+          </section>
+        </div>
+      </section>
+      <section id="history-panel" class="card" hidden></section>
+    </main>
+    <footer>
+      Single-user local workspace. AI scores are estimates, not a certification.
+      <span id="version">Black-box Studio</span>
+    </footer>
+    <dialog id="cost-preview">
+      <h2>Estimated run cost</h2>
+      <div id="cost-preview-body"></div>
+      <div class="actions">
+        <button id="cost-preview-go" class="primary">Start testing</button
+        ><button id="cost-preview-cancel">Cancel</button>
+      </div>
+    </dialog>
+    <dialog id="readiness-preview">
+      <h2>Check what will run</h2>
+      <div id="readiness-body"></div>
+      <div class="actions">
+        <button id="readiness-go" class="primary">Continue</button
+        ><button id="readiness-cancel">Go back and configure</button>
+      </div>
+    </dialog>
+    <script src="/costs.js"></script>
+    <script src="/dashboard.js"></script>
+    <script src="/comparison.js"></script>
+    <script src="/app.js"></script>
+    <script src="/controls.js"></script>
+  </body>
+</html>

@@ -1,0 +1,26 @@
+rules:
+  - id: untrusted-prompt-concatenation
+    languages: [python]
+    severity: WARNING
+    message: Untrusted input is concatenated into a prompt; verify instruction boundaries.
+    patterns:
+      - pattern-either:
+          - pattern: $PROMPT + request.$FIELD
+          - pattern: $PROMPT + input(...)
+  - id: dynamic-evaluation
+    languages: [python]
+    severity: ERROR
+    message: Dynamic execution requires review of the input source.
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: exec(...)
+  - id: dynamic-javascript-evaluation
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Dynamic evaluation may execute untrusted model output.
+    pattern: eval(...)
+  - id: formatted-sql
+    languages: [python]
+    severity: ERROR
+    message: A formatted SQL string needs parameterization.
+    pattern: $DB.execute(f"...")
