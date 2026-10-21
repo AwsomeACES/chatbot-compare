@@ -1,7 +1,15 @@
 {
-  "protocol_version": "ten-categories-bias-nine-v4",
+  "protocol_version": "ten-categories-bias-nine-v5",
   "default_repeats": 3,
   "tie_margin": 2,
+  "comparison": {
+    "method": "paired-scenario-stratified-v1",
+    "resamples": 2000,
+    "confidence": 0.95,
+    "min_scenarios": 10,
+    "min_scenarios_per_category": 2,
+    "quality_threshold": 80
+  },
   "weights": {
     "hallucination": 1,
     "injection": 1,

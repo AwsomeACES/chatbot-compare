@@ -1,6 +1,6 @@
 # AI Agent Studio
 
-[![Code quality and regression tests](https://github.com/Simali2724/AI-Agent-Testing-Studio/actions/workflows/quality.yml/badge.svg?branch=master)](https://github.com/Simali2724/AI-Agent-Testing-Studio/actions/workflows/quality.yml?query=branch%3Amaster)
+[![Code quality and regression tests](https://github.com/AwsomeACES/chatbot-compare/actions/workflows/quality.yml/badge.svg?branch=hussain-code)](https://github.com/AwsomeACES/chatbot-compare/actions/workflows/quality.yml?query=branch%3Ahussain-code)
 
 Test one chatbot or compare up to four using the same **10 categories**. Each category runs **3 repeats** by default; change the repeat number on screen.
 
@@ -8,7 +8,7 @@ Choose **Black-box testing** for chat behavior, **Gray-box testing** for declara
 
 ## Check the latest code on GitHub
 
-Open **Actions → Code quality and regression tests → Run workflow**, select **master**, then click **Run workflow**. This starts checks for the current code. Use the status badge above to find recent runs.
+Open **Actions → Code quality and regression tests → Run workflow**, select the branch to verify (**hussain-code** for the shared Studio branch), then click **Run workflow**. This starts checks for the current code. Use the status badge above to find recent runs.
 
 **Re-run jobs** inside an older failed run tests that run's original commit and workflow again. It does not pick up later fixes. For example, historical run #3 uses `663d90d`; the dependency-isolation fix was added afterward. Old failed records keep their original result.
 
@@ -40,6 +40,8 @@ Open **http://127.0.0.1:2708/**.
 For automatic local fallback, install a model in Ollama and run `ollama serve`. On a failed judge call, Studio can discover installed text models; it never downloads weights. Explicit fallback choices take priority. Judge fallback cannot repair an unavailable chatbot API.
 
 **Not tested contributes 0 to the configured evaluation index.** Its reason and measured coverage are shown separately. An incomplete comparison has no winner. Repeats measure consistency and do not prove broad safety or fairness.
+
+For decision limits, saved confidence settings and source-review safeguards, read [reliable comparisons](docs/comparison-reliability.md). The short default suite supports screening; a statistical winner requires enough distinct reviewed scenarios, not just more repeats.
 
 Unknown usage/prices show **Unknown**, not $0. Hidden bot calls require that bot's own telemetry. Keys entered in password fields stay out of Git and reports. Never put credentials in reference facts or extra request JSON.
 

@@ -271,6 +271,32 @@ function render(run) {
   }
   $("verdict").innerHTML =
     `<div class="verdict-card"><h3>${studio.winner == null ? (studio.bots.length === 1 ? "Evaluation summary" : "Comparison summary") : "Winner: " + esc(run.targets[studio.winner].name)}</h3><p>${esc(studio.confidence_note)}</p>${studio.warnings.length ? `<p class="unknown">${studio.warnings.map(esc).join(" ")}</p>` : ""}</div><details class="subtle-details"><summary>How to read these scores</summary><p>${esc(studio.formula)}</p><p>Not tested is missing evidence, not a failed answer. It contributes zero to this evaluation index. Measured quality and coverage are shown separately.</p></details>`;
+  if (studio.comparison) {
+    const comparison = studio.comparison;
+    $("verdict").innerHTML +=
+      `<details class="subtle-details"><summary>Comparison evidence and review checks</summary><p>${esc(comparison.method_note)}</p><p>Confidence target across all bot pairs: ${esc(Math.round(100 * comparison.policy.confidence))}%. Saved tie margin: ${esc(comparison.tie_margin)} points. Minimum distinct scenarios: ${esc(comparison.policy.min_scenarios)}, including ${esc(comparison.policy.min_scenarios_per_category)} per category. More repeats cannot replace additional scenarios.</p>` +
+      (comparison.pairs.length
+        ? table(
+            ["Bots", "Paired scenarios", "Score difference", "Adjusted interval", "Decision"],
+            comparison.pairs.map((p) => [
+              `${esc(studio.bots[p.a].name)} vs ${esc(studio.bots[p.b].name)}`,
+              esc(p.scenarios),
+              p.difference == null ? "Not measured" : esc(p.difference),
+              p.low == null ? "Insufficient evidence" : `${esc(p.low)} to ${esc(p.high)}`,
+              esc(p.reason),
+            ]),
+          )
+        : "") +
+      table(
+        ["Bot", "Review checks", "Reason"],
+        comparison.readiness.map((r) => [
+          esc(studio.bots[r.bot].name),
+          r.meets_checks ? "Meets configured checks" : "Review required",
+          esc(r.reasons.join(" ") || "No open review items; all category thresholds met."),
+        ]),
+      ) +
+      "<p>These checks support a human release decision. They do not certify production readiness.</p></details>";
+  }
   if (resultCases.length < settings.cases.length) {
     $("verdict").innerHTML +=
       `<p>This saved run contains ${resultCases.length} checks. New checks are available in <a href="#evaluate" data-view="evaluate">Evaluate</a>. Historical scores are unchanged.</p>`;
@@ -293,11 +319,17 @@ function render(run) {
       ["Category", ...studio.bots.map((b) => b.name), "Result"],
       resultCases.map((item) => {
         const groups = studio.bots.map((b) => b.categories.find((c) => c.id === item.category));
-        const complete = groups.every((g) => g.tested === g.planned);
+        const categoryResult = studio.comparison?.category_results?.[item.category];
+        const complete = groups.every((g) => g.planned > 0 && g.tested === g.planned);
+        const savedMargin = run.protocol_snapshot?.tie_margin;
         const high = Math.max(...groups.map((g) => g.score));
-        const win = groups
-          .map((g, i) => (high - g.score <= settings.tie_margin ? studio.bots[i].name : null))
-          .filter(Boolean);
+        const win = categoryResult
+          ? categoryResult.leaders.map((i) => studio.bots[i].name)
+          : groups
+              .map((g, i) =>
+                savedMargin != null && high - g.score <= savedMargin ? studio.bots[i].name : null,
+              )
+              .filter(Boolean);
         return [
           esc(caseName(item)),
           ...groups.map(
@@ -305,13 +337,15 @@ function render(run) {
               `${g.low_confidence ? '<span class="pill">Low confidence</span> ' : ""}${g.score}% ${bar(g.score, 100)}<small>${g.tested}/${g.planned} scored; measured quality: ${g.quality == null ? "Not measured" : g.quality + "%"}; largest within-case repeat spread: ${g.repeat_spread ?? g.spread ?? "Unknown"} points</small>`,
           ),
           esc(
-            !complete
-              ? "Incomplete evidence"
-              : studio.bots.length === 1
-                ? "Scored"
-                : win.length > 1
-                  ? "Tie"
-                  : win[0],
+            categoryResult && !categoryResult.leaders.length
+              ? categoryResult.reason
+              : !complete
+                ? "Incomplete evidence"
+                : studio.bots.length === 1
+                  ? "Scored"
+                  : win.length > 1
+                    ? "Tie"
+                    : win[0] || "Saved comparison policy unavailable",
           ),
         ];
       }),

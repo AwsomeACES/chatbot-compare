@@ -53,19 +53,22 @@ def test_missing_is_zero_index_separate_from_quality(monkeypatch):
     assert result["categories"][0]["score"] == category_score
 
 
-def test_winner_and_incomplete_evidence(monkeypatch):
+def test_default_suite_does_not_claim_confidence_from_repeats(monkeypatch):
     monkeypatch.setattr("app.blackbox.runner.summarize", lambda run: {})
     cfg = config()
     cfg.targets.append(Target(name="Second", url="http://localhost:8001/chat"))
     run = make_run(cfg)
+    run["status"] = "completed"
     for case in run["cases"]:
         case["results"][0].update(status="passed", score=95)
         case["results"][1].update(status="failed", score=40)
     aggregate(run)
-    assert run["studio"]["winner"] == 0
+    assert run["studio"]["winner"] is None
+    assert "Insufficient distinct scenarios" in run["studio"]["confidence_note"]
     run["cases"][0]["results"][1].update(status="not_tested", score=None)
     aggregate(run)
     assert run["studio"]["winner"] is None
+    assert "missing" in run["studio"]["confidence_note"]
 
 
 def test_judge_fallback_and_agreement(monkeypatch):

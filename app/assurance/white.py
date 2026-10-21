@@ -1,5 +1,6 @@
 """Read-only source checks. Missing tools are findings, never successful scans."""
 
+import ast
 import asyncio
 import re
 import tempfile
@@ -29,6 +30,46 @@ CHECKS = {
 }
 
 
+def _model_assignment(line: str, rule: str) -> bool:
+    """Qualify generic model-name matches; never allowlist provider credential rules."""
+    if rule != "generic-api-key":
+        return False
+    try:
+        statements = ast.parse(line.strip()).body
+    except (SyntaxError, ValueError, RecursionError):
+        return False
+    if len(statements) != 1 or not isinstance(statements[0], (ast.Assign, ast.AnnAssign)):
+        return False
+    statement = statements[0]
+    targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+    if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+        return False
+    name = targets[0].id.lower()
+    value = statement.value
+    if not (name == "model" or name.endswith("_model")):
+        return False
+    if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
+        return False
+    # A structured, lower-case name is only context for review, never proof of safety.
+    # Key prefixes and opaque/random strings still take the normal credential path.
+    literal = value.value
+    return bool(
+        re.fullmatch(r"[a-z][a-z0-9]*(?:[./:_-][a-z0-9]+)+", literal)
+        and not re.match(r"(?:sk-|gh[opusr]_|xox[baprs]-|AIza|AQ\.)", literal, re.I)
+        and (any(character.isdigit() for character in literal) or literal.endswith("-latest"))
+    )
+
+
+def _reported_exact_version(version: object) -> bool:
+    """A scanner version is not proof of installation; placeholders cannot match reliably."""
+    return bool(
+        isinstance(version, str)
+        and not re.fullmatch(r"v?0\.0\.0(?:[+_-].*)?", version)
+        and not re.search(r"(?:^|[.])[xX](?:[.]|$)", version)
+        and re.fullmatch(r"v?\d[0-9A-Za-z.+_-]*", version)
+    )
+
+
 def source_evidence(source: Path, file: str, line: int) -> Evidence:
     relative = file.removeprefix("/source/")
     target = (source / relative).resolve()
@@ -45,28 +86,95 @@ def parse(test: str, output: dict, source: Path, bot: int) -> Finding:
     category, tool = CHECKS[test]
     data = output["data"]
     evidence, hits, control = [], [], None
+    details = {
+        **{k: output[k] for k in ("image_id", "ruleset")},
+        "scanner_completed": True,
+        "interpretation_version": "source-evidence-v1",
+        **(
+            {"database_snapshot": output["database_snapshot"]}
+            if "database_snapshot" in output
+            else {}
+        ),
+    }
+    review_note = ""
 
     def unscored(reason: str) -> Finding:
         finding = missing("white", bot, category, test, reason)
         finding.tool = tool
         finding.tool_version = output["version"]
-        finding.details = {k: output[k] for k in ("image_id", "ruleset")}
-        finding.details["scanner_completed"] = True
+        finding.details = details
+        finding.evidence = evidence
+        finding.consequence = "Available scanner evidence is insufficient to score this check; do not treat it as a pass."
         return finding
 
     if tool == "gitleaks":
         if not isinstance(data, list):
             raise ValueError("Invalid Gitleaks report.")
-        hits = data
-        for hit in hits[:10]:
+        qualified = []
+        originals = []
+        for hit in data:
             item = source_evidence(source, hit["File"], int(hit["StartLine"]))
             # Never persist the secret-containing line, even for an unfamiliar key format.
             path = (source / hit["File"].removeprefix("/source/")).resolve()
-            line = path.read_text(errors="replace").splitlines()[int(hit["StartLine"]) - 1]
+            lines = path.read_text(errors="replace").splitlines()
+            if not 0 < int(hit["StartLine"]) <= len(lines):
+                raise ValueError("Gitleaks returned an invalid source line.")
+            line = lines[int(hit["StartLine"]) - 1]
+            is_model = _model_assignment(line, str(hit.get("RuleID", "")))
             values = re.findall(r"[\"']([^\"']{8,})[\"']", line)
             tail = values[-1][-4:] if values else "unavailable"
-            item.excerpt = "Gitleaks detected a potential credential. Last four characters: " + tail
-            evidence.append(item)
+            item.excerpt = (
+                "Generic credential rule matched a model-name assignment; credential exposure "
+                "is unverified and requires review."
+                if is_model
+                else "Gitleaks detected a potential credential. Last four characters: " + tail
+            )
+            original = {
+                "file": item.file,
+                "line": item.line,
+                "rule_id": str(safe(hit.get("RuleID", "unknown"))),
+                "classification": "model_context_review" if is_model else "potential_credential",
+                "secret": "[REDACTED]",
+                "match": "[REDACTED]",
+                "scanner_metadata": safe(
+                    {
+                        key: hit[key]
+                        for key in (
+                            "RuleID",
+                            "Description",
+                            "File",
+                            "StartLine",
+                            "EndLine",
+                            "StartColumn",
+                            "EndColumn",
+                            "Fingerprint",
+                            "Entropy",
+                            "Tags",
+                        )
+                        if key in hit
+                    }
+                ),
+            }
+            originals.append(original)
+            (qualified if is_model else hits).append(original)
+            if len(evidence) < 10:
+                evidence.append(item)
+        details.update(
+            raw_findings=originals,
+            raw_finding_count=len(data),
+            potential_credentials=len(hits),
+            model_context_matches=len(qualified),
+            raw_retention="Scanner metadata retained; secret and matched source text redacted.",
+        )
+        if qualified:
+            review_note = (
+                f" {len(qualified)} generic matches occur in model-name assignments; they are "
+                "unverified, not confirmed exposed keys. Review their source context."
+            )
+            if not hits:
+                finding = unscored(review_note.strip())
+                finding.fix = "Review the model-name matches; retain real credential alerts."
+                return finding
     elif tool == "semgrep":
         if data.get("errors"):
             raise ValueError(
@@ -93,10 +201,60 @@ def parse(test: str, output: dict, source: Path, bot: int) -> Finding:
                 "Scanner found no supported dependency/container targets; no vulnerability pass inferred.",
             )
         if tool == "osv":
+            unresolved = []
+            raw_advisories = []
+            inspected = 0
             for result in data.get("results", []):
                 for package in result.get("packages", []):
+                    inspected += 1
+                    identity = package.get("package", {})
+                    exact = _reported_exact_version(identity.get("version"))
+                    location = result.get("source", {})
+                    if not exact:
+                        unresolved.append({"package": identity, "source": location})
                     for vuln in package.get("vulnerabilities", []):
-                        hits.append({"id": vuln.get("id"), "package": package.get("package", {})})
+                        advisory = {
+                            "id": vuln.get("id"),
+                            "package": identity,
+                            "source": location,
+                            "scanner_advisory": vuln,
+                            "version_status": "reported_exact" if exact else "unresolved",
+                        }
+                        raw_advisories.append(advisory)
+                        if exact:
+                            hits.append(advisory)
+            details.update(
+                raw_findings=safe(raw_advisories),
+                raw_finding_count=len(raw_advisories),
+                exact_version_advisories=len(hits),
+                unresolved_packages=safe(unresolved),
+                installed_versions_verified=False,
+                raw_retention="Advisory content and package/source metadata retained with privacy redaction.",
+            )
+            evidence = [
+                Evidence(
+                    kind="tool",
+                    excerpt=str(safe({k: v for k, v in h.items() if k != "scanner_advisory"}))[
+                        :4000
+                    ],
+                    source_id=tool,
+                )
+                for h in raw_advisories[:10]
+            ]
+            if not inspected:
+                return unscored(
+                    "Scanner reported no inspected packages; no vulnerability pass inferred."
+                )
+            if unresolved:
+                review_note = (
+                    f" {len(unresolved)} package versions are unresolved or placeholders. "
+                    "Their advisory candidates are not confirmed installed vulnerabilities. "
+                    "Provide a lockfile or resolved dependency inventory and rerun."
+                )
+                if not hits:
+                    finding = unscored(review_note.strip())
+                    finding.fix = "Provide a lockfile or resolved inventory with exact versions."
+                    return finding
         else:
             for result in data.get("Results", []):
                 hits.extend(
@@ -108,9 +266,9 @@ def parse(test: str, output: dict, source: Path, bot: int) -> Finding:
                     for v in result.get("Misconfigurations", [])
                     if v.get("Status") == "FAIL"
                 )
-        evidence = [
-            Evidence(kind="tool", excerpt=str(safe(str(h))), source_id=tool) for h in hits[:10]
-        ]
+            evidence = [
+                Evidence(kind="tool", excerpt=str(safe(str(h))), source_id=tool) for h in hits[:10]
+            ]
     else:
         if not data.get("files"):
             return unscored("No supported source files were inspected.")
@@ -148,6 +306,12 @@ def parse(test: str, output: dict, source: Path, bot: int) -> Finding:
         if hits
         else "No findings in the completed scanner's rules; other risks may remain."
     )
+    if tool == "osv" and hits:
+        reason = (
+            f"{len(hits)} advisories match scanner-reported exact dependency versions. "
+            "Source scanning does not verify versions deployed in a running system."
+        )
+    reason += review_note
     return Finding(
         mode="white",
         bot=bot,
@@ -164,15 +328,8 @@ def parse(test: str, output: dict, source: Path, bot: int) -> Finding:
         fix="Review the cited lines, apply least privilege and test the behavior after correction.",
         tool=tool,
         tool_version=output["version"],
-        details={
-            **{k: output[k] for k in ("image_id", "ruleset")},
-            "scanner_completed": True,
-            **(
-                {"database_snapshot": output["database_snapshot"]}
-                if "database_snapshot" in output
-                else {}
-            ),
-        },
+        details=details,
+        review=bool(review_note),
     )
 
 

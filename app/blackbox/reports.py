@@ -44,6 +44,39 @@ def generate_pdf(run):
         )
         paragraph(run["studio"]["formula"])
         paragraph(run["studio"]["confidence_note"])
+        comparison = run["studio"].get("comparison")
+        if comparison:
+            paragraph("Comparison evidence and review checks", "Heading2")
+            paragraph(comparison["method_note"])
+            paragraph(
+                f"Saved tie margin: {comparison['tie_margin']} points; "
+                f"family-wise confidence target: {comparison['policy']['confidence']:.0%}. "
+                "Intervals are conditional on the authored suite."
+            )
+            for pair in comparison["pairs"]:
+                paragraph(
+                    f"{run['targets'][pair['a']]['name']} vs {run['targets'][pair['b']]['name']}: "
+                    f"{pair['scenarios']} paired scenarios; difference {pair['difference']}; "
+                    + (
+                        f"interval {pair['low']} to {pair['high']} points. "
+                        if pair["low"] is not None
+                        else "Interval unavailable. "
+                    )
+                    + pair["reason"]
+                )
+            for check in comparison["readiness"]:
+                paragraph(
+                    run["targets"][check["bot"]]["name"]
+                    + (
+                        ": Meets configured checks. "
+                        if check["meets_checks"]
+                        else ": Review required. "
+                    )
+                    + " ".join(check["reasons"])
+                )
+            paragraph(
+                "These checks support human review; they do not certify production readiness."
+            )
         for bot in run["studio"]["bots"]:
             paragraph(
                 f"{bot['name']}: {bot['score']}%; {bot['tested']}/{bot['planned']} scored",
@@ -183,15 +216,16 @@ def generate_pdf(run):
             for turn in r["transcript"]:
                 paragraph("Customer: " + turn["input"])
                 paragraph("Bot: " + str(turn.get("output") or turn.get("error")))
-    if run.get("comparison"):
+    legacy_comparison = run.get("comparison", {}) if not run.get("studio") else {}
+    if legacy_comparison:
         paragraph(
             "Comparison: "
-            + str(run["comparison"].get("winner") or "No overall winner")
+            + str(legacy_comparison.get("winner") or "No overall winner")
             + ". "
-            + run["comparison"]["reason"],
+            + legacy_comparison["reason"],
             "Heading2",
         )
-    for pair in run.get("comparison", {}).get("pairs", []):
+    for pair in legacy_comparison.get("pairs", []):
         paragraph(
             f"Bots {'ABCD'[pair['a']]} vs {'ABCD'[pair['b']]}: "
             + pair["verdict"]

@@ -31,6 +31,14 @@ def get_run(ident: uuid.UUID) -> dict:
     return run
 
 
+def require_integrity(run: dict) -> None:
+    """Reject edits that would re-seal altered or unverified saved evidence."""
+    if service.integrity(run).get("valid") is not True:
+        raise HTTPException(
+            409, "Audit or finding integrity failed; this record cannot be modified."
+        )
+
+
 @router.get("/capabilities")
 def capabilities():
     from .gray import CHECKS
@@ -146,7 +154,11 @@ def list_runs():
 def status(ident: uuid.UUID):
     run = get_run(ident)
     # A process crash leaves durable evidence; the UI must offer explicit resume.
-    if run["status"] in ("running", "queued") and str(ident) not in service.TASKS:
+    if (
+        run["status"] in ("running", "queued")
+        and str(ident) not in service.TASKS
+        and service.integrity(run).get("valid") is True
+    ):
         run["status"] = "interrupted"
         governance.append(
             run,
@@ -199,6 +211,9 @@ async def update_judges(ident: uuid.UUID, value: JudgesUpdate):
         raise HTTPException(409, "This assessment is inactive; use Resume.")
     if not value.consent or not any(not j.fallback for j in value.judges):
         raise HTTPException(422, "Choose a primary judge and confirm transcript sharing.")
+    require_integrity(get_run(ident))
+    run = LIVE_RUNS[str(ident)]
+    require_integrity(run)
     cfg._used_secrets.extend(j.token.get_secret_value() for j in cfg.judges if j.token)
     cfg.judges = value.judges
     first = next(j for j in cfg.judges if not j.fallback)
@@ -208,7 +223,6 @@ async def update_judges(ident: uuid.UUID, value: JudgesUpdate):
         first.token,
     )
     cfg.judge_local_model = first.local
-    run = LIVE_RUNS[str(ident)]
     run["config"]["judges"] = [j.model_dump(exclude={"token"}) for j in cfg.judges]
     governance.append(
         run,
@@ -289,6 +303,7 @@ def canary_logs(ident: uuid.UUID, value: CanaryLogs):
     from .gray import log_finding
 
     run = get_run(ident)
+    require_integrity(run)
     if str(ident) in service.TASKS:
         raise HTTPException(
             409, "Wait for the synthetic canary chat to finish before adding its logs."
@@ -338,6 +353,7 @@ def canary_logs(ident: uuid.UUID, value: CanaryLogs):
 @router.post("/runs/{ident}/review")
 def review(ident: uuid.UUID, value: Review):
     run = get_run(ident)
+    require_integrity(run)
     if str(ident) in service.TASKS:
         raise HTTPException(409, "Stop the assessment before reviewing findings.")
     if not value.reason.strip() or len(value.reason.strip()) < 10:
@@ -391,6 +407,7 @@ class Retention(BaseModel):
 @router.put("/runs/{ident}/retention")
 def retention(ident: uuid.UUID, value: Retention):
     run = get_run(ident)
+    require_integrity(run)
     governance.append(
         run,
         "retention_changed",

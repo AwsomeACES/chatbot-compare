@@ -280,3 +280,7 @@ Planned: measure contrast against an agreed accessibility standard, audit keyboa
 ## Design gaps
 
 Track changes through [tasks](tasks.md), with [Rules](Rules.md) for verification. Priorities are a unified readiness panel, consistent status/error copy, an accessible review form, and parity of optional AI explanations across exports. Dark mode and any language toggle are separate Planned work, not prerequisites for an honest result. This document does not authorize interface changes or replace the English-only preference.
+
+## Comparison evidence and review checks
+
+Results includes a collapsed **Comparison evidence and review checks** section. It shows the saved tie margin and minimum distinct-scenario policy, a table of bot pairs with differences and adjusted intervals, and per-bot review reasons. **Meets configured checks** is explicitly not production certification. Category leaders use the backend saved-policy decision, with a saved-margin fallback for older reports; absent policy is labeled unavailable rather than guessed from current settings. PDF exports include the same evidence and readiness checks. See [comparison reliability](comparison-reliability.md).

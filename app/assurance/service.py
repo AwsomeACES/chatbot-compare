@@ -382,6 +382,9 @@ def expire() -> None:
     for run in db.all_records("assurance"):
         if run["id"] in TASKS or run.get("uploads_deleted"):
             continue
+        # Preserve a corrupted record for inspection; explicit deletion remains available.
+        if integrity(run).get("valid") is not True:
+            continue
         if run.get("upload_expires_at", float("inf")) <= time.time():
             release_inputs(run)
             governance.append(run, "private_inputs_deleted", policy="Retention expired")

@@ -73,15 +73,16 @@ def combine(findings: list[Finding], modes: list[str]) -> dict:
     failing = [f for f in findings if f.verdict == "fail"]
     missing = [f for f in findings if f.verdict == "not_tested"]
     incomplete = bool(missing) or not findings or any(f.verdict == "exists" for f in findings)
+    pending_review = any(f.review for f in findings)
     if critical:
         verdict, reason = (
             "Do not launch",
             "A critical finding needs remediation and human review before release.",
         )
-    elif failing or incomplete or any(f.confidence == "Low" for f in findings):
+    elif failing or incomplete or pending_review or any(f.confidence == "Low" for f in findings):
         verdict, reason = (
             "Fix before launch",
-            "Failures, missing evidence or low-confidence estimates need review before release.",
+            "Failures, missing evidence, open reviews or low-confidence estimates need review before release.",
         )
     else:
         verdict, reason = (

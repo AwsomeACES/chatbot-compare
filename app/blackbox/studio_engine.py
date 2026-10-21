@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import random
 import statistics
 
 from ..config import ROOT
@@ -266,16 +265,14 @@ def summarize(run: dict) -> None:
     """Missing evidence is zero in the requested index, with quality shown separately."""
     protocol = run.get("protocol_snapshot") or settings_file()
     from .bias import breakdown, derive_algorithmic
+    from .comparison_quality import assess
+    from .comparison_quality import measured as is_measured
 
     derive_algorithmic(run)
     weights = run["config"].get("category_weights") or protocol["weights"]
     for case in run["cases"]:
         for result in case["results"]:
-            result["index_contribution"] = (
-                result["score"]
-                if result.get("status") in ("passed", "failed") and result.get("score") is not None
-                else 0
-            )
+            result["index_contribution"] = result["score"] if is_measured(result) else 0
     bot_summaries = []
     for slot, bot in enumerate(run["targets"]):
         groups = []
@@ -286,22 +283,28 @@ def summarize(run: dict) -> None:
                 for c in run["cases"]
                 if c["category"] == key and not c.get("derived")
             ]
-            measured = [
-                r["score"]
-                for r in rows
-                if r.get("status") in ("passed", "failed") and r.get("score") is not None
-            ]
+            measured = [r["score"] for r in rows if is_measured(r)]
             scenario_means = []
-            scenario_count = len({c["base_case_id"] for c in run["cases"] if c["category"] == key})
+            scenario_count = len(
+                {
+                    c["base_case_id"]
+                    for c in run["cases"]
+                    if c["category"] == key and not c.get("derived")
+                }
+            )
             for base_id in dict.fromkeys(
-                c["base_case_id"] for c in run["cases"] if c["category"] == key
+                c["base_case_id"]
+                for c in run["cases"]
+                if c["category"] == key and not c.get("derived")
             ):
-                repeats = [c["results"][slot] for c in run["cases"] if c["base_case_id"] == base_id]
-                scores = [
-                    r["score"]
-                    for r in repeats
-                    if r.get("status") in ("passed", "failed") and r.get("score") is not None
+                repeats = [
+                    c["results"][slot]
+                    for c in run["cases"]
+                    if c["category"] == key
+                    and c["base_case_id"] == base_id
+                    and not c.get("derived")
                 ]
+                scores = [r["score"] for r in repeats if is_measured(r)]
                 scenario_means.append(
                     {
                         "base_case_id": base_id,
@@ -343,67 +346,12 @@ def summarize(run: dict) -> None:
                 "planned": sum(g["planned"] for g in groups),
             }
         )
-    winner = None
-    note = "Single bot evaluation."
-    if len(bot_summaries) > 1:
-        ordered = sorted(
-            range(len(bot_summaries)), key=lambda i: bot_summaries[i]["score"], reverse=True
-        )
-        a, b = ordered[:2]
-        mixed_panels = any(
-            len(
-                {
-                    tuple(sorted(j.get("model", "") for j in r.get("judges", [])))
-                    for r in case["results"]
-                }
-            )
-            > 1
-            for case in run["cases"]
-        )
-        if mixed_panels:
-            note = "Judge assignments differ between bots on paired cases; no winner until they are judged by a common panel."
-        elif any(s["tested"] < s["planned"] for s in bot_summaries):
-            note = "Incomplete evidence: winner withheld. Missing evidence contributes zero to the index."
-        elif abs(bot_summaries[a]["score"] - bot_summaries[b]["score"]) <= protocol["tie_margin"]:
-            note = "Tie: scores are within the configured margin."
-        else:
-            # Cluster resampling: repetitions of one scenario are not independent coverage.
-            rng = random.Random(run["config"].get("seed", 42))
-            ranges = []
-            count = len(bot_summaries) - 1
-            for opponent in ordered[1:]:
-                differences = [
-                    (x["score"] - y["score"], weights.get(x["id"], 1))
-                    for x, y in zip(
-                        bot_summaries[a]["categories"], bot_summaries[opponent]["categories"]
-                    )
-                ]
-                draws = []
-                for _ in range(2000):
-                    sample = rng.choices(differences, k=len(differences))
-                    draws.append(sum(d * w for d, w in sample) / sum(w for _, w in sample))
-                draws.sort()
-                tail = 0.025 / count
-                ranges.append(
-                    {
-                        "opponent": bot_summaries[opponent]["name"],
-                        "low": round(draws[int(tail * len(draws))], 2),
-                        "high": round(draws[min(len(draws) - 1, int((1 - tail) * len(draws)))], 2),
-                    }
-                )
-            note = (
-                "95% family-wise scenario-cluster bootstrap intervals: "
-                + "; ".join(f"vs {r['opponent']}: {r['low']} to {r['high']} points" for r in ranges)
-                + ". Scenarios give limited coverage; repeats are not independent evidence."
-            )
-            if all(r["low"] > 0 for r in ranges):
-                winner = a
-            else:
-                note = "Too close to call. " + note
+    comparison = assess(run, bot_summaries, protocol, weights)
     run["studio"] = {
         "bots": bot_summaries,
-        "winner": winner,
-        "confidence_note": note,
+        "winner": comparison["winner"],
+        "confidence_note": comparison["confidence_note"],
+        "comparison": comparison,
         "formula": f"Weighted mean of {len(protocol['cases'])} category scores across distinct cases and planned repeats. Not tested contributes 0; quality and coverage are shown separately.",
         "agreement_cases": sum(
             c["results"][i].get("agreement") is not None

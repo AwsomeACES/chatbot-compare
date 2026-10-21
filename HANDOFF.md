@@ -1,3 +1,23 @@
+## 2026-10-21 — Industry reliability upgrade (current task)
+
+Verified worktree: C:/Users/Moinuddeen hussain/Documents/ChatGPT/Moinuddeen_airm/studio-publish. Branch: codex/industry-reliability, based on published hussain-code commit 6a2c893. The user reconnected D: on 2026-10-21; D:/AI-Agent-Testing-Studio was clean at 79284a1, and all 23 upgrade files were synchronized and byte-verified there on a new codex/industry-reliability branch. Local configuration, dependencies, runtime history and remotes were preserved. No paid bot evaluations or source uploads are needed.
+
+Implemented and verified; saved as a scoped local commit:
+
+- app/blackbox/comparison_quality.py: paired scenario means, fixed category strata, all-pair Bonferroni adjustment, configurable minimum distinct scenarios, saved tie margin, finite-score validation and review gates. Repeats are not independent samples. Default short suite lacks two independent scenarios in several categories, so it intentionally withholds inferential winners.
+- app/blackbox/studio_engine.py and app/studio/settings.json: comparison integration and protocol v5; derived scenarios excluded from independent sample counts.
+- app/blackbox_static/simple.js and app/blackbox/reports.py: same comparison evidence and review checks in dashboard/PDF; category ties use saved settings; PDF does not print an unrelated legacy winner.
+- app/assurance/white.py: qualify generic model-identifier matches and unresolved OSV versions; retain redacted metadata; no false pass, no uploaded code execution.
+- app/assurance/routes.py, service.py, combine.py: verify existing seals before updates, avoid re-sealing corrupt history during recovery/expiry, and block release-ready labels on open reviews. Corrupt records remain explicitly deletable; automatic retention skips them.
+- New regression files: tests/test_comparison_quality.py, test_comparison_ui.py, test_source_evidence_quality.py, test_assurance_integrity_guards.py. Existing test_simple_studio.py now correctly expects insufficient scenarios in the default suite.
+- docs/comparison-reliability.md documents method/limits. PRD, Architecture, tasks and README reflect the changes; T-011/T-012/T-016 updated.
+
+Final verification: full suite 339 passed, 1 skipped in 112.97 seconds (Windows symlink privilege skip); the existing fixed performance check passed. The 27 focused comparison/report/browser tests and 11 navigation tests passed. Ruff lint and 95-file formatting check, Prettier, 25-file JavaScript syntax, documentation/link checks, pip check and git diff checks passed. Browser setup initially failed because Chromium was missing; installed Chromium and all browser checks then passed. No live provider calls were used.
+
+Environment repair: isolated .venv Python launcher initially exited silently; base Python `-m venv --upgrade .venv` repaired it. Default shell points to missing PowerShell 7; tool commands must specify C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe with login=false. Sandbox loopback socket creation stalls asyncio/TestClient; run tests with require_escalated, not altered product networking. Dependencies installed in this C: checkout, no broken requirements reported.
+
+Next work: this reliability phase is complete and synchronized to D:. Do not repeat completed checks without new changes. Earlier D: hardware failures mean C: remains the verified fallback checkout. Source synchronization does not prove that an already running Studio server has reloaded it. Current user request is improve/continue, not a new explicit push; no GitHub publication was performed for this phase. C: origin is AwsomeACES/chatbot-compare (shared destination hussain-code), while D: origin remains Simali2724/AI-Agent-Testing-Studio; do not push to the wrong repository. No secrets/runtime archives belong in commits. Preserve unrelated branch-only files. Remaining enterprise work: shared-host authentication/authorization, locked dependencies, native platform qualification, human-labeled judge validation, broader representative cases and stronger external audit anchoring.
+
 # AI Agent Studio — current handoff (2026-10-16)
 
 This checkpoint replaces the old accumulated handoff. Historical implementation notes remain in PROGRESS.md and Git. Do not resume old evaluation runs: the user explicitly requested deleting all previous history, and that cleanup is complete.
