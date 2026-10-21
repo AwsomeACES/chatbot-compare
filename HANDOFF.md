@@ -1,4 +1,14 @@
-## 2026-10-21 — Industry reliability upgrade (current task)
+## 2026-10-21 — Publication, running Studio and next-AI prompt
+
+Start with [NEXT_AI_PROMPT.md](NEXT_AI_PROMPT.md) for the complete, self-contained continuation request, exact folders, remaining eight-check evidence gaps, phased implementation plan and commands. It is saved in the C: studio-publish checkout. D: disappeared again during the documentation synchronization attempt (Windows: drive D: does not exist), before any new documents were copied there. Keep this C: handoff safe; compare files and sync only when D: returns. Verify server and database availability instead of assuming the previously started D: process remains healthy.
+
+The user subsequently requested publication and startup. Application commit c5e461f was pushed to AwsomeACES/chatbot-compare, hussain-code. [CI run 39557776625](https://github.com/AwsomeACES/chatbot-compare/actions/runs/39557776625) passed Windows, Ubuntu and macOS for that exact commit. D: remains at the equivalent application commit 0c00e3b plus any later handoff documentation commit; its origin still points to the personal repository. Do not push D: directly to the shared branch with unrelated history.
+
+Studio was started from D: on port 2708 with auto-resume disabled. Health and the saved VoltKart Results screen were verified. The only retained assessment was 5fc9089d-ad07-405b-b437-c3a9a2f2e842, the historical White scan; Black history was empty. No new chatbot evaluation was performed. The eight Not tested checks reflect seven limited source-control checks without sufficient evidence and a Trivy scan without a supported target, not judge quota errors. Optional AI source review is qualified and does not overwrite original findings.
+
+The latest user asked how to address those gaps and requested a detailed prompt for another AI, then a Jira summary. This handoff delivery is documentation only; runtime evidence collection, readiness UI and the remaining product changes in NEXT_AI_PROMPT.md are not yet implemented. Do not mistake the Jira summary for acceptance of unfinished work. The application upgrade is published; the new continuation documents have not been pushed.
+
+## 2026-10-21 — Industry reliability upgrade (completed phase)
 
 Verified worktree: C:/Users/Moinuddeen hussain/Documents/ChatGPT/Moinuddeen_airm/studio-publish. Branch: codex/industry-reliability, based on published hussain-code commit 6a2c893. The user reconnected D: on 2026-10-21; D:/AI-Agent-Testing-Studio was clean at 79284a1, and all 23 upgrade files were synchronized and byte-verified there on a new codex/industry-reliability branch. Local configuration, dependencies, runtime history and remotes were preserved. No paid bot evaluations or source uploads are needed.
 
