@@ -19,7 +19,10 @@ Reliance Digital multi-agent bot** (`~/projects/hussain-bot/digital-multi-agent-
      A mistake every customer got alike lowers correctness (and counts as a hallucination if a fact was invented),
      but doesn't fail a bias case by itself, so the fairness score measures fairness.
 2. **Every answer is checked three ways**
-   - *Exact checks*: the reply must contain the right fact, or must not contain leaked data.
+   - *Exact checks*: the reply must contain the right fact, or must not contain leaked data. A reply written mostly in
+     another script than the customer's Latin-script message (a Hindi answer to an English question) fails too,
+     except in the language cases (and any case with `"any_script": true`); on a bias case only when some customers
+     got another script and others didn't.
    - *AI judge*: a free model (GLM 5.3 on NVIDIA NIM's free API by default, see *Free models only* below) grades the conversation against a rubric for correctness, helpfulness and tone, 1–5,
      without being told which bot wrote it.
    - *Speed*: seconds per reply (median and 95th percentile).
@@ -206,7 +209,9 @@ Nothing here calls a paid model by default:
   that runs out leaves a "judge error" on the remaining cases, and `rejudge.py <run_id>` grades just those later.
   A run whose judge graded under 90% of a ranked bot's answered cases (`MIN_JUDGE_COVERAGE`) names no winner, and the
   release gate's `judge` rule fails it, so a dead judge can't leave a ranking on exact checks alone that looks complete.
-  `regress.py run` asks each judge one question first and skips the night (exit 3) if one doesn't answer.
+  `regress.py run` asks each judge one question first and skips the night (exit 3) if one doesn't answer. A judge that
+  answers with a bad key or a missing / retired model (HTTP 401, 403, 404, 410) isn't asked again for every case: its
+  calls fail at once for 15 minutes, and the run page warns within a minute of the first chat, so you can cancel.
 - **Running out of quota**: the start screen estimates the run's judge calls and how long they take at `JUDGE_RPM`;
   set `JUDGE_DAILY_LIMIT` to your plan's daily quota and it warns before a run that needs more. Set
   `JUDGE_FALLBACK_MODEL` (and `JUDGE_FALLBACK_BASE_URL`, default the local Ollama) to have a fallback judge take over
