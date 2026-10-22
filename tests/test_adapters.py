@@ -215,10 +215,13 @@ def test_supportflow_logs_in_again_when_the_token_expires(http, fresh_supportflo
 
 def test_supportflow_without_escalate_closes_chats_in_its_db(http, fresh_supportflow, tmp_path):
     import sqlite3
-    db = tmp_path / "support.db"
+    db = tmp_path / "support-test.db"
     with sqlite3.connect(db) as c:
-        c.execute("CREATE TABLE conversations (id INTEGER PRIMARY KEY, status TEXT, closed_at TEXT)")
-        c.executemany("INSERT INTO conversations (id, status) VALUES (?, 'AI_ACTIVE')", [(7,), (8,)])
+        c.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)")
+        c.executemany("INSERT INTO users (id, email) VALUES (?, ?)", [(1, SUPPORTFLOW["email"]), (2, "real@x.com")])
+        c.execute("CREATE TABLE conversations (id INTEGER PRIMARY KEY, customer_id INTEGER, status TEXT, closed_at TEXT)")
+        c.executemany("INSERT INTO conversations (id, customer_id, status) VALUES (?, ?, 'AI_ACTIVE')",
+                      [(7, 1), (8, 1), (9, 2)])
     calls, queue = http
     queue += [FakeResponse(data={"token": "jwt"}),
               FakeResponse(data=[{"id": 7, "status": "AI_ACTIVE"}]),           # old open chat: closed in the DB
@@ -230,7 +233,24 @@ def test_supportflow_without_escalate_closes_chats_in_its_db(http, fresh_support
     assert reply.trace == {"route": "ORDER_STATUS"}  # no hand-off in this version, so no "escalated" to check
     assert not [c for c in calls if c["url"].endswith("/escalate")]
     with sqlite3.connect(db) as c:
-        assert c.execute("SELECT id, status FROM conversations").fetchall() == [(7, "CLOSED"), (8, "CLOSED")]
+        assert c.execute("SELECT id, status FROM conversations").fetchall() == [(7, "CLOSED"), (8, "CLOSED"),
+                                                                                (9, "AI_ACTIVE")]
+
+
+def test_supportflow_only_writes_to_a_test_database(http, fresh_supportflow, tmp_path):
+    conv = open_conversation({**SUPPORTFLOW, "db_path": str(tmp_path / "production.db"), "handoff": False})
+    with pytest.raises(BotError, match="test database"):
+        conv._retire(8)
+
+
+def test_supportflow_password_can_come_from_the_environment(http, fresh_supportflow, monkeypatch):
+    calls, queue = http
+    adapters.SupportFlowConversation._cleaned.add(("http://sf", SUPPORTFLOW["email"]))
+    monkeypatch.setenv("BOT_SF_PASSWORD", "from-env")
+    cfg = {k: v for k, v in SUPPORTFLOW.items() if k != "password"} | {"password_env": "BOT_SF_PASSWORD"}
+    queue += [FakeResponse(data={"token": "jwt"}), FakeResponse(data={"conversation_id": 1, "reply": "hi"})]
+    open_conversation(cfg).send("hi")
+    assert calls[0]["json"]["password"] == "from-env"
 
 
 def test_supportflow_offline_fallback_counts_as_blocked(http, fresh_supportflow):

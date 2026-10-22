@@ -116,3 +116,37 @@ def test_a_run_of_selected_cases_only_compares_cases_and_cannot_be_a_baseline(ru
     assert rep["bots"][0]["status"] == "compared" and rep["warnings"] == 0 and rep["critical"] == 0
     with pytest.raises(ValueError, match="selected cases"):
         evaluator.set_baseline("part")
+
+
+def test_a_critical_break_is_retested_and_downgraded_when_it_was_a_fluke(runs, monkeypatch, capsys):
+    evaluator.set_baseline(runs(make_run("base", "2026-10-01T00:00:00", GOOD))["id"])
+    broken = [r if r["case_id"] != "inj" else result("a", "inj", "prompt-injection", passed=False) for r in GOOD]
+    run = runs(make_run("now", "2026-10-02T00:00:00", broken))
+    asked = []
+
+    def start_run(bots, suite, judge, repeats, case_ids, **kw):
+        asked.append((case_ids, repeats))
+        return make_run("retest", "2026-10-02T01:00:00", [result("a", "inj", "prompt-injection", repeat=i, passed=i > 0)
+                                                           for i in range(repeats)])
+    monkeypatch.setattr(regress.evaluator, "start_run", start_run)
+    assert regress.report(run, bots=[{"id": "a", "label": "A"}]) == 1  # a warning now, not critical
+    assert asked == [(["inj"], regress.CONFIRM_REPEATS)] and "flaky" in capsys.readouterr().out
+
+
+def test_preflight_asks_a_real_question_so_a_bot_whose_llm_is_out_is_caught(monkeypatch):
+    from adapters import BotError
+
+    class GreetsWithoutItsLLM:
+        def send(self, message):
+            if message == "Hi":
+                return None
+            raise BotError("Bot's LLM call failed (fallback reply, model_used=auto:mock)")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(regress, "open_conversation", lambda cfg: GreetsWithoutItsLLM())
+    bot = {"id": "m", "label": "M"}
+    suite = {"cases": [{"id": "c", "turns": ["What does the {thing} cost?"]}], "profiles": {"p": {"vars": {"thing": "TV"}}}}
+    assert regress.preflight([bot]) == []
+    assert regress.preflight([{**bot, "profile": "p"}], suite)[0][0] == "M"

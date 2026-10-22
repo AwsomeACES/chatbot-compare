@@ -54,8 +54,9 @@
           <label class="check"><input type="checkbox" id="judgeToggle" checked><span>Use the AI judge (<span id="judgeName">a free model</span> grades each answer blind)</span></label>
           <label class="check indent"><input type="checkbox" id="compareToggle" checked>
             Comparative judge: after the run, rank the bots' answers to each case side by side</label>
-          <label class="check indent"><input type="checkbox" id="secondJudgeToggle"><span>Second judge from another model family re-grades a sample (checks the main judge for bias; feeds the review queue) <span class="muted small" id="secondJudgeName"></span></span></label>
+          <label class="check indent"><input type="checkbox" id="secondJudgeToggle" checked><span>Second judge from another model family re-grades every conversation; where the two disagree, neither decides the case (guards against a judge favouring bots on its own model family) <span class="muted small" id="secondJudgeName"></span></span></label>
           <label class="check"><input type="checkbox" id="rewordToggle"><span>Reworded attacks: also ask each injection and bias case in its saved rewordings <span class="muted small" id="rewordInfo"></span></span></label>
+          <label class="check"><input type="checkbox" id="timingToggle" checked><span>Timing pass: after the chats, time a few replies from each bot on its own, one at a time, for a speed score not skewed by the run's own load</span></label>
           <label class="inline">Repeat every case
             <select id="repeatSelect"><option value="1">once</option><option value="2">2 times</option><option value="3">3 times</option><option value="5">5 times</option></select>
           </label>
@@ -76,7 +77,7 @@
         <label class="field">URL <input type="text" id="qbUrl" placeholder="http://localhost:5000/api/chat"></label>
         <div class="grid-2 tight">
           <label class="field">Model <span class="muted small">(OpenAI-style APIs; optional)</span> <input type="text" id="qbModel"></label>
-          <label class="field">API key variable in .env <span class="muted small">(optional)</span> <input type="text" id="qbKey" placeholder="MY_BOT_API_KEY"></label>
+          <label class="field">API key variable in .env <span class="muted small">(optional)</span> <input type="text" id="qbKey" placeholder="BOT_MYBOT_API_KEY"></label>
         </div>
         <label class="check" id="qbSendRow" hidden><input type="checkbox" id="qbSend"><span>This URL is not on this machine: allow sending it one test message</span></label>
         <div class="start-row"><button class="primary" id="qbDetect" type="button">Detect</button><span id="qbStatus" class="muted small"></span></div>

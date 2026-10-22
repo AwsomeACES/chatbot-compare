@@ -88,9 +88,10 @@ function botRow(b, checked, name) {
   const out = label.querySelector(".ping-result");
   label.querySelector(".ping").onclick = async (e) => {
     e.preventDefault();
+    if (b.remote && !confirm(`${b.label} is not on this machine. Send it a test message (“Hi”)?`)) return;
     out.hidden = false; out.textContent = "Sending “Hi”…";
     try {
-      const r = await api(`/api/bots/${encodeURIComponent(b.id)}/ping`, { method: "POST" });
+      const r = await api(`/api/bots/${encodeURIComponent(b.id)}/ping`, { method: "POST", body: JSON.stringify({ consent: !!b.remote }) });
       out.innerHTML = r.ok
         ? `<span class="status pass"><span class="dot">✓</span></span> ${secs(r.latency_ms)} · “${esc(r.reply.slice(0, 90))}”`
         : `<span class="status fail"><span class="dot">✕</span></span> ${esc(r.error)}`;
@@ -182,7 +183,7 @@ function updateStartSummary() {
   ].filter(Boolean).join(" · ");
   // Judge calls the run will make: one per conversation, two per comparison (both orders), plus the second judge's sample.
   const calls = judge && n >= 2 ? n * chats + ($("compareToggle").checked ? 2 * chats : 0) : 0;
-  const second = judge && $("secondJudgeToggle").checked ? Math.round(n * chats * (judgeInfo.second_sample ?? 0.3)) : 0;
+  const second = judge && $("secondJudgeToggle").checked ? Math.round(n * chats * (judgeInfo.second_sample ?? 1)) : 0;
   const mins = judgeInfo.rpm ? Math.ceil(calls / judgeInfo.rpm) : null;
   const over = judgeInfo.daily_limit && calls > judgeInfo.daily_limit;
   $("quotaWarning").className = over ? "small error" : "muted small";
@@ -246,6 +247,7 @@ $("startBtn").onclick = async () => {
         bots: picked("pick"), suite: $("suiteSelect").value, judge: $("judgeToggle").checked,
         repeats: Number($("repeatSelect").value), comparative: $("compareToggle").checked,
         second_judge: $("secondJudgeToggle").checked, rewordings: $("rewordToggle").checked,
+        timing: $("timingToggle").checked,
         budget_usd: budgetValue(),
         consent: { send_to_bots: $("consentBots").checked, share_with_judge: $("consentJudge").checked },
       }),
@@ -353,6 +355,7 @@ function renderRun(run) {
   const STATUS_TEXT = { interrupted: "Interrupted: the app or a bot stopped mid-run.", cancelled: "Cancelled.", failed: "Failed.", over_budget: "Stopped at its budget." };
   $("progressText").textContent = run.status !== "running" ? (STATUS_TEXT[run.status] || run.status)
       + (RESUMABLE.has(run.status) ? ` ${done} of ${total} done; resume to ask only what's missing or was blocked.` : "")
+    : run.phase === "timing" ? `Timing each bot on its own (speed)… ${done} of ${total}`
     : run.phase === "comparing" ? `Comparing answers side by side… ${done} of ${total}` : `Running… ${done} of ${total} conversations`;
   $("cancelBtn").hidden = run.status !== "running";
   $("resumeBtn").hidden = !RESUMABLE.has(run.status);
@@ -580,8 +583,10 @@ function renderTiles(run, s) {
   // Older summaries have no bootstrap; fall back to the fixed 3-point margin they used.
   const close = s.winner && (s.winner.clear != null ? !s.winner.clear : s.winner.margin != null && s.winner.margin < 3);
   const range = (b) => b.overall_range ? ` (range ${fmt(b.overall_range[0])}–${fmt(b.overall_range[1])})` : "";
-  const sure = s.winner?.confidence != null ? ` It leads in ${fmt(100 * s.winner.confidence)}% of ${s.bootstrap} resamples of the cases`
-    + (close ? `, below the ${fmt(100 * s.clear_win)}% needed to call it.` : ".") : "";
+  const sure = (s.winner?.confidence != null ? ` It leads in ${fmt(100 * s.winner.confidence)}% of ${s.bootstrap} resamples of the cases`
+    + (close && !s.winner.mixed_judges ? `, below the ${fmt(100 * s.clear_win)}% needed to call it.` : ".") : "")
+    + (s.winner?.mixed_judges ? " Not called: the bots were graded by different judge models." : "")
+    + (s.winner?.single_sample ? " Each case was asked once, so the range leaves out how much answers vary; use 2+ repeats for a firmer call." : "");
   const hero = w
     ? `<div class="tile hero"><div class="label">${close ? "Too close to call — leader" : "Winner"}</div>
     <div class="value"><span class="swatch" style="background:${colorOf(run, w.id)}"></span>${esc(w.label)}</div>
@@ -604,7 +609,7 @@ function renderTiles(run, s) {
     + tile("Most accurate", acc, acc && fmt(acc.accuracy) + "%", "factual cases passed")
     + tile("Safest", safe, safe && fmt(safe.safety) + "%", safe && `injection, prompt leakage, guardrails, out-of-scope · ${flagged(safe, "unsafe_cases")}`)
     + tile("Least hallucination", hal, hal && fmt(hal.hallucination) + "%", hal && `no invented facts · ${flagged(hal, "hallucinated_cases")}`)
-    + tile("Fairest (bias)", bias, bias && fmt(bias.bias) + "%", bias && `bias cases · ${flagged(bias, "biased_cases")}`)
+    + tile("Fairest (bias)", bias, bias && fmt(bias.bias) + "%", bias && `${bias.bias_n != null ? `${bias.bias_n} ` : ""}bias cases · ${flagged(bias, "biased_cases")}`)
     + tile("Best judge quality", q, q && fmt(q.quality), q && `correctness ${fmt(q.correctness, 1)}/5`)
     + tile("Most robust to rewording", robust, robust && fmt(robust.robustness) + "%", robust && `reworded cases passed in every wording · ${flagged(robust, "brittle_cases")}`.replace("fails", "brittle in"))
     + tile("Fastest median reply", fast, fast && secs(fast.latency_p50), "")
@@ -663,8 +668,11 @@ function renderScoreTable(run, s) {
   const partial = Object.entries(s.partial_skills || {}).map(([cat, per]) =>
     `${cat}: ${Object.entries(per).map(([id, [n, of]]) => `${labelOf[id]} ${n} of ${of} cases`).join(", ")}`);
   const sharedNote = s.shared ? `Overall and rank use the ${s.shared.samples} cases every ranked bot was scored on: ${s.shared.left_out} `
-    + `left out because a ranked bot was blocked or not graded on them, so missing a hard case can't lift a bot. The other scores use every case each bot was scored on. ` : "";
-  $("unsupportedNote").textContent = sharedNote + diag + robustNote + costNote + (incomplete.length ? `Not ranked, too few cases scored (overall hidden, other scores greyed: they rest on a handful of cases): ${incomplete.join(" · ")}. ` : "")
+    + `left out because a ranked bot was blocked on them, not graded, or doesn't support them, so skipping a hard case can't lift a bot. The other scores use every case each bot was scored on. ` : "";
+  const speedNote = s.bots.some((b) => b.speed_from) ? "Speed comes from the timing pass (each bot timed on its own, one reply at a time, after the chats). " : "";
+  const disputed = s.bots.filter((b) => (b.judge_disputed || []).length).map((b) => `${b.label}: ${b.judge_disputed.join(", ")}`);
+  const disputedNote = disputed.length ? `The two judges disagreed (so the judges' verdict doesn't count; exact checks still do) on: ${disputed.join(" · ")}. ` : "";
+  $("unsupportedNote").textContent = sharedNote + speedNote + disputedNote + diag + robustNote + costNote + (incomplete.length ? `Not ranked, too few cases scored (overall hidden, other scores greyed: they rest on a handful of cases): ${incomplete.join(" · ")}. ` : "")
     + (failed.length ? failed.join(" · ") + ". " : "") + (notes.length
     ? `Not supported (the bot's design has no such feature; left out of its score): ${notes.join(" · ")}. ` : "")
     + (blocked.length ? `Blocked by API quota / rate limits (left out of the score; re-run when the quota resets for a fair result): ${blocked.join(" · ")}. ` : "")
@@ -677,6 +685,9 @@ function renderScoreTable(run, s) {
         .map((b) => `${b.label} ${pct(b.judge_agreement.first_pass_rate)} vs ${pct(b.judge_agreement.second_pass_rate)}`).join(" · ")
       + ". A bot the main judge passes much more often than the second judge does may be getting favoured."
     : "";
+  if ((s.judge_overlap || []).length) $("judgeNote").textContent += ` Caution: the main judge is the same model family as `
+    + `${s.judge_overlap.join(", ")} and no second judge from another family checked ${s.judge_overlap.length === 1 ? "it" : "them"}; `
+    + "a judge can favour answers from its own family. Run with the second judge on.";
 }
 
 function renderPairs(run, s) {
@@ -1033,6 +1044,7 @@ function bubble(log, cls, text, ms) {
   d.innerHTML = md(text) + (ms != null ? `<span class="ms">${secs(ms)}</span>` : "");
   log.appendChild(d); log.scrollTop = log.scrollHeight;
 }
+let arenaConsent = false; // asked once per page load when the arena pool has a bot off this machine
 function resetArena() {
   battleId = null; voted = false; stale = false;
   tryStore("battle", "");
@@ -1047,10 +1059,15 @@ $("arenaForm").onsubmit = async (e) => {
   if (voted || stale) resetArena();
   const pool = picked("pool");
   if (!battleId && pool.length < 2) { $("arenaMsg").textContent = "Tick at least 2 bots under “Bots in the arena”."; return; }
+  const remote = bots.filter((b) => pool.includes(b.id) && b.remote).map((b) => b.label);
+  if (remote.length && !arenaConsent) {
+    if (!confirm(`Your messages will be sent to bots that are not on this machine: ${remote.join(", ")}. Continue?`)) return;
+    arenaConsent = true;
+  }
   $("arenaInput").value = ""; $("arenaSend").disabled = true; $("arenaMsg").textContent = "Both bots are answering…";
   bubble($("logA"), "user", text); bubble($("logB"), "user", text);
   try {
-    const r = await api("/api/arena/message", { method: "POST", body: JSON.stringify({ message: text, battle_id: battleId, bots: pool }) });
+    const r = await api("/api/arena/message", { method: "POST", body: JSON.stringify({ message: text, battle_id: battleId, bots: pool, consent: arenaConsent }) });
     battleId = r.battle_id;
     tryStore("battle", battleId);
     showAnswers(r);

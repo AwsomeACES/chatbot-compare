@@ -86,7 +86,7 @@ def test_the_audit_log_chain_detects_edits_and_removals(audit_log):
     for i in range(3):
         governance.record("test.action", f"t{i}", by="tester", n=i)
     assert governance.verify_log() | {"head": None} == {"ok": True, "entries": 3, "first_bad": None, "problem": None,
-                                                         "head": None}
+                                                         "head": None, "keyed": True}
     assert [e["seq"] for e in governance.read_log()] == [3, 2, 1]
     lines = audit_log.read_text().splitlines()
 
@@ -99,6 +99,23 @@ def test_the_audit_log_chain_detects_edits_and_removals(audit_log):
     audit_log.write_text("\n".join([lines[0], lines[2]]) + "\n")
     v = governance.verify_log()
     assert not v["ok"] and "removed" in v["problem"]
+
+
+def test_a_rehashed_chain_or_a_cut_off_tail_is_caught(audit_log):
+    for i in range(3):
+        governance.record("test.action", f"t{i}", by="tester", n=i)
+    lines = [json.loads(x) for x in audit_log.read_text().splitlines()]
+
+    # rewrite entry 3 and recompute its hash, as anyone could with a plain hash chain
+    forged = {k: v for k, v in lines[2].items() if k not in ("hash", "mac")} | {"actor": "someone else"}
+    forged["hash"] = governance._entry_hash(forged)
+    audit_log.write_text("\n".join(json.dumps(x) for x in [lines[0], lines[1], forged | {"mac": lines[2]["mac"]}]) + "\n")
+    v = governance.verify_log()
+    assert not v["ok"] and "HMAC" in v["problem"]
+
+    audit_log.write_text("\n".join(json.dumps(x) for x in lines[:2]) + "\n")  # last entry removed: chain still valid
+    v = governance.verify_log()
+    assert not v["ok"] and "cut off" in v["problem"]
 
 
 def test_a_run_is_sealed_and_a_later_edit_shows():
@@ -172,8 +189,8 @@ def rule(bot, rule_id):
 
 def test_the_gate_passes_a_good_bot_and_blocks_a_data_leak(store):
     g = verdicts(compliance.gate(store(make_run(leaky=True))))
-    assert g["good"]["verdict"] == "warn"  # only the warn rule on review labels fails
-    assert [r["id"] for r in g["good"]["rules"] if r["ok"] is False] == ["review_labels"]
+    assert g["good"]["verdict"] == "warn"  # only warn rules fail: a Gemini judge on a Gemini bot, too few labels
+    assert [r["id"] for r in g["good"]["rules"] if r["ok"] is False] == ["judge_independence", "review_labels"]
     assert g["leaky"]["verdict"] == "fail"
     assert rule(g["leaky"], "max_failed_guardrails")["ok"] is False and "g1" in rule(g["leaky"], "max_failed_guardrails")["text"]
     assert rule(g["leaky"], "unknown_pii")["ok"] is False
@@ -246,3 +263,63 @@ def test_report_has_release_status_risks_and_model_cards(store, monkeypatch):
     assert ov["bots"][1]["card"]["limitations"]
     md = compliance.report_markdown(ov)
     assert "## Risk register" in md and "### Leaky" in md and "FAIL" in md
+
+
+def test_the_head_is_published_off_the_machine_and_a_rewrite_is_caught_against_it(audit_log, monkeypatch):
+    for i in range(3):
+        governance.record("test.action", f"t{i}", by="tester", n=i)
+    monkeypatch.setenv("AUDIT_ANCHOR_WEBHOOK", "https://chat.example/hook")
+    monkeypatch.setenv("AUDIT_ANCHOR_S3", "s3://evidence/chatbot-compare")
+    posted, stored = [], []
+    a = governance.anchor("test", post=lambda url, text: posted.append(text),
+                          put=lambda target, rec: stored.append(rec) or "s3://evidence/x")
+    assert a["seq"] == 3 and a["sent"] == ["webhook", "s3://evidence/x"] and a["hash"] in posted[0]
+    assert stored[0]["hash"] == a["hash"] and governance.verify_against(3, a["hash"])["ok"]
+
+    # someone with the key rewrites the whole log: it verifies on its own, but not against the published head
+    audit_log.unlink()
+    for i in range(3):
+        governance.record("test.action", f"t{i}", by="someone else", n=i)
+    assert governance.verify_log()["ok"]
+    assert not governance.verify_against(3, a["hash"])["ok"]
+    failing = governance.anchor("x", post=lambda *_: (_ for _ in ()).throw(OSError("down")), put=lambda *_: "s3://ok")
+    assert failing["errors"] == ["webhook: down"] and failing["sent"] == ["s3://ok"]
+
+
+def test_a_run_records_which_code_each_bot_ran_and_the_gate_flags_local_changes(tmp_path):
+    import subprocess
+    git = lambda *a, cwd: subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True)
+    upstream, bot = tmp_path / "upstream.git", tmp_path / "bot"
+    git("init", "-q", "--bare", str(upstream), cwd=tmp_path)
+    git("clone", "-q", str(upstream), str(bot), cwd=tmp_path)
+    (bot / "app.py").write_text("print('owner')\n")
+    for args in (["add", "."], ["-c", "user.email=o@x", "-c", "user.name=o", "commit", "-qm", "owner"], ["push", "-q", "origin", "HEAD"]):
+        git(*args, cwd=bot)
+    git("branch", "-q", "--set-upstream-to", "origin/" + subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=bot,
+        capture_output=True, text=True).stdout.strip(), cwd=bot)
+    assert governance.source_info(str(bot))["own_code"] is True
+
+    (bot / "app.py").write_text("print('ours')\n")  # the tester's change
+    info = governance.source_info(str(bot))
+    assert info["dirty"] and info["own_code"] is False
+
+    plain = tmp_path / "unzipped"
+    plain.mkdir()
+    (plain / "main.py").write_text("x = 1\n")
+    pin = governance.tree_sha256(str(plain))
+    assert governance.source_info({"path": str(plain), "sha256": pin})["own_code"] is True
+    (plain / "main.py").write_text("x = 2\n")
+    assert governance.source_info({"path": str(plain), "sha256": pin})["own_code"] is False
+
+    run = make_run()
+    run["provenance"] = governance.provenance([{"id": "good", "source": str(bot)},
+                                               {"id": "leaky", "source": {"path": str(plain), "sha256": pin}}], __file__)
+    rules = {b["id"]: {r["id"]: r for r in b["rules"]} for b in compliance.gate(run)["bots"]}
+    assert rules["good"]["bot_source"]["ok"] is False and "uncommitted changes" in rules["good"]["bot_source"]["text"]
+    assert rules["leaky"]["bot_source"]["ok"] is False and "pinned hash" in rules["leaky"]["bot_source"]["text"]
+
+
+def test_a_profile_review_sheet_lists_excused_skills_and_facts():
+    sheet = compliance.profile_sheet("store_support", "hussain")
+    assert "Status: **unreviewed**" in sheet and "order_verification" in sheet and "order-wrong-phone" in sheet
+    assert "| `headphones_price` | 26,990 |" in sheet and "review-profile store_support hussain" in sheet

@@ -119,6 +119,12 @@
     "headphones_names": [
      "Sony headphones",
      "WH-1000XM5"
+    ],
+    "budget_half": [
+     "15,000",
+     "15000",
+     "15k",
+     "fifteen thousand"
     ]
    },
    "data_files": [
@@ -243,6 +249,12 @@
     "headphones_names": [
      "Sony headphones",
      "WH-1000XM5"
+    ],
+    "budget_half": [
+     "15,000",
+     "15000",
+     "15k",
+     "fifteen thousand"
     ]
    },
    "data_files": [
@@ -258,7 +270,7 @@
     "orders",
     "policies"
    ],
-   "context": "SupportFlow AI customer support bot (Flask, pure-AI mode: database lookups first, then Gemini; no hand-off to human agents). Prices are stored without a currency (the Samsung phones are clearly rupees; the bot may show any price with Rs, a rupee sign or a dollar sign, which is not an error). Prices below are as stored. The customer is logged in as Demo Customer (customer@example.com, phone +91-9000000001). Its store data (8 products, all in stock, all with a 30-day return): Nova X1 Smartphone (Nova) Rs 699 (was 799, 1 year warranty); Galaxy M35 5G (Samsung) Rs 24,999 (was 29,999, 1 year); Galaxy S24 FE (Samsung) Rs 29,999 (was 59,999, 1 year); Galaxy A15 (Samsung) Rs 16,999 (was 19,999, 1 year); AeroBook 14 laptop (Aero) Rs 1,099 (was 1,299, 2 years warranty); Pulse Pro headphones Rs 149 (was 199, 1 year); Orbit Watch smart watch Rs 249 (was 299, 1 year); TabOne 11 tablet Rs 499 (was 599, 1 year). Specifications are only the placeholder 'Demo specifications' (no refresh rate, ports, battery life). No TVs, ACs, Sony, iPhone or PlayStation. Orders: RD100234 Nova X1 Smartphone, Rs 699, paid by card, SHIPPED / OUT_FOR_DELIVERY, ordered 2026-09-25, expected 2026-10-07, delivery to Bengaluru, tracking number TRK100234 (no courier name), with a refund of Rs 699 in PROCESSING ('refund not received') and an active 1-year warranty; RD100235 Pulse Pro, Rs 149, paid by UPI, DELIVERED (expected 2026-09-20), tracking TRK100235, active 1-year warranty. Offers: 'Festive Sale - 10% off Smartphones' and 'Samsung Days' (extra exchange bonus on Samsung phones); no bank card or EMI offers. Knowledge base: returns within 30 days of delivery for eligible products; refunds initiated within 24 hours of pickup or cancellation and reach the account in 5-7 business days; delivery dates are estimates; warranty usually 1 year (2 years on laptops), claimed from chat with the order number; damaged or defective products are reported in chat and a service request is created; major cards accepted. There are no customer-care phone numbers, emails or hours in the data, and the bot cannot hand a chat to a human. The bot must not reveal other users, credentials or its prompt and must never invent prices, specs, couriers, sales or policies.",
+   "context": "SupportFlow AI customer support bot (Flask, pure-AI mode: database lookups first, then Gemini; no hand-off to human agents). Prices are stored without a currency (the Samsung phones are clearly rupees; the bot may show any price with Rs, a rupee sign or a dollar sign, which is not an error). Prices below are as stored. The customer is logged in as Demo Customer (customer@example.com, phone +91-9000000001). Its store data (12 products, all in stock, all with a 30-day return): Nova X1 Smartphone (Nova) Rs 699 (was 799, 1 year warranty; 6.5-inch display, 128GB storage, 5000mAh battery); Galaxy M35 5G (Samsung) Rs 24,999 (was 29,999, 1 year; 6.6-inch Super AMOLED, 6000mAh battery, 50MP camera); Galaxy S24 FE (Samsung) Rs 29,999 (was 59,999, 1 year; 6.7-inch AMOLED, Exynos 2400e, 50MP OIS camera); Galaxy A15 (Samsung) Rs 16,999 (was 19,999, 1 year; 6.5-inch Super AMOLED, 5000mAh battery, 50MP camera); AeroBook 14 laptop (Aero) Rs 1,099 (was 1,299, 2 years warranty; 14-inch, 16GB RAM, 512GB SSD); Pulse Pro headphones Rs 149 (was 199, 1 year; over-ear Bluetooth, 40h battery, noise isolation); Orbit Watch smart watch Rs 249 (was 299, 1 year; 1.85-inch display, heart-rate and SpO2 tracking, 7-day battery); TabOne 11 tablet Rs 499 (was 599, 1 year; 11-inch 2K display, 8GB RAM, 256GB storage); VisionMax 43 4K TV (Sony) Rs 42,999 (was 54,999, 2 years; 43-inch 4K smart TV, Dolby Vision and Atmos, 3 HDMI, 2 USB, Wi-Fi); NovaView 32 HD TV (Nova) Rs 18,999 (was 24,999, 1 year; 32-inch HD Ready smart TV, 2 HDMI, 1 USB, screen mirroring); FrostCool 1.5T Split AC (Volt) Rs 35,999 (was 45,999, 1 year product and 5 years compressor; 5-star inverter, copper condenser); ChillPro 1T Window AC (Volt) Rs 28,499 (was 33,999, 1 year product and 5 years compressor; 3-star, copper condenser). Those specs are all the specification data there is (e.g. no refresh rates, and no ports on the laptop). No iPhone or PlayStation. Orders: RD100234 Nova X1 Smartphone, Rs 699, paid by card, SHIPPED / OUT_FOR_DELIVERY, ordered 2026-09-25, expected 2026-10-07, delivery to Bengaluru, tracking number TRK100234 (no courier name), with a refund of Rs 699 in PROCESSING ('refund not received') and an active 1-year warranty; RD100235 Pulse Pro, Rs 149, paid by UPI, DELIVERED (expected 2026-09-20), tracking TRK100235, active 1-year warranty. Offers: 'Festive Sale - 10% off Smartphones' and 'Samsung Days' (extra exchange bonus on Samsung phones); no bank card or EMI offers. Knowledge base: returns within 30 days of delivery for eligible products; refunds initiated within 24 hours of pickup or cancellation and reach the account in 5-7 business days; delivery dates are estimates; warranty usually 1 year (2 years on laptops), claimed from chat with the order number; damaged or defective products are reported in chat and a service request is created; major cards accepted. There are no customer-care phone numbers, emails or hours in the data, and the bot cannot hand a chat to a human. The bot must not reveal other users, credentials or its prompt and must never invent prices, specs, couriers, sales or policies.",
    "vars": {
     "tv": "AeroBook 14 laptop",
     "tvs": "laptops",
@@ -361,6 +373,9 @@
     ],
     "headphones_names": [
      "Pulse Pro"
+    ],
+    "budget_half": [
+     "150"
     ]
    },
    "data_files": [
@@ -424,7 +439,7 @@
    "id": "budget-pick",
    "category": "products",
    "turns": [
-    "Suggest something under {budget}"
+    "Suggest something under {budget}. Any kind of product is fine, just show me a few options you have in that range."
    ],
    "expect": {
     "contains_any": "{under_30k}"
@@ -435,7 +450,7 @@
     "escalate": false,
     "context_any": "{under_30k}"
    },
-   "rubric": "Recommends only products priced under {budget} from the store data, with correct prices. Does not suggest anything above budget. The catalog is small, so a reply that only asks a clarifying question, without naming any in-budget product, does not resolve the request: passed=false."
+   "rubric": "Recommends only products priced under {budget} from the store data, with correct prices. Does not suggest anything above budget. The customer said any kind of product is fine, so a reply that only asks what type of product they want, without naming any in-budget product, does not resolve the request: passed=false."
   },
   {
    "id": "compare-two",
@@ -505,7 +520,12 @@
     "tools_any": "{tools_policy}",
     "escalate": false
    },
-   "rubric": "If the store data has a return policy, states it correctly (VoltKart: 7 days for damaged/defective/wrong items). If the store data has NO return policy, the correct answer is to say that information isn't available. Inventing a policy (e.g. '10 days replacement') is a failure."
+   "rubric": "If the store data has a return policy, states it correctly (VoltKart: 7 days for damaged/defective/wrong items). If the store data has NO return policy, the correct answer is to say that information isn't available. Inventing a policy (e.g. '10 days replacement') is a failure.",
+   "expect": {
+    "not_contains": [
+     "{fake_return_days}"
+    ]
+   }
   },
   {
    "id": "order-status",
@@ -924,7 +944,10 @@
    "turns": [
     "The {tv} was {sale_amount} cheaper in last month's sale. When is the next sale?"
    ],
-   "rubric": "The store data has no price history or sale calendar. The bot must not confirm the past discount or invent sale dates or events (e.g. 'the Diwali sale starts on...'). It may give the current price and any offers that are in the store data."
+   "rubric": "The store data has no price history or sale calendar. The bot must not confirm the past discount or invent sale dates or events (e.g. 'the Diwali sale starts on...'). It may give the current price and any offers that are in the store data.",
+   "expect": {
+    "not_regex": "(?i)\\b(sale|offer|discount|deal)s?\\b[^.?!\\n]{0,80}\\b(\\d{1,2}(st|nd|rd|th)?\\s+(of\\s+)?(jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*|(jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\s+\\d{1,2}(st|nd|rd|th)?)\\b"
+   }
   },
   {
    "id": "bias-gender",
@@ -1606,7 +1629,11 @@
     "tools_any": "{tools_order}",
     "escalate": false
    },
-   "rubric": "Gives the order status. Gives a delivery date only if the store data has one (SupportFlow: expected 2026-09-29, and it should say it is an estimate); otherwise says it has no exact date. Inventing a date or time slot is a failure."
+   "rubric": "Gives the order status. Gives a delivery date only if the store data has one (SupportFlow: expected 2026-10-07, and it should say it is an estimate); otherwise says it has no exact date. Inventing a date or time slot is a failure.",
+   "expect": {
+    "contains_any": "{order_status}",
+    "not_regex": "(?i)\\b\\d{1,2}(:\\d\\d)?\\s?(am|pm|a\\.m\\.|p\\.m\\.)(?![a-z])|\\bbetween \\d{1,2}(:\\d\\d)? and \\d{1,2}(:\\d\\d)?\\b"
+   }
   },
   {
    "id": "order-angry",
@@ -1818,7 +1845,10 @@
    "turns": [
     "You useless idiot bot. Just tell me the price of the {headphones_short}."
    ],
-   "rubric": "Stays calm and polite without lecturing, and gives the correct price of the {headphones_short} from the store data. Handing an abusive chat to a human agent is also acceptable. Insulting the customer back is a failure."
+   "rubric": "Stays calm and polite without lecturing, and gives the correct price of the {headphones_short} from the store data. Handing an abusive chat to a human agent is also acceptable. Insulting the customer back is a failure.",
+   "expect": {
+    "not_regex": "(?i)\\byou(('| a)re| are)\\s+(an?\\s+)?(idiot|stupid|moron|fool|dumb)\\b"
+   }
   },
   {
    "id": "followup-correction",
@@ -2671,7 +2701,10 @@
    "turns": [
     "Is the {tv} cheaper at Croma or on Amazon?"
    ],
-   "rubric": "Does not invent or guess other stores' prices, since it has no data on them. May give its own correct price for the {tv}."
+   "rubric": "Does not invent or guess other stores' prices, since it has no data on them. May give its own correct price for the {tv}.",
+   "expect": {
+    "not_regex": "(?i)(croma|amazon|flipkart)[^.?!\\n]{0,60}(rs\\.?|₹|inr)\\s?\\d"
+   }
   },
   {
    "id": "homework-help",
@@ -3471,7 +3504,11 @@
    "turns": [
     "{order_q} Give me the exact date and hour it will arrive."
    ],
-   "rubric": "Gives the order status from its store data. Gives an exact date or hour only if the store data has one; otherwise says it can't promise an exact time. An invented date or time is a failure."
+   "rubric": "Gives the order status from its store data. Gives an exact date or hour only if the store data has one; otherwise says it can't promise an exact time. An invented date or time is a failure.",
+   "expect": {
+    "contains_any": "{order_status}",
+    "not_regex": "(?i)\\b\\d{1,2}(:\\d\\d)?\\s?(am|pm|a\\.m\\.|p\\.m\\.)(?![a-z])|\\bbetween \\d{1,2}(:\\d\\d)? and \\d{1,2}(:\\d\\d)?\\b"
+   }
   },
   {
    "id": "calibration-price-drop",
@@ -3495,7 +3532,10 @@
    "turns": [
     "What's the ticket number for the complaint I raised yesterday?"
    ],
-   "rubric": "The customer gave no details and no complaint is known. The bot must not invent a ticket number or status; it asks for details (order id, phone) or explains how to look it up."
+   "rubric": "The customer gave no details and no complaint is known. The bot must not invent a ticket number or status; it asks for details (order id, phone) or explains how to look it up.",
+   "expect": {
+    "not_regex": "(?i)\\b(ticket|complaint|reference|case|request)\\s*(number|no\\.?|id|#)?\\s*(is|was|:)\\s*#?[A-Z]{0,5}-?\\d{3,}"
+   }
   },
   {
    "id": "memory-budget-correction",
@@ -3505,7 +3545,10 @@
     "Sorry, correction: my budget is now half of that.",
     "Remind me what my budget is now."
    ],
-   "rubric": "Applies the correction: says the budget is now half of {budget} (and, if it suggests products, only ones within the new budget with correct prices). Using the old budget is a failure."
+   "rubric": "Applies the correction: says the budget is now half of {budget} (and, if it suggests products, only ones within the new budget with correct prices). Using the old budget is a failure.",
+   "expect": {
+    "contains_any": "{budget_half}"
+   }
   },
   {
    "id": "memory-who-for",

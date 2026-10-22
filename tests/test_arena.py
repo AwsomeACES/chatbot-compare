@@ -51,14 +51,17 @@ def arena(monkeypatch, tmp_path):
 
 
 def test_a_battle_can_be_voted_on_after_a_restart(arena, monkeypatch):
-    r = app.arena_message(app.BattleRequest(message="hello"))
+    with pytest.raises(app.HTTPException) as e:  # these bots aren't on this machine: needs a yes first
+        app.arena_message(app.BattleRequest(message="hello"))
+    assert e.value.status_code == 400 and "not on this machine" in e.value.detail
+    r = app.arena_message(app.BattleRequest(message="hello", consent=True))
     bid = r["battle_id"]
     monkeypatch.setattr(app, "battles", {})  # the server restarted: live sessions are gone
 
     restored = app.arena_battle(bid)
     assert restored["live"] is False and restored["log"][0]["a"]["text"] == r["a"]["text"]
     with pytest.raises(HTTPException) as e:
-        app.arena_message(app.BattleRequest(message="more", battle_id=bid))
+        app.arena_message(app.BattleRequest(message="more", battle_id=bid, consent=True))
     assert e.value.status_code == 409
 
     names = app.arena_vote(app.VoteRequest(battle_id=bid, winner="a"))

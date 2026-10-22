@@ -9,3 +9,4 @@ runs/bot-logs/
 runs/nightly.log
 bots.quick.json
 runs/prices/
+.~lock.*#

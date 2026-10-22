@@ -17,8 +17,8 @@ Every bot in bots.json has a "type" that picks the adapter:
 
 Optional for every type: "max_concurrency" (parallel test chats, see evaluator.py), "timeout" (seconds per reply,
 default BOT_TIMEOUT; raise it for a slow local model) and "fallback_replies":
-phrases the bot only says when its own LLM call failed. Such a reply raises a BotError the evaluator treats as
-blocked (retried, then left out of the score) instead of grading it as a real answer.
+phrases the bot only says when its own LLM call failed. Such a reply raises a BotError the evaluator retries; if it
+persists the case is an error (scored as a fail, since that's what a customer got), never graded as a real answer.
 
 Traces (gray-box / white-box testing): besides the reply, an adapter records what it can see of the bot's insides,
 as a dict with any of these keys (a missing key means the bot doesn't expose it):
@@ -120,14 +120,34 @@ def _fill(template, values):
     return template
 
 
+def bot_key_allowed(name):
+    """May a bot added by URL send this environment variable as its API key? Only names meant for bots: BOT_* or
+    one listed in BOT_KEY_VARS. Otherwise anyone at the dashboard could paste their own URL and name GOOGLE_API_KEY,
+    NVIDIA_API_KEY or an AWS secret, and this app would send that secret to them."""
+    listed = {v.strip() for v in os.environ.get("BOT_KEY_VARS", "").split(",") if v.strip()}
+    return bool(name) and (name in listed or (name.startswith("BOT_") and name.replace("_", "").isalnum()
+                                               and name.upper() == name))
+
+
 def _headers(cfg):
     headers = dict(cfg.get("headers", {}))
+    if cfg.get("quick") and cfg.get("api_key_env") and not bot_key_allowed(cfg["api_key_env"]):
+        raise BotError(f"A bot added by URL can only use a key variable named BOT_... (or listed in BOT_KEY_VARS), "
+                       f"not {cfg['api_key_env']}")
     if cfg.get("api_key_env"):
         key = os.environ.get(cfg["api_key_env"])
         if not key:
             raise BotError(f"Environment variable {cfg['api_key_env']} is not set")
         headers["Authorization"] = f"Bearer {key}"
     return headers
+
+
+def _password(cfg):
+    if env := cfg.get("password_env"):
+        if not os.environ.get(env):
+            raise BotError(f"Environment variable {env} is not set (the bot's test login password)")
+        return os.environ[env]
+    return cfg["password"]
 
 
 def _json(r):
@@ -287,9 +307,12 @@ class SupportFlowConversation(Conversation):
     """SupportFlow AI (Mouni's Flask bot): JWT login, then POST /api/chat {message, conversation_id}.
     The bot continues the customer's latest open conversation, so for this login only one test chat runs
     at a time, and each chat is retired (escalated) when it closes, so the next one starts fresh.
-    Config: base_url, email, password. The GitHub version of 2026-10-06 has no escalate endpoint and no other way to
-    end a chat, so for it set "db_path" (the bot's SQLite file; run it on a test copy) and chats are retired by
-    marking them CLOSED there; set "handoff": false as it never hands chats to a human."""
+    Config: base_url, email, and password_env (the .env variable holding the test login's password; "password" in
+    bots.json still works). Her GitHub version (main, 2026-10-09) has no escalate endpoint and no other way to end a chat,
+    so for it set "db_path" (the bot's SQLite file) and chats are retired by marking them CLOSED there. That writes
+    into the system under test, so it is only done on a test database: the file name must contain "test" (e.g.
+    compare-test.db), and only conversations this login opened are touched. Set "handoff": false as it never hands
+    chats to a human."""
 
     _tokens = {}
     _locks = {}
@@ -307,7 +330,7 @@ class SupportFlowConversation(Conversation):
 
     def _token(self, refresh=False):
         if refresh or self.key not in self._tokens:
-            data = _post(f"{self.base}/api/auth/login", {"email": self.cfg["email"], "password": self.cfg["password"]})
+            data = _post(f"{self.base}/api/auth/login", {"email": self.cfg["email"], "password": _password(self.cfg)})
             self._tokens[self.key] = data["token"]
         return self._tokens[self.key]
 
@@ -326,10 +349,14 @@ class SupportFlowConversation(Conversation):
 
     def _retire(self, conversation_id):
         if db_path := self.cfg.get("db_path"):
+            if "test" not in os.path.basename(db_path).lower():
+                raise BotError(f"Won't write to {db_path}: chats are only closed directly in a test database "
+                               "(a file name with \"test\" in it, e.g. compare-test.db)")
             try:
                 with closing(sqlite3.connect(os.path.expanduser(db_path), timeout=30)) as db, db:
-                    db.execute("UPDATE conversations SET status = 'CLOSED', closed_at = CURRENT_TIMESTAMP WHERE id = ?",
-                               (conversation_id,))
+                    db.execute("UPDATE conversations SET status = 'CLOSED', closed_at = CURRENT_TIMESTAMP WHERE id = ? "
+                               "AND customer_id = (SELECT id FROM users WHERE email = ?)",
+                               (conversation_id, self.cfg["email"]))
             except sqlite3.Error as e:
                 raise BotError(f"Could not close chat {conversation_id} in {db_path}: {e}") from e
             return
@@ -523,7 +550,7 @@ REQUIRED = {
     "voltkart": ["base_url", "model"],
     "http": ["url"],
     "sse_chat": ["url"],
-    "supportflow": ["base_url", "email", "password"],
+    "supportflow": ["base_url", "email"],
     "openai_compatible": ["base_url", "model"],
     "claude_bedrock": ["model"],
     "web_widget": ["url", "input_selector", "reply_selector"],
@@ -539,6 +566,8 @@ def validate(cfg):
     missing = [k for k in ["id", "label", *REQUIRED[cfg["type"]]] if not cfg.get(k)]
     if missing:
         raise BotError(f"Bot '{name}' ({cfg['type']}) is missing: {', '.join(missing)}")
+    if cfg["type"] == "supportflow" and not (cfg.get("password") or cfg.get("password_env")):
+        raise BotError(f"Bot '{name}' (supportflow) is missing: password_env (or password)")
     if "max_concurrency" in cfg and not (isinstance(cfg["max_concurrency"], int) and cfg["max_concurrency"] >= 1):
         raise BotError(f"Bot '{name}': max_concurrency must be a whole number of at least 1")
     return adapter

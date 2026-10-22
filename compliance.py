@@ -15,14 +15,22 @@ Usage:
   .venv/bin/python compliance.py gate <run_id>                     exit 0 pass, 1 warnings, 2 blocked, 3 error
   .venv/bin/python compliance.py signoff <run_id> <bot_id> approve|reject --reviewer NAME [--note TEXT] [--override]
   .venv/bin/python compliance.py report [-o FILE]                  model cards + risk register as Markdown
-  .venv/bin/python compliance.py audit [--limit N]                 verify the audit log and show recent entries
+  .venv/bin/python compliance.py audit [--limit N] [--head SEQ:HASH]  verify the audit log (and against a head
+                                                                   published off this machine), show recent entries
+  .venv/bin/python compliance.py anchor [--reason TEXT]            publish the log's head (webhook and/or S3)
   .venv/bin/python compliance.py purge [--dry-run]                 apply the retention policy
   .venv/bin/python compliance.py scan                              personal data in suites and store data files
+  .venv/bin/python compliance.py profile-sheet <suite> <profile> [-o FILE]   a review sheet to send the bot's owner
+  .venv/bin/python compliance.py review-profile <suite> <profile> --reviewer NAME
+      the bot's owner confirms its store profile: the facts its cases are filled with, the store data the judge
+      sees and which skills count as "not supported". Saved in the suite with a hash of what was reviewed; the
+      release gate warns about a bot whose profile nobody but the test author has checked, or that changed since
 """
 
 import fnmatch
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -128,6 +136,37 @@ def gate(run, policy=None, review_stats=None, baselines=None):
                   if compared else "no baseline to compare with", len(crit) if compared else None)
         if g.get("approved_models_only"):
             _model_rules(rules, run, configs.get(bot["id"], {}), bot["id"], policy)
+        if run.get("judge") and done:
+            overlap = b.get("label") in ((run.get("summary") or {}).get("judge_overlap") or [])
+            _rule(rules, "judge_independence", "warn", not overlap,
+                  "the main judge is the same model family as this bot's LLM and no second judge from another family "
+                  "checked it" if overlap else "graded by a judge from another model family, or checked by one")
+        src = ((run.get("provenance") or {}).get("bot_sources") or {}).get(bot["id"])
+        if src:
+            if src.get("own_code") is None:
+                text = (f"source {src.get('path')} not found" if src.get("missing") else
+                        f"code version of {src.get('path')} unknown (no upstream, or no sha256 pinned in bots.json)")
+            elif src["own_code"]:
+                text = (f"graded the owner's code: {src.get('branch')} at {str(src.get('commit'))[:10]}" if src.get("kind") == "git"
+                        else f"graded the pinned code ({str(src.get('sha256'))[:12]})")
+            else:
+                text = ("graded code that isn't the owner's version: " + ", ".join(filter(None, [
+                    f"{src['ahead']} local commit(s)" if src.get("ahead") else None,
+                    "uncommitted changes" if src.get("dirty") else None,
+                    "files differ from the pinned hash" if src.get("kind") == "files" else None])))
+            _rule(rules, "bot_source", "warn", src.get("own_code"),
+                  text + (f" (behind its upstream by {src['behind']})" if src.get("behind") else ""))
+        profile_id = configs.get(bot["id"], {}).get("profile")
+        try:
+            status, rv = profile_review(evaluator.load_suite(run["suite"]), profile_id) if profile_id else (None, None)
+        except (OSError, ValueError):
+            status, rv = None, None
+        if status:
+            _rule(rules, "profile_reviewed", "warn", status == "reviewed",
+                  f"store profile '{profile_id}' reviewed by {rv['by']} on {rv['at'][:10]}" if status == "reviewed" else
+                  f"store profile '{profile_id}' changed since {rv['by']} reviewed it" if status == "changed" else
+                  f"store profile '{profile_id}' (its facts and which skills count as not supported) hasn't been "
+                  "reviewed by the bot's owner: compliance.py review-profile")
         if "max_unknown_pii" in warn:
             pii = b.get("unknown_pii")
             n = sum(pii.values()) if pii is not None else None
@@ -158,6 +197,95 @@ def gate_text(result):
         lines += [f"    {'BLOCK' if r['level'] == 'block' else 'WARN'}: {r['text']}"
                   for r in b["rules"] if r["ok"] is False]
     return "\n".join(lines)
+
+
+# ---------- Store profile review ----------
+# Whoever writes the suite also writes every bot's profile, including the capabilities that decide which cases count
+# for that bot. When that person owns one of the bots, the other bots' owners should confirm their profiles.
+
+def profile_digest(profile):
+    """Hash of what a profile review covers: the profile (without its review) and its data files' contents."""
+    files = {p: governance.file_sha256(os.path.expanduser(p)) for p in profile.get("data_files", [])}
+    return governance.sha256({"profile": {k: v for k, v in profile.items() if k != "review"}, "files": files})
+
+
+def profile_review(suite, profile_id):
+    """("reviewed" | "changed" | "unreviewed", the review or None) for one of a suite's profiles."""
+    profile = (suite.get("profiles") or {}).get(profile_id)
+    if profile is None:
+        return None, None
+    review = profile.get("review")
+    if not review:
+        return "unreviewed", None
+    return ("reviewed" if review.get("sha256") == profile_digest(profile) else "changed"), review
+
+
+def profile_sheet(suite_id, profile_id):
+    """A one-page Markdown review sheet for a bot's owner: the facts its cases are filled with, the skills it is
+    excused from (and the cases that drops), what the judge is told about its store, and how to confirm."""
+    suite = evaluator.load_suite(suite_id)
+    profile = (suite.get("profiles") or {}).get(profile_id)
+    if profile is None:
+        raise KeyError(profile_id)
+    caps = set(profile.get("capabilities") or [])
+    needs = sorted({r for c in suite["cases"] for r in c.get("requires", [])})
+    dropped = {r: [c["id"] for c in suite["cases"] if r in c.get("requires", [])] for r in needs if r not in caps}
+    used = {}
+    for c in suite["cases"]:
+        for name in re.findall(r"\{(\w+)(?:\|upper)?\}", json.dumps({k: c.get(k) for k in ("turns", "variants", "expect",
+                                                                                         "expect_trace", "rubric")})):
+            used.setdefault(name, set()).add(c["id"])
+    status, review = profile_review(suite, profile_id)
+    lines = [f"# Store profile review: {profile.get('name', profile_id)}", "",
+             f"Suite `{suite_id}`, profile `{profile_id}`. Status: **{status}**"
+             + (f" (by {review['by']} on {review['at'][:10]})" if review else "") + ".", "",
+             "Every test case is a template; this profile fills it in for your bot. Please check that each fact below is "
+             "true of your bot, that the skills it is excused from are really ones it doesn't have, and that the "
+             "description the judge reads is right. Anything wrong makes your bot fail cases it answered correctly (or pass "
+             "ones it didn't).", "",
+             "## Skills your bot is excused from", ""]
+    lines += ([f"- **{r}**: not asked, and left out of every bot's overall score: {', '.join(ids)}" for r, ids in dropped.items()]
+              or ["- None: every case applies to your bot."])
+    lines += ["", f"Skills it is marked as having: {', '.join(sorted(caps)) or 'none listed'}.", "",
+              "## Facts your cases are filled with", "", "| Placeholder | Your bot's value | Used in |", "|---|---|---|"]
+    for k, v in sorted((profile.get("vars") or {}).items()):
+        if v is None:
+            continue
+        shown = " / ".join(map(str, v)) if isinstance(v, list) else str(v)
+        cases = sorted(used.get(k, []))
+        lines.append(f"| `{k}` | {shown.replace('|', '\\|')[:160]} | {', '.join(cases[:6])}{' ...' if len(cases) > 6 else ''} |")
+    unset = sorted(k for k, v in (profile.get("vars") or {}).items() if v is None)
+    if unset:
+        lines += ["", f"Not set for your bot (those checks are skipped): {', '.join(f'`{k}`' for k in unset)}."]
+    lines += ["", "## What the judge is told about your store", "", "> " + (profile.get("context") or "(nothing)").replace("\n", "\n> "),
+              "", "The judge also reads these data files in full: "
+              + (", ".join(f"`{p}`" for p in profile.get("data_files", [])) or "none") + ".", "",
+              "## To confirm", "",
+              "Reply with corrections, or once it's right run (or ask the test owner to run, naming you):", "",
+              f"    .venv/bin/python compliance.py review-profile {suite_id} {profile_id} --reviewer \"<your name>\"", "",
+              "That records your review with a hash of this profile and its data files; any later change to them shows "
+              "as \"changed since reviewed\" on the release gate."]
+    return "\n".join(lines) + "\n"
+
+
+def review_profile(suite_id, profile_id, reviewer):
+    path = os.path.join(evaluator.SUITES_DIR, f"{evaluator.load_suite(suite_id) and suite_id}.json")
+    with open(path, encoding="utf-8") as f:
+        suite = json.load(f)
+    if profile_id not in (suite.get("profiles") or {}):
+        raise KeyError(profile_id)
+    reviewer = (reviewer or "").strip()[:100]
+    if not reviewer:
+        raise ValueError("Name the reviewer (the bot's owner)")
+    profile = suite["profiles"][profile_id]
+    profile["review"] = {"by": reviewer, "at": time.strftime("%Y-%m-%dT%H:%M:%S"), "sha256": profile_digest(profile)}
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(suite, f, indent=1, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp, path)
+    governance.record("profile.review", f"{suite_id}/{profile_id}", reviewer=reviewer, sha256=profile["review"]["sha256"])
+    return profile["review"]
 
 
 # ---------- Sign-off ----------
@@ -215,6 +343,7 @@ def signoff(run_id, bot_id, decision, reviewer, note="", override=False):
         _save_signoffs(data)
     governance.record("signoff", run_id, bot=bot_id, decision=decision, reviewer=reviewer, override=entry["override"],
                       gate_verdict=g["verdict"], failed_rules=entry["failed_rules"], note=note)
+    entry["anchor"] = governance.anchor(f"sign-off: {g['label']} {decision}d from run {run_id}")
     return entry
 
 
@@ -498,9 +627,32 @@ def main(args):
         else:
             print(text)
         return 0
+    if cmd == "anchor":
+        a = governance.anchor(_opt(args, "--reason", "manual"))
+        if a is None:
+            print("Nothing anchored: the audit log is empty or broken (compliance.py audit)", file=sys.stderr)
+            return 2
+        print(f"Head #{a['seq']} {a['hash']} sent to: {', '.join(a['sent']) or 'nowhere (set AUDIT_ANCHOR_WEBHOOK or AUDIT_ANCHOR_S3)'}"
+              + (f"; failed: {'; '.join(a['errors'])}" if a.get("errors") else ""))
+        return 0 if a["sent"] and not a.get("errors") else 1
     if cmd == "audit":
         v = governance.verify_log()
-        print(f"Audit log: {v['entries']} entries, " + ("chain intact" if v["ok"] else f"BROKEN: {v['problem']}"))
+        print(f"Audit log: {v['entries']} entries, " + ("chain intact" if v["ok"] else f"BROKEN: {v['problem']}")
+              + (f", head #{v['entries']} {v['head']}" if v.get("head") else ""))
+        head = None
+        if _opt(args, "--head"):
+            seq, _, h = _opt(args, "--head").partition(":")
+            head = {"seq": int(seq), "hash": h, "key": "--head"}
+        elif os.environ.get("AUDIT_ANCHOR_S3"):
+            try:
+                head = governance.latest_s3_anchor()
+            except Exception as e:
+                print(f"Could not read the published heads in AUDIT_ANCHOR_S3: {e}", file=sys.stderr)
+        if head:
+            check = governance.verify_against(head["seq"], head["hash"])
+            print(f"Matches the published head #{head['seq']} ({head['key']})" if check["ok"]
+                  else f"DOES NOT MATCH the published head #{head['seq']} ({head['key']}): {check['problem']}")
+            v = {**v, "ok": v["ok"] and check["ok"]}
         for e in governance.read_log(int(_opt(args, "--limit", "20"))):
             print(f"  #{e['seq']} {e['at']} {e['actor']}: {e['action']} {e['target'] or ''}")
         return 0 if v["ok"] else 2
@@ -512,6 +664,27 @@ def main(args):
             verb = "Would delete" if "--dry-run" in args else "Deleted"
             print(f"{verb} {len(r['runs'])} run(s) older than {r['retention_days']} days"
                   + (f": {', '.join(r['runs'])}" if r["runs"] else "") + f"; kept {r['kept']} (baseline or signed off)")
+        return 0
+    if cmd == "profile-sheet" and len(args) > 2:
+        try:
+            text = profile_sheet(args[1], args[2])
+        except (KeyError, ValueError, FileNotFoundError) as err:
+            print(f"No sheet: {err}", file=sys.stderr)
+            return 3
+        if _opt(args, "-o"):
+            with open(_opt(args, "-o"), "w", encoding="utf-8") as f:
+                f.write(text)
+            print(f"Wrote {_opt(args, '-o')}")
+        else:
+            print(text)
+        return 0
+    if cmd == "review-profile" and len(args) > 2:
+        try:
+            r = review_profile(args[1], args[2], _opt(args, "--reviewer", ""))
+        except (KeyError, ValueError, FileNotFoundError) as err:
+            print(f"Not recorded: {err}", file=sys.stderr)
+            return 3
+        print(f"Profile {args[2]} in {args[1]} reviewed by {r['by']} ({r['sha256'][:12]})")
         return 0
     if cmd == "scan":
         for f in scan():

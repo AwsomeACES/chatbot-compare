@@ -4,3 +4,4 @@ uvicorn
 python-dotenv
 boto3
 playwright  # only for web_widget bots (chat widgets on a web page); uses CHROME_PATH or `playwright install chromium`
+spacy>=3.7,<4  # optional: finds names in bot replies (personal data); then: python -m spacy download en_core_web_sm

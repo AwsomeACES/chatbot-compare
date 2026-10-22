@@ -5,6 +5,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import evaluator  # noqa: E402
 import governance  # noqa: E402
 
 
@@ -13,4 +14,21 @@ def audit_log(monkeypatch, tmp_path):
     """Tests never write to the real audit log."""
     path = tmp_path / "audit.jsonl"
     monkeypatch.setattr(governance, "AUDIT_FILE", str(path))
+    monkeypatch.setattr(governance, "KEY_DIR", str(tmp_path / "keys"))
+    monkeypatch.delenv("AUDIT_KEY", raising=False)
+    for name in ("REGRESSION_WEBHOOK", "AUDIT_ANCHOR_WEBHOOK", "AUDIT_ANCHOR_S3"):  # never post from a test
+        monkeypatch.delenv(name, raising=False)
     return path
+
+
+@pytest.fixture(autouse=True)
+def no_timing_pass(monkeypatch):
+    """Runs in tests skip the timing pass (it would add calls the tests count); test_timing_pass turns it back on."""
+    monkeypatch.setattr(evaluator, "TIMING_N", 0)
+
+
+@pytest.fixture(autouse=True)
+def judge_keys(monkeypatch):
+    """Placeholder judge keys, so tests never depend on (or send) the real ones in .env; the judge calls are faked."""
+    for name in ("NVIDIA_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.setenv(name, "test-key")
