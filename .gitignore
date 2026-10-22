@@ -7,7 +7,7 @@ runs/.*.tmp
 runs/audit.jsonl
 runs/bot-logs/
 runs/nightly.log
-runs/servers.pids
+runs/*.pids
 bots.quick.json
 runs/prices/
 .~lock.*#

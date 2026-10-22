@@ -29,7 +29,9 @@ from dotenv import load_dotenv
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BOTS_FILE = os.path.join(HERE, "bots.json")
-PIDS_FILE = os.path.join(HERE, "runs", "servers.pids")
+# Which servers "up" started, for "down" to stop. nightly.sh uses its own file, so it stops only what it started,
+# never servers someone brought up by hand (a long run may still need them).
+PIDS_FILE = os.environ.get("SERVERS_PIDS_FILE") or os.path.join(HERE, "runs", "servers.pids")
 LOGS = os.path.join(HERE, "runs", "bot-logs")
 STARTUP_S = 60
 
