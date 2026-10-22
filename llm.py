@@ -51,6 +51,10 @@ KEY_PAGES = {"GOOGLE_API_KEY": "https://aistudio.google.com/apikey", "NVIDIA_API
 TIMEOUT = float(os.environ.get("JUDGE_TIMEOUT", "300"))
 RETRIES = 4
 RETRY_STATUS = {429, 500, 502, 503, 504}
+# A bad key or a missing / retired model (Kimi K3 answered 410 after its end of life): retrying can't help, so the
+# endpoint remembers it for DEAD_TTL_S and fails the next calls at once instead of asking again for every case
+FATAL_STATUS = {401, 403, 404, 410}
+DEAD_TTL_S = 900
 
 
 class JudgeError(BotError):
@@ -87,6 +91,14 @@ class Endpoint:
         self.interval = 60 / rpm if rpm else 0
         self._next = 0.0
         self._lock = threading.Lock()
+        self._dead = None  # (error, time.monotonic()) after a FATAL_STATUS answer
+
+    @property
+    def dead(self):
+        """The error that put this judge out of action (a bad key, a retired model), or None."""
+        if self._dead and time.monotonic() - self._dead[1] < DEAD_TTL_S:
+            return self._dead[0]
+        return None
 
     def __bool__(self):
         return bool(self.model)
@@ -118,6 +130,8 @@ class Endpoint:
         body = {"temperature": 0,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
                 "response_format": {"type": "json_schema", "json_schema": {"name": name, "schema": schema}}}
+        if self.dead:
+            raise BotError(f"Judge unavailable: {self.dead}")
         headers = self._headers()
         tries = (RETRIES + 1) * len(self.models)
         retryable = False
@@ -137,6 +151,8 @@ class Endpoint:
                     except BotError as e:  # answered (and charged) but unusable
                         raise JudgeError(str(e), [spent_of(meta)]) from e
                 error = f"{model}: HTTP {r.status_code}: {r.text[:300]}"
+                if r.status_code in FATAL_STATUS:
+                    self._dead = (error, time.monotonic())
                 if r.status_code not in RETRY_STATUS:
                     raise BotError(error)
                 retryable = True

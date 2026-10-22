@@ -260,13 +260,20 @@ $("startBtn").onclick = async () => {
 
 async function loadRuns() {
   const { runs } = await api("/api/runs");
+  // Runs cut off before they finished (the server stopped mid-run): easy to miss in the list, and lost unless resumed
+  const stopped = runs.filter((r) => r.status === "interrupted");
+  $("runNotice").hidden = !stopped.length;
+  $("runNotice").textContent = stopped.length ? `${stopped.length} run${stopped.length > 1 ? "s" : ""} stopped before finishing`
+    + ` (the app stopped mid-run). Open one and click Resume to ask only what's missing, or resume it from the terminal`
+    + ` with "regress.py resume <run id>", which keeps going if this server restarts.` : "";
   if (!runs.length) { $("runList").innerHTML = `<p class="muted">No runs yet.</p>`; return; }
   $("runList").replaceChildren(...runs.map((r) => {
     const row = document.createElement("div");
     row.className = "run-row"; row.tabIndex = 0; row.setAttribute("role", "button");
     const status = r.status === "done"
       ? (r.winner ? `Winner: ${esc(r.winner.label)}` : "done")
-      : r.status === "running" ? `running ${r.progress.done}/${r.progress.total}` : r.status;
+      : r.status === "running" ? `running ${r.progress.done}/${r.progress.total}`
+      : RESUMABLE.has(r.status) && r.progress ? `${r.status} ${r.progress.done}/${r.progress.total}` : r.status;
     const rg = r.regressions, marks = (r.baseline_for.length ? `<span class="pill base">baseline</span>` : "")
       + (rg?.compared ? (rg.critical ? `<span class="pill crit">${rg.critical} critical</span>` : rg.warnings
         ? `<span class="pill warn">${rg.warnings} warning${rg.warnings > 1 ? "s" : ""}</span>` : `<span class="pill ok">no regressions</span>`) : "")
@@ -357,6 +364,11 @@ function renderRun(run) {
       + (RESUMABLE.has(run.status) ? ` ${done} of ${total} done; resume to ask only what's missing or was blocked.` : "")
     : run.phase === "timing" ? `Timing each bot on its own (speed)… ${done} of ${total}`
     : run.phase === "comparing" ? `Comparing answers side by side… ${done} of ${total}` : `Running… ${done} of ${total} conversations`;
+  // A judge with a bad key or a retired model fails every verdict: say so at once, not after hours of chats
+  const judgeDown = [run.judge_down && `AI judge`, run.second_judge_down && `second judge`].filter(Boolean);
+  if (judgeDown.length && run.status === "running") $("progressText").textContent += ` · ⚠ The ${judgeDown.join(" and ")} `
+    + `can't grade (${(run.judge_down || run.second_judge_down).slice(0, 160)}). Chats go on, but their verdicts fail: `
+    + `cancel, fix the judge in .env, then resume (rejudge.py grades what's missing).`;
   $("cancelBtn").hidden = run.status !== "running";
   $("resumeBtn").hidden = !RESUMABLE.has(run.status);
 

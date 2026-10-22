@@ -172,3 +172,19 @@ def test_judge_preflight_reports_a_retired_judge_model(monkeypatch):
     assert [m for m, _ in regress.judge_preflight(second=True)] == ["moonshotai/kimi-k3"]
     monkeypatch.setattr(regress.evaluator.llm, "JUDGE", Fine())
     assert regress.judge_preflight(second=True) == []
+
+
+def test_resume_continues_a_stopped_run_in_this_process_then_checks_it(monkeypatch):
+    run = {"id": "r1", "status": "interrupted", "bots": [{"id": "a", "label": "A"}], "progress": {"done": 3, "total": 9}}
+    resumed = []
+
+    def resume_run(run_id, bots, budget_usd=None):
+        resumed.append((run_id, [b["id"] for b in bots]))
+        run.update(status="done", progress={"done": 9, "total": 9})
+    monkeypatch.setattr(regress, "load_bots", lambda: [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}])
+    monkeypatch.setattr(regress.evaluator, "resume_run", resume_run)
+    monkeypatch.setattr(regress, "report", lambda r, *a, **k: 0 if r["status"] == "done" else 9)
+    assert regress.cmd_resume(run) == 0 and resumed == [("r1", ["a"])]
+
+    monkeypatch.setattr(regress, "load_bots", lambda: [])  # its bot was since removed from bots.json
+    assert regress.cmd_resume({**run, "status": "interrupted"}) == 3

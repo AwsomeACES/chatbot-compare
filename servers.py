@@ -1,8 +1,10 @@
 """Start and stop the chatbot servers a run needs, as listed under "servers" in bots.json.
 
-Each server: {"name", "port", "dir", "cmd": [...], "env": {...}, "note"}. "dir" may start with ~ and may be relative
-to this project; "$NAME" in dir, cmd and env is filled from the environment (and this project's .env), with
-$COMPARE_DIR = this project. A server already answering on its port is left alone.
+Each server: {"name", "port", "dir", "cmd": [...], "env": {...}, "health": {"path", "expect"}, "note"}. "dir" may
+start with ~ and may be relative to this project; "$NAME" in dir, cmd and env is filled from the environment (and this
+project's .env), with $COMPARE_DIR = this project. A server already answering on its port is left alone. With "health",
+it counts as up only when GET <path> on its port returns 200 with "expect" in the body: another app holding the port
+(a different project's dev server on 8000, say) is reported as such instead of passing for the bot.
 
   servers.py up     start every server that isn't running; remember the ones it started (runs/servers.pids)
   servers.py down   stop only the servers "up" started
@@ -14,6 +16,8 @@ container: add a server here instead of editing the script.
 
 import json
 import os
+import urllib.error
+import urllib.request
 import re
 import signal
 import socket
@@ -25,7 +29,9 @@ from dotenv import load_dotenv
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BOTS_FILE = os.path.join(HERE, "bots.json")
-PIDS_FILE = os.path.join(HERE, "runs", "servers.pids")
+# Which servers "up" started, for "down" to stop. nightly.sh uses its own file, so it stops only what it started,
+# never servers someone brought up by hand (a long run may still need them).
+PIDS_FILE = os.environ.get("SERVERS_PIDS_FILE") or os.path.join(HERE, "runs", "servers.pids")
 LOGS = os.path.join(HERE, "runs", "bot-logs")
 STARTUP_S = 60
 
@@ -48,11 +54,34 @@ def is_up(port, host="localhost"):
         return s.connect_ex((host, int(port))) == 0
 
 
+def is_ours(server, host="localhost"):
+    """The app answering on the server's port is this server (no "health": any app on the port counts)."""
+    health = server.get("health")
+    if not health:
+        return True
+    try:
+        with urllib.request.urlopen(f"http://{host}:{server['port']}{health['path']}", timeout=5) as r:
+            return r.status == 200 and health.get("expect", "") in r.read(65536).decode("utf-8", "replace")
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+
+def state(server):
+    """"up", "down", or "other": something else holds the port."""
+    if not is_up(server["port"]):
+        return "down"
+    return "up" if is_ours(server) else "other"
+
+
 def start(server, wait_s=STARTUP_S):
     """Start one server unless it is up. Returns its pid when this call started it, else None."""
     name, port = server["name"], server["port"]
-    if is_up(port):
+    now = state(server)
+    if now == "up":
         print(f"{name}: already up on :{port}")
+        return None
+    if now == "other":
+        print(f"{name}: port {port} is held by another app, not started (stop that app or move {name} to a free port)")
         return None
     folder = os.path.join(HERE, expand(server.get("dir", ".")))
     if not os.path.isdir(folder):
@@ -69,7 +98,7 @@ def start(server, wait_s=STARTUP_S):
         return None
     deadline = time.monotonic() + wait_s
     while time.monotonic() < deadline:
-        if is_up(port):
+        if is_up(port) and is_ours(server):
             print(f"{name} started on :{port}")
             return proc.pid
         if proc.poll() is not None:
@@ -79,8 +108,27 @@ def start(server, wait_s=STARTUP_S):
     return proc.pid if proc.poll() is None else None
 
 
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # running, as another user
+        return True
+
+
+def started_before():
+    """The servers an earlier "up" started that are still running (a second "up" must not forget them)."""
+    try:
+        with open(PIDS_FILE) as f:
+            return {name: pid for name, pid in json.load(f).items() if alive(pid)}
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
 def up():
-    started = {}
+    started = started_before()
     for server in servers():
         pid = start(server)
         if pid:
@@ -91,10 +139,8 @@ def up():
 
 
 def down():
-    try:
-        with open(PIDS_FILE) as f:
-            started = json.load(f)
-    except (OSError, ValueError):
+    started = started_before()
+    if not os.path.exists(PIDS_FILE):
         return
     for name, pid in started.items():
         try:
@@ -107,7 +153,8 @@ def down():
 
 def status():
     for server in servers():
-        print(f"{server['name']:<12} :{server['port']:<6} {'up' if is_up(server['port']) else 'down'}")
+        now = state(server)
+        print(f"{server['name']:<12} :{server['port']:<6} {'held by another app' if now == 'other' else now}")
 
 
 if __name__ == "__main__":

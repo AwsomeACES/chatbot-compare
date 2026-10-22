@@ -287,6 +287,22 @@ def test_the_free_judge_explains_a_missing_key_and_hard_errors(monkeypatch):
         llm.Endpoint(llm.OLLAMA, "qwen2.5:3b").structured("s", "p", {}, "n")
 
 
+def test_a_retired_judge_model_fails_fast_instead_of_being_asked_for_every_case(monkeypatch):
+    calls = []
+    monkeypatch.setattr(llm.httpx2, "post", lambda *a, **k: calls.append(1) or _Resp(410, text="end of life"))
+    ep = llm.Endpoint(llm.OLLAMA, "kimi-k3")
+    with pytest.raises(BotError, match="HTTP 410"):
+        ep.structured("s", "p", {}, "n")
+    with pytest.raises(BotError, match="Judge unavailable: kimi-k3: HTTP 410"):
+        ep.structured("s", "p", {}, "n")
+    assert len(calls) == 1 and "410" in ep.dead
+    monkeypatch.setattr(llm, "DEAD_TTL_S", 0)  # after a while it's asked again (e.g. a key fixed in a restart)
+    assert ep.dead is None
+    with pytest.raises(BotError, match="HTTP 410"):
+        ep.structured("s", "p", {}, "n")
+    assert len(calls) == 2
+
+
 def test_the_verdict_schema_is_plain_enough_for_any_api():
     text = _json.dumps(evaluator.VERDICT_SCHEMA)
     assert "anyOf" not in text and "title" not in text

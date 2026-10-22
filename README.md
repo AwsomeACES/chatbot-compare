@@ -19,7 +19,10 @@ Reliance Digital multi-agent bot** (`~/projects/hussain-bot/digital-multi-agent-
      A mistake every customer got alike lowers correctness (and counts as a hallucination if a fact was invented),
      but doesn't fail a bias case by itself, so the fairness score measures fairness.
 2. **Every answer is checked three ways**
-   - *Exact checks*: the reply must contain the right fact, or must not contain leaked data.
+   - *Exact checks*: the reply must contain the right fact, or must not contain leaked data. A reply written mostly in
+     another script than the customer's Latin-script message (a Hindi answer to an English question) fails too,
+     except in the language cases (and any case with `"any_script": true`); on a bias case only when some customers
+     got another script and others didn't.
    - *AI judge*: a free model (GLM 5.3 on NVIDIA NIM's free API by default, see *Free models only* below) grades the conversation against a rubric for correctness, helpfulness and tone, 1–5,
      without being told which bot wrote it.
    - *Speed*: seconds per reply (median and 95th percentile).
@@ -155,16 +158,17 @@ Reliance Digital multi-agent bot** (`~/projects/hussain-bot/digital-multi-agent-
 ## Run it
 
 ```bash
-# 1. My bot (port 8000)
-cd ~/projects/reliance-digital-chatbot && .venv/bin/uvicorn app:app --port 8000
+# 1. My bot (port 8010: uvicorn's default 8000 is often taken by another project's dev server)
+cd ~/projects/reliance-digital-chatbot && .venv/bin/uvicorn app:app --port 8010
 
 # 2. Hussain's chatbot (port 8001): digital-multi-agent-ai-main, unzipped from ~/Downloads into ~/projects/hussain-bot.
 #    It's Hussain's zip as he sent it, plus token-usage reporting (measurement only); the changes we tried on his bot
 #    are kept as a patch in ~/projects/hussain-bot/patches for him to take or leave. bots.json pins the code's hash.
 #    Its backend/.env needs GOOGLE_API_KEY (and ANTHROPIC/OPENAI keys for the Claude / GPT variants); the Linux paths
-#    below replace the Windows D:\ paths. Without a Chroma index its RAG agent falls back to keyword search.
+#    below replace the Windows D:\ paths. Without GEMINI_MODEL it falls back to gemini-2.5-flash, not the 3.6 Flash
+#    bots.json grades it as. Without a Chroma index its RAG agent falls back to keyword search.
 cd ~/projects/hussain-bot/digital-multi-agent-ai-main/backend
-RAG_DATA_ROOT="$PWD/../data" CHROMA_PATH="$PWD/../data/chroma_db" CLAUDE_MODEL=claude-sonnet-5 OPENAI_MODEL=gpt-5-mini \
+RAG_DATA_ROOT="$PWD/../data" CHROMA_PATH="$PWD/../data/chroma_db" GEMINI_MODEL=gemini-3.6-flash CLAUDE_MODEL=claude-sonnet-5 OPENAI_MODEL=gpt-5-mini \
   ~/projects/chatbot-compare/.bots/reliance222-venv/bin/uvicorn main:app --port 8001
 
 # Mounika's chatbot (port 5000): her GitHub main (github.com/Mounika6115/AI-customer-support-chatbot, be890ac of
@@ -182,6 +186,10 @@ cd ~/projects/chatbot-compare && .venv/bin/uvicorn app:app --port 8080
 ```
 
 Open http://localhost:8080. Run the app's own tests with `.venv/bin/python -m pytest tests`.
+A run started from the dashboard lives in the server process, so restarting the server cuts it off ("interrupted";
+the start screen lists these). Resume one from its page, or from the terminal with `.venv/bin/python regress.py resume
+<run_id>`; a long run started from the terminal (`regress.py run --bots a,b --no-confirm`) survives server restarts,
+and the dashboard shows its progress.
 Env vars: the judge settings in *Free models only* below, `SECOND_JUDGE_SAMPLE` (share re-graded, default 1), `JUDGE_CONCURRENCY` (conversations graded at once, default 4:
 grading runs in its own pool, so a bot's chats never wait for a slow judge; a grade not started when a run is
 cancelled is left for `rejudge.py`, which also fills in missing second-judge verdicts), `TIMING_SAMPLES` (default 5), `SAVE_EVERY` (seconds between saves of a running run, default 3),
@@ -201,7 +209,9 @@ Nothing here calls a paid model by default:
   that runs out leaves a "judge error" on the remaining cases, and `rejudge.py <run_id>` grades just those later.
   A run whose judge graded under 90% of a ranked bot's answered cases (`MIN_JUDGE_COVERAGE`) names no winner, and the
   release gate's `judge` rule fails it, so a dead judge can't leave a ranking on exact checks alone that looks complete.
-  `regress.py run` asks each judge one question first and skips the night (exit 3) if one doesn't answer.
+  `regress.py run` asks each judge one question first and skips the night (exit 3) if one doesn't answer. A judge that
+  answers with a bad key or a missing / retired model (HTTP 401, 403, 404, 410) isn't asked again for every case: its
+  calls fail at once for 15 minutes, and the run page warns within a minute of the first chat, so you can cancel.
 - **Running out of quota**: the start screen estimates the run's judge calls and how long they take at `JUDGE_RPM`;
   set `JUDGE_DAILY_LIMIT` to your plan's daily quota and it warns before a run that needs more. Set
   `JUDGE_FALLBACK_MODEL` (and `JUDGE_FALLBACK_BASE_URL`, default the local Ollama) to have a fallback judge take over
@@ -219,9 +229,11 @@ Nothing here calls a paid model by default:
 - **Bots**: VoltKart runs free on a local model (`mine-qwen-local`: `ollama pull qwen2.5:3b`; VoltKart's
   `providers.py` has a `qwen2.5-3b-local` model). It's slow on CPU, so it chats one test at a time. Hussain's and
   Mouni's chatbots use Gemini, which is free with an AI Studio key in their own `.env` files. The Bedrock-backed
-  VoltKart bots (`mine-claude`, `mine-haiku`, `mine-nova`) are disabled in `bots.json` because Bedrock bills AWS.
+  VoltKart bots `mine-claude` and `mine-haiku` are enabled as paid test targets (approved 2026-10-07): picking them
+  bills the project's AWS account, and so does a nightly check while they have a baseline. `mine-nova` stays disabled.
 `rejudge.py <run_id> --compare` adds the comparative ranking to a run saved without it. Saved runs from older
-versions are re-scored with the current rules when the server loads them.
+versions are re-scored with the current rules when the server loads them (the new summaries are cached in
+`runs/summary_cache.json`, so a restart doesn't re-score them again; the run files keep their results as recorded).
 
 The debug trace (white-box) needs the trace changes in each bot: VoltKart `app.py` (`debug` returns
 `trace.tools`), Hussain's `main.py` (its `meta` event names the routed agent) and Mouni's `routes/api.py` +
@@ -254,6 +266,7 @@ From the terminal (exit code 0 = clean, 1 = warnings, 2 = critical, 3 = error):
 ```bash
 .venv/bin/python regress.py baseline <run_id>   # make a run the baseline
 .venv/bin/python regress.py check <run_id>      # check a saved run
+.venv/bin/python regress.py resume <run_id>     # finish an interrupted run outside the server, then check it
 .venv/bin/python regress.py run                 # run every bot that has a baseline, then check (bots must be up)
 ```
 
@@ -270,9 +283,10 @@ run and is reported (exit 3) instead of turning every case into a false regressi
 `.env`) to a Slack-style incoming-webhook URL to post the report when something regressed or a bot was down.
 
 **Nightly:** the bots and the check must run on the same machine (a cloud scheduler such as `/schedule` can't reach
-`localhost`). `nightly.sh` starts every server listed under `"servers"` in `bots.json` that isn't up (VoltKart 8000,
-Hussain's 8001, Mouni's 5000, Ollama), runs the check, and stops the servers it started. To add a bot, add its server
-there, not to the script. From cron:
+`localhost`). `nightly.sh` starts every server listed under `"servers"` in `bots.json` that isn't up (VoltKart 8010,
+Hussain's 8001, Mouni's 5000, Ollama), runs the check, and stops the servers it started. A server counts as up only when its `"health"` page
+answers as that app, so another project's server on the same port is reported ("held by another app") instead of
+passing for the bot. To add a bot, add its server there, not to the script. From cron:
 
 ```
 0 2 * * * ~/projects/chatbot-compare/nightly.sh >> ~/projects/chatbot-compare/runs/nightly.log 2>&1
