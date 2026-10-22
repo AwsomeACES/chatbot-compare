@@ -162,9 +162,10 @@ cd ~/projects/reliance-digital-chatbot && .venv/bin/uvicorn app:app --port 8010
 #    It's Hussain's zip as he sent it, plus token-usage reporting (measurement only); the changes we tried on his bot
 #    are kept as a patch in ~/projects/hussain-bot/patches for him to take or leave. bots.json pins the code's hash.
 #    Its backend/.env needs GOOGLE_API_KEY (and ANTHROPIC/OPENAI keys for the Claude / GPT variants); the Linux paths
-#    below replace the Windows D:\ paths. Without a Chroma index its RAG agent falls back to keyword search.
+#    below replace the Windows D:\ paths. Without GEMINI_MODEL it falls back to gemini-2.5-flash, not the 3.6 Flash
+#    bots.json grades it as. Without a Chroma index its RAG agent falls back to keyword search.
 cd ~/projects/hussain-bot/digital-multi-agent-ai-main/backend
-RAG_DATA_ROOT="$PWD/../data" CHROMA_PATH="$PWD/../data/chroma_db" CLAUDE_MODEL=claude-sonnet-5 OPENAI_MODEL=gpt-5-mini \
+RAG_DATA_ROOT="$PWD/../data" CHROMA_PATH="$PWD/../data/chroma_db" GEMINI_MODEL=gemini-3.6-flash CLAUDE_MODEL=claude-sonnet-5 OPENAI_MODEL=gpt-5-mini \
   ~/projects/chatbot-compare/.bots/reliance222-venv/bin/uvicorn main:app --port 8001
 
 # Mounika's chatbot (port 5000): her GitHub main (github.com/Mounika6115/AI-customer-support-chatbot, be890ac of
