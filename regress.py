@@ -7,6 +7,10 @@ Usage:
       from the suite (a "Hi" can pass without the bot's LLM, e.g. with its quota gone); if one is
       down or out of quota the run is skipped and reported (exit 3), rather than scored as a wall of failures.
       Rewordings are used when the bots' baseline runs used them, unless --rewordings / --no-rewordings says.
+  .venv/bin/python regress.py resume <run_id>     Resumes an interrupted, cancelled or failed run in this process
+      (asks only what's missing), then checks it. A run started or resumed here isn't tied to the dashboard server,
+      so restarting the server doesn't cut it off; the dashboard shows its progress. `run --bots a,b --no-confirm`
+      likewise starts any comparison outside the server.
   .venv/bin/python regress.py check <run_id>      Checks a saved run against the baselines.
   .venv/bin/python regress.py baseline <run_id>   Makes a finished run the baseline for its bots.
 
@@ -124,6 +128,20 @@ def preflight(bots, suite=None):
     return down
 
 
+def judge_preflight(second=False):
+    """Judges that can't grade right now: [(model, error)]. A retired model (HTTP 404 / 410) or a missing key would
+    otherwise turn every verdict of the night into a "judge error"."""
+    down = []
+    for endpoint in [evaluator.llm.JUDGE] + ([evaluator.llm.SECOND_JUDGE] if second else []):
+        try:
+            endpoint.structured("Answer in JSON.", "Is 7 a prime number?",
+                                {"type": "object", "properties": {"prime": {"type": "boolean"}}, "required": ["prime"]},
+                                "preflight")
+        except BotError as e:
+            down.append((endpoint.model, str(e)[:200]))
+    return down
+
+
 def baseline_used_rewordings(ids):
     baselines = evaluator.load_baselines()
     return any((evaluator.get_run(baselines[i]) or {}).get("rewordings") for i in ids if i in baselines)
@@ -152,11 +170,18 @@ def cmd_run(args):
         print(text)
         notify(text)
         return 3
+    second_judge = bool(evaluator.llm.SECOND_JUDGE) and "--no-second-judge" not in args
+    judges_down = judge_preflight(second_judge) if "--no-judge" not in args else []
+    if judges_down:
+        text = "Chatbot Compare nightly run skipped, judge(s) not answering:\n" + "\n".join(f"- {m}: {e}" for m, e in judges_down)
+        print(text)
+        notify(text)
+        return 3
     rewordings = ("--rewordings" in args or baseline_used_rewordings(ids)) and "--no-rewordings" not in args
     run = evaluator.start_run(bots, option(args, "--suite", "store_support"),
                               "--no-judge" not in args, repeats=int(option(args, "--repeats", "1")),
                               comparative="--no-compare" not in args, rewordings=rewordings,
-                              second_judge=bool(evaluator.llm.SECOND_JUDGE) and "--no-second-judge" not in args,
+                              second_judge=second_judge,
                               case_ids=option(args, "--cases", "").split(",") if option(args, "--cases") else None)
     print(f"Run {run['id']}: {', '.join(ids)}" + (" (with rewordings)" if run.get("rewordings") else ""))
     wait(run)
@@ -168,8 +193,28 @@ def cmd_run(args):
     return report(run, "--always-notify" in args, None if "--no-confirm" in args else bots)
 
 
+def cmd_resume(run):
+    enabled = {b["id"]: b for b in load_bots()}
+    missing = [b["id"] for b in run["bots"] if b["id"] not in enabled]
+    if missing:
+        print(f"Unknown or disabled bot(s): {', '.join(missing)}", file=sys.stderr)
+        return 3
+    bots = [enabled[b["id"]] for b in run["bots"]]
+    try:
+        evaluator.resume_run(run["id"], bots)
+    except (ValueError, FileNotFoundError) as e:
+        print(e, file=sys.stderr)
+        return 3
+    print(f"Resuming run {run['id']}: {run['progress']['done']}/{run['progress']['total']} done")
+    wait(run)
+    if run["status"] != "done":
+        print(f"Run {run['id']} {run['status']}: {run.get('failure', '')}")
+        return 3
+    return report(run)
+
+
 def main(args):
-    if len(args) < 1 or args[0] not in ("run", "check", "baseline") or (args[0] != "run" and len(args) < 2):
+    if len(args) < 1 or args[0] not in ("run", "check", "baseline", "resume") or (args[0] != "run" and len(args) < 2):
         print(__doc__)
         return 3
     evaluator.load_runs()
@@ -181,6 +226,8 @@ def main(args):
         return 3
     if args[0] == "check":
         return report(run, "--always-notify" in args)
+    if args[0] == "resume":
+        return cmd_resume(run)
     try:
         print(f"Baseline for: {', '.join(evaluator.set_baseline(args[1]))}")
     except ValueError as e:

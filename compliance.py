@@ -111,9 +111,13 @@ def gate(run, policy=None, review_stats=None, baselines=None):
     for bot in run["bots"]:
         b, rules = summary.get(bot["id"], {}), []
         _rule(rules, "finished", "block", done, "run finished" if done else f"run is {run.get('status')}")
-        if g.get("require_judge"):
-            _rule(rules, "judge", "block", bool(run.get("judge")),
-                  "graded by the AI judge" if run.get("judge") else "run without the AI judge (exact checks only)")
+        if g.get("require_judge"):  # the judge on is not enough: it must have graded (nearly) every answered case
+            coverage, need = b.get("judge_coverage"), 100 * evaluator.MIN_JUDGE_COVERAGE
+            _rule(rules, "judge", "block", bool(run.get("judge")) and coverage is not None and coverage >= need,
+                  ("run without the AI judge (exact checks only)" if not run.get("judge")
+                   else "no judge verdicts" if coverage is None
+                   else f"graded by the AI judge: {coverage:g}% of answered cases (minimum {need:g}%)"),
+                  coverage)
         _rule(rules, "integrity", "block" if integrity == "modified" else "warn",
               None if integrity is None else integrity == "intact",
               {"intact": "results unchanged since the run was recorded",

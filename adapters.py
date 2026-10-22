@@ -44,9 +44,7 @@ import uuid
 from contextlib import closing
 from dataclasses import dataclass
 
-import anthropic
 import httpx2
-from anthropic import AnthropicBedrockMantle
 
 TIMEOUT = float(os.environ.get("BOT_TIMEOUT", "120"))
 MAX_CONTEXT = 8000  # characters of retrieved context kept per turn
@@ -424,6 +422,8 @@ _bedrock_clients = {}
 
 
 def bedrock_client(region=None):
+    from anthropic import AnthropicBedrockMantle  # imported here: the SDK takes seconds to load, and few bots use it
+
     region = region or os.environ.get("AWS_REGION", "us-east-1")
     if region not in _bedrock_clients:
         _bedrock_clients[region] = AnthropicBedrockMantle(aws_region=region)
@@ -436,6 +436,8 @@ class ClaudeBedrockConversation(Conversation):
         self.messages = []
 
     def _send(self, message):
+        import anthropic
+
         self.messages.append({"role": "user", "content": message})
         try:
             response = bedrock_client(self.cfg.get("region")).messages.create(

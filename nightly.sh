@@ -14,6 +14,8 @@ cd "$HERE" || exit 3
 # their own .env files need no key.
 set -a; [ -f "$HERE/.env" ] && . "$HERE/.env"; set +a
 
+export SERVERS_PIDS_FILE="$HERE/runs/nightly-servers.pids"  # "down" stops only the servers this script started
+
 echo "=== $(date '+%F %T') nightly regression check"
 .venv/bin/python servers.py up
 trap '.venv/bin/python servers.py down' EXIT

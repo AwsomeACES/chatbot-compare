@@ -1,13 +1,14 @@
 """The free models this app uses to grade and to write test cases, through any OpenAI-compatible chat API.
 
-Default main judge: Kimi K3 (Moonshot AI) on NVIDIA NIM's free API (a key from build.nvidia.com in NVIDIA_API_KEY).
+Default main judge: GLM 5.3 (Zhipu AI) on NVIDIA NIM's free API (a key from build.nvidia.com in NVIDIA_API_KEY).
+Kimi K3, the judge before it, reached end of life on NIM on 2026-10-15 (HTTP 410).
 It's not the family of any bot under test (they run Gemini and Claude), so no bot is graded alone by its own model
 family; Gemini is the second judge (.env), which can dispute a verdict but never pass a Gemini bot on its own. The
 same code talks to Gemini's free tier, a local Ollama ("http://localhost:11434/v1", no key) or Groq: set the base URL,
 model and key variable.
 
   JUDGE_BASE_URL     default https://integrate.api.nvidia.com/v1
-  JUDGE_MODEL        default moonshotai/kimi-k3 (kimi-k2.6 is listed by NIM but not served to every account). Only the
+  JUDGE_MODEL        default z-ai/glm-5.3 (kimi-k2.6 is listed by NIM but not served to every account). Only the
                      first is used unless JUDGE_SWITCH_MODELS=1, so every conversation in a run is graded by the same
                      model; a quota that runs out leaves "judge error" cases for rejudge.py to grade later with it
   JUDGE_SWITCH_MODELS  1 = when a model is overloaded or rate-limited, try the next one in the list, then the
@@ -50,6 +51,10 @@ KEY_PAGES = {"GOOGLE_API_KEY": "https://aistudio.google.com/apikey", "NVIDIA_API
 TIMEOUT = float(os.environ.get("JUDGE_TIMEOUT", "300"))
 RETRIES = 4
 RETRY_STATUS = {429, 500, 502, 503, 504}
+# A bad key or a missing / retired model (Kimi K3 answered 410 after its end of life): retrying can't help, so the
+# endpoint remembers it for DEAD_TTL_S and fails the next calls at once instead of asking again for every case
+FATAL_STATUS = {401, 403, 404, 410}
+DEAD_TTL_S = 900
 
 
 class JudgeError(BotError):
@@ -86,6 +91,14 @@ class Endpoint:
         self.interval = 60 / rpm if rpm else 0
         self._next = 0.0
         self._lock = threading.Lock()
+        self._dead = None  # (error, time.monotonic()) after a FATAL_STATUS answer
+
+    @property
+    def dead(self):
+        """The error that put this judge out of action (a bad key, a retired model), or None."""
+        if self._dead and time.monotonic() - self._dead[1] < DEAD_TTL_S:
+            return self._dead[0]
+        return None
 
     def __bool__(self):
         return bool(self.model)
@@ -117,6 +130,8 @@ class Endpoint:
         body = {"temperature": 0,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
                 "response_format": {"type": "json_schema", "json_schema": {"name": name, "schema": schema}}}
+        if self.dead:
+            raise BotError(f"Judge unavailable: {self.dead}")
         headers = self._headers()
         tries = (RETRIES + 1) * len(self.models)
         retryable = False
@@ -136,6 +151,8 @@ class Endpoint:
                     except BotError as e:  # answered (and charged) but unusable
                         raise JudgeError(str(e), [spent_of(meta)]) from e
                 error = f"{model}: HTTP {r.status_code}: {r.text[:300]}"
+                if r.status_code in FATAL_STATUS:
+                    self._dead = (error, time.monotonic())
                 if r.status_code not in RETRY_STATUS:
                     raise BotError(error)
                 retryable = True
@@ -175,6 +192,6 @@ def _endpoint(prefix, base_url, model, key_env, rpm, fallback=None):
 
 
 _FALLBACK = _endpoint("JUDGE_FALLBACK", OLLAMA, "", "", "0")
-JUDGE = _endpoint("JUDGE", NIM, "moonshotai/kimi-k3", "NVIDIA_API_KEY", "30",
+JUDGE = _endpoint("JUDGE", NIM, "z-ai/glm-5.3", "NVIDIA_API_KEY", "30",
                   fallback=_FALLBACK or None)
 SECOND_JUDGE = _endpoint("SECOND_JUDGE", OLLAMA, "", "", "0")

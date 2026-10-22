@@ -29,9 +29,8 @@ def test_up_starts_what_is_down_and_down_stops_only_that(tmp_path, monkeypatch):
         servers.up()
         started = json.loads((tmp_path / "servers.pids").read_text())
         assert list(started) == ["web"] and servers.is_up(port)  # the missing folder is reported, not started
-        servers.up()  # already up: left alone, nothing new to stop
-        assert json.loads((tmp_path / "servers.pids").read_text()) == {}
-        (tmp_path / "servers.pids").write_text(json.dumps(started))
+        servers.up()  # already up: left alone, and still remembered so "down" stops it
+        assert json.loads((tmp_path / "servers.pids").read_text()) == started
     finally:
         servers.down()
     import time
@@ -43,6 +42,32 @@ def test_up_starts_what_is_down_and_down_stops_only_that(tmp_path, monkeypatch):
     assert servers.expand("$NOT_SET_X/a") == "/a" and servers.expand("~/x").endswith("/x")
 
 
+def test_another_app_on_the_port_is_reported_not_taken_for_the_bot(tmp_path, monkeypatch, capsys):
+    import subprocess
+    import time
+    port = free_port()
+    other = subprocess.Popen([sys.executable, "-m", "http.server", str(port), "--bind", "localhost"], cwd=tmp_path,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(50):
+            if servers.is_up(port):
+                break
+            time.sleep(0.1)
+        (tmp_path / "api").mkdir()
+        (tmp_path / "api" / "models").write_text('{"store_name": "VoltKart"}')
+        bot = {"name": "bot", "port": port, "dir": str(tmp_path), "cmd": ["false"],
+               "health": {"path": "/api/models", "expect": "store_name"}}
+        assert servers.state(bot) == "up"  # the health page names the bot
+        wrong = {**bot, "health": {"path": "/api/models", "expect": "reliance-digital-ai"}}
+        assert servers.state(wrong) == "other" and servers.state({**bot, "health": {"path": "/nope"}}) == "other"
+        assert servers.start(wrong) is None and "held by another app" in capsys.readouterr().out
+        assert servers.state({**bot, "port": free_port()}) == "down"
+    finally:
+        other.terminate()
+        other.wait()
+
+
 def test_the_shipped_servers_are_well_formed():
     for s in servers.servers():
-        assert {"name", "port", "cmd"} <= set(s) and isinstance(s["cmd"], list), s
+        assert {"name", "port", "cmd", "health"} <= set(s) and isinstance(s["cmd"], list), s
+        assert s["health"]["path"].startswith("/") and s["health"]["expect"], s
