@@ -81,7 +81,10 @@ from adapters import BotError, open_conversation
 ROOT = os.path.dirname(__file__)
 RUNS_DIR = os.path.join(ROOT, "runs")
 BASELINES_FILE = os.path.join(RUNS_DIR, "baselines.json")  # bot id -> the run its later runs are compared with
-NOT_RUNS = {"baselines.json", "judge_labels.json", "signoffs.json"}  # other files kept in runs/ (arena*.json too)
+NOT_RUNS = {"baselines.json", "judge_labels.json", "signoffs.json", "summary_cache.json"}  # other files kept in runs/ (arena*.json too)
+# Summaries of runs saved by an older version of the scoring, re-scored on load. Kept apart from the run files (their
+# results stay as recorded), keyed by file mtime and SUMMARY_VERSION, so a restart doesn't re-score them all again.
+SUMMARY_CACHE = os.path.join(RUNS_DIR, "summary_cache.json")
 SUITES_DIR = os.path.join(ROOT, "suites")
 JUDGE_MODEL = llm.JUDGE.model  # free models only: see llm.py (Gemini free tier by default)
 SECOND_JUDGE_MODEL = llm.SECOND_JUDGE.model  # another family (e.g. a local Ollama model); "" = not configured
@@ -705,8 +708,18 @@ def _load_run_file(name):
     return run
 
 
+def _read_summary_cache():
+    try:
+        with open(SUMMARY_CACHE) as f:
+            cache = json.load(f)
+        return cache if isinstance(cache, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 def load_runs(only_new=False):
     """Load saved runs. only_new: just the files that appeared since (runs started by another process)."""
+    cache, cached = None, set()
     for name in os.listdir(RUNS_DIR):
         if name.endswith(".json") and not name.startswith("arena") and name not in NOT_RUNS:
             if only_new and name[:-5] in _runs:
@@ -721,9 +734,26 @@ def load_runs(only_new=False):
                 for r in run["results"]:
                     if r["category"] == "grounding":  # old name of the hallucination cases
                         r["category"] = "hallucination"
-                cases = [{"category": c} for c in {r["category"] for r in run["results"]}]
-                run["summary"] = summarise(run, {"cases": cases})
+                cache = _read_summary_cache() if cache is None else cache
+                hit = cache.get(run["id"]) or {}
+                if hit.get("mtime") == _mtimes[run["id"]] and (hit.get("summary") or {}).get("version") == SUMMARY_VERSION:
+                    run["summary"] = hit["summary"]
+                else:
+                    cases = [{"category": c} for c in {r["category"] for r in run["results"]}]
+                    run["summary"] = summarise(run, {"cases": cases})
+                    cache[run["id"]] = {"mtime": _mtimes[run["id"]], "summary": run["summary"]}
+                cached.add(run["id"])
             _runs[run["id"]] = run
+    if cache is not None and not only_new:  # drop entries of runs since deleted or re-saved with a current summary
+        cache = {k: v for k, v in cache.items() if k in cached}
+    if cache is not None:
+        try:
+            tmp = SUMMARY_CACHE + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(cache, f)
+            os.replace(tmp, SUMMARY_CACHE)
+        except OSError as e:  # only a cache: the summaries are still right, the next start just re-scores
+            log.warning("Could not save %s: %s", SUMMARY_CACHE, e)
 
 
 def list_runs():

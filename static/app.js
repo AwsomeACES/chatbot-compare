@@ -260,13 +260,20 @@ $("startBtn").onclick = async () => {
 
 async function loadRuns() {
   const { runs } = await api("/api/runs");
+  // Runs cut off before they finished (the server stopped mid-run): easy to miss in the list, and lost unless resumed
+  const stopped = runs.filter((r) => r.status === "interrupted");
+  $("runNotice").hidden = !stopped.length;
+  $("runNotice").textContent = stopped.length ? `${stopped.length} run${stopped.length > 1 ? "s" : ""} stopped before finishing`
+    + ` (the app stopped mid-run). Open one and click Resume to ask only what's missing, or resume it from the terminal`
+    + ` with "regress.py resume <run id>", which keeps going if this server restarts.` : "";
   if (!runs.length) { $("runList").innerHTML = `<p class="muted">No runs yet.</p>`; return; }
   $("runList").replaceChildren(...runs.map((r) => {
     const row = document.createElement("div");
     row.className = "run-row"; row.tabIndex = 0; row.setAttribute("role", "button");
     const status = r.status === "done"
       ? (r.winner ? `Winner: ${esc(r.winner.label)}` : "done")
-      : r.status === "running" ? `running ${r.progress.done}/${r.progress.total}` : r.status;
+      : r.status === "running" ? `running ${r.progress.done}/${r.progress.total}`
+      : RESUMABLE.has(r.status) && r.progress ? `${r.status} ${r.progress.done}/${r.progress.total}` : r.status;
     const rg = r.regressions, marks = (r.baseline_for.length ? `<span class="pill base">baseline</span>` : "")
       + (rg?.compared ? (rg.critical ? `<span class="pill crit">${rg.critical} critical</span>` : rg.warnings
         ? `<span class="pill warn">${rg.warnings} warning${rg.warnings > 1 ? "s" : ""}</span>` : `<span class="pill ok">no regressions</span>`) : "")

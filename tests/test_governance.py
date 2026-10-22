@@ -339,3 +339,29 @@ def test_a_run_whose_judge_failed_names_no_winner_and_fails_the_gate(store):
 def test_the_gate_accepts_a_judge_that_graded_every_answered_case(store):
     g = verdicts(compliance.gate(store(make_run())))
     assert rule(g["good"], "judge")["ok"] is True and "100%" in rule(g["good"], "judge")["text"]
+
+
+def test_an_old_runs_new_summary_is_cached_so_a_restart_does_not_re_score_it(tmp_path, monkeypatch):
+    run = make_run("old")
+    run["summary"]["version"] = evaluator.SUMMARY_VERSION - 1
+    (tmp_path / "old.json").write_text(json.dumps(run))
+    monkeypatch.setattr(evaluator, "RUNS_DIR", str(tmp_path))
+    monkeypatch.setattr(evaluator, "SUMMARY_CACHE", str(tmp_path / "summary_cache.json"))
+    monkeypatch.setattr(evaluator, "_runs", {})
+    monkeypatch.setattr(evaluator, "_mtimes", {})
+    scored = []
+    summarise = evaluator.summarise
+    monkeypatch.setattr(evaluator, "summarise", lambda *a: scored.append(1) or summarise(*a))
+    evaluator.load_runs()
+    first = evaluator._runs["old"]["summary"]
+    assert scored == [1] and first["version"] == evaluator.SUMMARY_VERSION
+    evaluator._runs.clear()
+    evaluator.load_runs()  # a restart: the cached summary, not a second re-score
+    assert scored == [1] and evaluator._runs["old"]["summary"] == json.loads(json.dumps(first))
+    assert json.loads((tmp_path / "old.json").read_text())["summary"]["version"] == evaluator.SUMMARY_VERSION - 1
+    (tmp_path / "old.json").write_text(json.dumps(run))  # the run file changed (e.g. rejudge.py): scored again
+    import os
+    os.utime(tmp_path / "old.json", (1, 1))
+    evaluator._runs.clear()
+    evaluator.load_runs()
+    assert scored == [1, 1]

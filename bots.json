@@ -9,7 +9,7 @@
       "llm": "Claude Sonnet 5",
       "type": "voltkart",
       "trace": true,
-      "base_url": "http://localhost:8000",
+      "base_url": "http://localhost:8010",
       "model": "claude-sonnet-5",
       "pricing": {
         "input": 2.0,
@@ -28,7 +28,7 @@
       "llm": "Claude Haiku 4.5",
       "type": "voltkart",
       "trace": true,
-      "base_url": "http://localhost:8000",
+      "base_url": "http://localhost:8010",
       "model": "claude-haiku-4-5",
       "pricing": {
         "input": 1.0,
@@ -48,7 +48,7 @@
       "rpm": 6,
       "type": "voltkart",
       "trace": true,
-      "base_url": "http://localhost:8000",
+      "base_url": "http://localhost:8010",
       "model": "gemini-2.5-flash",
       "pricing": {
         "input": 0,
@@ -65,7 +65,7 @@
       "llm": "GPT-5 mini",
       "type": "voltkart",
       "trace": true,
-      "base_url": "http://localhost:8000",
+      "base_url": "http://localhost:8010",
       "model": "gpt-5-mini",
       "enabled": false
     },
@@ -77,7 +77,7 @@
       "llm": "Amazon Nova Pro",
       "type": "voltkart",
       "trace": true,
-      "base_url": "http://localhost:8000",
+      "base_url": "http://localhost:8010",
       "model": "nova-pro",
       "enabled": false
     },
@@ -90,7 +90,7 @@
       "llm": "Qwen2.5 3B (local)",
       "type": "voltkart",
       "trace": true,
-      "base_url": "http://localhost:8000",
+      "base_url": "http://localhost:8010",
       "model": "qwen2.5-3b-local",
       "max_concurrency": 1,
       "pricing": {
@@ -200,16 +200,20 @@
   ],
   "servers": [
     {"name": "ollama", "port": 11434, "dir": ".", "cmd": ["ollama", "serve"],
-     "note": "VoltKart's free local model"},
-    {"name": "voltkart", "port": 8000, "dir": "~/projects/reliance-digital-chatbot",
-     "cmd": [".venv/bin/uvicorn", "app:app", "--port", "8000"]},
+     "health": {"path": "/api/version", "expect": "version"}, "note": "VoltKart's free local model"},
+    {"name": "voltkart", "port": 8010, "dir": "~/projects/reliance-digital-chatbot",
+     "health": {"path": "/api/models", "expect": "store_name"},
+     "cmd": [".venv/bin/uvicorn", "app:app", "--port", "8010"],
+     "note": "8010, not uvicorn's default 8000, which other local projects' dev servers often take"},
     {"name": "hussain", "port": 8001, "dir": "~/projects/hussain-bot/digital-multi-agent-ai-main/backend",
      "env": {"RAG_DATA_ROOT": "~/projects/hussain-bot/digital-multi-agent-ai-main/data",
              "CHROMA_PATH": "~/projects/hussain-bot/digital-multi-agent-ai-main/data/chroma_db"},
+     "health": {"path": "/health", "expect": "reliance-digital-ai"},
      "cmd": ["$COMPARE_DIR/.bots/reliance222-venv/bin/uvicorn", "main:app", "--port", "8001"]},
     {"name": "mouni", "port": 5000, "dir": "~/projects/mouni-bot/github-latest/backend",
      "env": {"GEMINI_API_KEY": "$GOOGLE_API_KEY", "DATABASE_URL": "sqlite:///compare-test.db", "AI_PROVIDER": "gemini",
              "GEMINI_MODEL": "gemini-3.6-flash"},
+     "health": {"path": "/api/health", "expect": "\"ok\""},
      "cmd": [".venv-local/bin/python", "app.py"],
      "note": "Mouni's GitHub version, on its own test database (the adapter closes finished test chats there)"}
   ],

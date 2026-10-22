@@ -7,6 +7,10 @@ Usage:
       from the suite (a "Hi" can pass without the bot's LLM, e.g. with its quota gone); if one is
       down or out of quota the run is skipped and reported (exit 3), rather than scored as a wall of failures.
       Rewordings are used when the bots' baseline runs used them, unless --rewordings / --no-rewordings says.
+  .venv/bin/python regress.py resume <run_id>     Resumes an interrupted, cancelled or failed run in this process
+      (asks only what's missing), then checks it. A run started or resumed here isn't tied to the dashboard server,
+      so restarting the server doesn't cut it off; the dashboard shows its progress. `run --bots a,b --no-confirm`
+      likewise starts any comparison outside the server.
   .venv/bin/python regress.py check <run_id>      Checks a saved run against the baselines.
   .venv/bin/python regress.py baseline <run_id>   Makes a finished run the baseline for its bots.
 
@@ -189,8 +193,28 @@ def cmd_run(args):
     return report(run, "--always-notify" in args, None if "--no-confirm" in args else bots)
 
 
+def cmd_resume(run):
+    enabled = {b["id"]: b for b in load_bots()}
+    missing = [b["id"] for b in run["bots"] if b["id"] not in enabled]
+    if missing:
+        print(f"Unknown or disabled bot(s): {', '.join(missing)}", file=sys.stderr)
+        return 3
+    bots = [enabled[b["id"]] for b in run["bots"]]
+    try:
+        evaluator.resume_run(run["id"], bots)
+    except (ValueError, FileNotFoundError) as e:
+        print(e, file=sys.stderr)
+        return 3
+    print(f"Resuming run {run['id']}: {run['progress']['done']}/{run['progress']['total']} done")
+    wait(run)
+    if run["status"] != "done":
+        print(f"Run {run['id']} {run['status']}: {run.get('failure', '')}")
+        return 3
+    return report(run)
+
+
 def main(args):
-    if len(args) < 1 or args[0] not in ("run", "check", "baseline") or (args[0] != "run" and len(args) < 2):
+    if len(args) < 1 or args[0] not in ("run", "check", "baseline", "resume") or (args[0] != "run" and len(args) < 2):
         print(__doc__)
         return 3
     evaluator.load_runs()
@@ -202,6 +226,8 @@ def main(args):
         return 3
     if args[0] == "check":
         return report(run, "--always-notify" in args)
+    if args[0] == "resume":
+        return cmd_resume(run)
     try:
         print(f"Baseline for: {', '.join(evaluator.set_baseline(args[1]))}")
     except ValueError as e:
