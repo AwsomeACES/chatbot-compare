@@ -93,6 +93,9 @@ CONCURRENCY = int(os.environ.get("EVAL_CONCURRENCY", "4"))  # default parallel c
 RETRIES = int(os.environ.get("BLOCKED_RETRIES", "3"))  # extra attempts for a quota / rate-limit error
 BACKOFF_S = float(os.environ.get("BLOCKED_BACKOFF", "10"))  # first wait; doubles each retry
 MIN_COVERAGE = 0.8  # a bot scored on fewer of its cases than this is shown but not ranked
+# With the judge on, no winner is named unless the judge graded at least this share of each ranked bot's answered
+# cases: a dead or out-of-quota judge would otherwise leave a ranking on exact checks alone that looks like a full one
+MIN_JUDGE_COVERAGE = 0.9
 # The account, not the bot: quota / rate limits, billing, and this app's own one-chat-at-a-time lock. Retried, then
 # "blocked" and left out of the score.
 BLOCKED_ERRORS = re.compile(r"\b429\b|RESOURCE_EXHAUSTED|quota|rate limit|no credits|HTTP 402|bot is busy", re.I)
@@ -113,7 +116,7 @@ NON_FACTUAL = {"hallucination", "bias"} | SAFETY  # "robustness" (empty / huge i
 # 100 at or below the first value (ms), 0 at or above the second, linear in between. Median and p95 count half each,
 # because a long tail is what customers notice.
 SPEED_TARGETS = {"p50": (2000, 20000), "p95": (5000, 40000)}
-SUMMARY_VERSION = 8  # a saved run with an older summary is re-scored on load
+SUMMARY_VERSION = 9  # a saved run with an older summary is re-scored on load
 
 
 # ---------- Suites ----------
@@ -1975,6 +1978,8 @@ def summarise(run, suite):
             "tone": round(statistics.mean(j["tone"] for j in judged), 2) if judged else None,
             "errors": sum(1 for r in rs if r["error"]),
             "judge_errors": sum(1 for r in rs if r.get("judge_error")),
+            # share of the answered cases the judge gave a verdict on (None without the judge)
+            "judge_coverage": _pct([bool(r["judge"]) for r in rs if not r["error"]]) if use_judge else None,
             # the two judges disagreed: the judge's verdict counts for nothing on these
             "judge_disputed": sorted({r["case_id"] for r in rs if _disputed(r)}),
             "judge_models": dict(Counter(v["model"] for r in rs for v in (r.get("judge"),) if v and v.get("model"))),
@@ -2060,8 +2065,10 @@ def summarise(run, suite):
     overlap = sorted(b["label"] for b in bots if b["ranked"] and judge_families & {model_family(configs.get(b["id"], {}).get("llm"))}
                      and not (second_family and second_family not in judge_families and b.get("judge_agreement")))
     mixed = len({m for b in bots if b["ranked"] for m in b["judge_models"]}) > 1
+    judge_incomplete = sorted(b["label"] for b in ranked
+                              if b["judge_coverage"] is not None and b["judge_coverage"] < 100 * MIN_JUDGE_COVERAGE)
     winner = None
-    if ranked:
+    if ranked and not judge_incomplete:
         w = ranked[0]
         confidence = led.get(w["id"]) if len(ranked) > 1 else None
         winner = {"id": w["id"], "label": w["label"], "overall": w["overall"],
@@ -2079,7 +2086,8 @@ def summarise(run, suite):
             "comparisons": len([c for c in comparisons if _rankings(c)]),
             "order_sensitive": sum(1 for c in comparisons if c.get("order_sensitive")),
             "judge_agreement": agreement, "winner": winner, "judge_usage": judge_usage(run),
-            "judge_overlap": overlap, "mixed_judges": mixed}
+            "judge_overlap": overlap, "mixed_judges": mixed,
+            "min_judge_coverage": 100 * MIN_JUDGE_COVERAGE, "judge_incomplete": judge_incomplete}
 
 
 # ---------- Regressions: what got worse since each bot's baseline run ----------

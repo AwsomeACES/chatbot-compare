@@ -150,3 +150,25 @@ def test_preflight_asks_a_real_question_so_a_bot_whose_llm_is_out_is_caught(monk
     suite = {"cases": [{"id": "c", "turns": ["What does the {thing} cost?"]}], "profiles": {"p": {"vars": {"thing": "TV"}}}}
     assert regress.preflight([bot]) == []
     assert regress.preflight([{**bot, "profile": "p"}], suite)[0][0] == "M"
+
+
+def test_judge_preflight_reports_a_retired_judge_model(monkeypatch):
+    from adapters import BotError
+
+    class Retired:
+        model = "moonshotai/kimi-k3"
+
+        def structured(self, *args):
+            raise BotError("moonshotai/kimi-k3: HTTP 410: end of life")
+
+    class Fine:
+        model = "gemini-3.7-flash"
+
+        def structured(self, *args):
+            return {"prime": True}
+
+    monkeypatch.setattr(regress.evaluator.llm, "JUDGE", Retired())
+    monkeypatch.setattr(regress.evaluator.llm, "SECOND_JUDGE", Fine())
+    assert [m for m, _ in regress.judge_preflight(second=True)] == ["moonshotai/kimi-k3"]
+    monkeypatch.setattr(regress.evaluator.llm, "JUDGE", Fine())
+    assert regress.judge_preflight(second=True) == []

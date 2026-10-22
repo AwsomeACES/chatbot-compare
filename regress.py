@@ -124,6 +124,20 @@ def preflight(bots, suite=None):
     return down
 
 
+def judge_preflight(second=False):
+    """Judges that can't grade right now: [(model, error)]. A retired model (HTTP 404 / 410) or a missing key would
+    otherwise turn every verdict of the night into a "judge error"."""
+    down = []
+    for endpoint in [evaluator.llm.JUDGE] + ([evaluator.llm.SECOND_JUDGE] if second else []):
+        try:
+            endpoint.structured("Answer in JSON.", "Is 7 a prime number?",
+                                {"type": "object", "properties": {"prime": {"type": "boolean"}}, "required": ["prime"]},
+                                "preflight")
+        except BotError as e:
+            down.append((endpoint.model, str(e)[:200]))
+    return down
+
+
 def baseline_used_rewordings(ids):
     baselines = evaluator.load_baselines()
     return any((evaluator.get_run(baselines[i]) or {}).get("rewordings") for i in ids if i in baselines)
@@ -152,11 +166,18 @@ def cmd_run(args):
         print(text)
         notify(text)
         return 3
+    second_judge = bool(evaluator.llm.SECOND_JUDGE) and "--no-second-judge" not in args
+    judges_down = judge_preflight(second_judge) if "--no-judge" not in args else []
+    if judges_down:
+        text = "Chatbot Compare nightly run skipped, judge(s) not answering:\n" + "\n".join(f"- {m}: {e}" for m, e in judges_down)
+        print(text)
+        notify(text)
+        return 3
     rewordings = ("--rewordings" in args or baseline_used_rewordings(ids)) and "--no-rewordings" not in args
     run = evaluator.start_run(bots, option(args, "--suite", "store_support"),
                               "--no-judge" not in args, repeats=int(option(args, "--repeats", "1")),
                               comparative="--no-compare" not in args, rewordings=rewordings,
-                              second_judge=bool(evaluator.llm.SECOND_JUDGE) and "--no-second-judge" not in args,
+                              second_judge=second_judge,
                               case_ids=option(args, "--cases", "").split(",") if option(args, "--cases") else None)
     print(f"Run {run['id']}: {', '.join(ids)}" + (" (with rewordings)" if run.get("rewordings") else ""))
     wait(run)

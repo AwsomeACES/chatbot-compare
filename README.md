@@ -20,7 +20,7 @@ Reliance Digital multi-agent bot** (`~/projects/hussain-bot/digital-multi-agent-
      but doesn't fail a bias case by itself, so the fairness score measures fairness.
 2. **Every answer is checked three ways**
    - *Exact checks*: the reply must contain the right fact, or must not contain leaked data.
-   - *AI judge*: a free model (Kimi K3 on NVIDIA NIM's free API by default, see *Free models only* below) grades the conversation against a rubric for correctness, helpfulness and tone, 1–5,
+   - *AI judge*: a free model (GLM 5.3 on NVIDIA NIM's free API by default, see *Free models only* below) grades the conversation against a rubric for correctness, helpfulness and tone, 1–5,
      without being told which bot wrote it.
    - *Speed*: seconds per reply (median and 95th percentile).
    - The judge also flags any *invented fact* (price, spec, stock, policy, date, courier, rating) in every
@@ -83,7 +83,7 @@ Reliance Digital multi-agent bot** (`~/projects/hussain-bot/digital-multi-agent-
      judges disagree on pass/fail (fairness for bias cases, invented facts for the hallucination score), neither
      decides: the case counts on its exact checks alone, or is left out as not graded, and the scorecard lists these
      *disputed* cases. On a **safety** case the stricter judge wins: an answer either judge finds unsafe fails.
-     The main judge is Kimi, a family none of the bots runs on (they run Gemini and Claude), and the second judge is
+     The main judge is GLM, a family none of the bots runs on (they run Gemini and Claude), and the second judge is
      Gemini, so Gemini can dispute a verdict on a Gemini bot but never pass one on its own. Should the main judge
      share a bot's family with no second judge from another family, the scorecard and the release gate warn, since a
      judge can favour answers from its own family.
@@ -192,12 +192,16 @@ cancelled is left for `rejudge.py`, which also fills in missing second-judge ver
 
 Nothing here calls a paid model by default:
 
-- **Judge, comparative judge and `reword.py`**: Kimi K3 (Moonshot AI) on NVIDIA NIM's free API, through its
-  OpenAI-compatible API (`llm.py`). Put a free key from https://build.nvidia.com in `.env` as `NVIDIA_API_KEY`; a run
-  with the judge on refuses to start without it. Kimi K3 reasons before it answers, so a verdict takes 1–3 minutes on
+- **Judge, comparative judge and `reword.py`**: GLM 5.3 (Zhipu AI) on NVIDIA NIM's free API, through its
+  OpenAI-compatible API (`llm.py`). Kimi K3, the judge before it, was retired by NIM on 2026-10-15 (HTTP 410). Put a
+  free key from https://build.nvidia.com in `.env` as `NVIDIA_API_KEY`; a run
+  with the judge on refuses to start without it. GLM 5.3 reasons before it answers, so a verdict takes 1–3 minutes on
   the free tier and a full run takes hours: start it in the evening or let `nightly.sh` do it. Requests are paced to
   `JUDGE_RPM` (default 30 a minute); a quota
   that runs out leaves a "judge error" on the remaining cases, and `rejudge.py <run_id>` grades just those later.
+  A run whose judge graded under 90% of a ranked bot's answered cases (`MIN_JUDGE_COVERAGE`) names no winner, and the
+  release gate's `judge` rule fails it, so a dead judge can't leave a ranking on exact checks alone that looks complete.
+  `regress.py run` asks each judge one question first and skips the night (exit 3) if one doesn't answer.
 - **Running out of quota**: the start screen estimates the run's judge calls and how long they take at `JUDGE_RPM`;
   set `JUDGE_DAILY_LIMIT` to your plan's daily quota and it warns before a run that needs more. Set
   `JUDGE_FALLBACK_MODEL` (and `JUDGE_FALLBACK_BASE_URL`, default the local Ollama) to have a fallback judge take over

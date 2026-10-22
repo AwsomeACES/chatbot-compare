@@ -226,6 +226,13 @@
       "output": 0,
       "source": "free: NVIDIA NIM free API"
     }
+,
+    {
+      "model": "z-ai/glm-*",
+      "input": 0,
+      "output": 0,
+      "source": "free: NVIDIA NIM free API"
+    }
   ],
   "presets": [
     {

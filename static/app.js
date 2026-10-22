@@ -587,7 +587,12 @@ function renderTiles(run, s) {
     + (close && !s.winner.mixed_judges ? `, below the ${fmt(100 * s.clear_win)}% needed to call it.` : ".") : "")
     + (s.winner?.mixed_judges ? " Not called: the bots were graded by different judge models." : "")
     + (s.winner?.single_sample ? " Each case was asked once, so the range leaves out how much answers vary; use 2+ repeats for a firmer call." : "");
-  const hero = w
+  const judgeGap = (s.judge_incomplete || []).length;
+  const hero = w && judgeGap
+    ? `<div class="tile hero"><div class="label">No winner</div><div class="value">Judge verdicts missing</div>
+    <div class="sub">The AI judge graded under ${fmt(s.min_judge_coverage ?? 90)}% of the answers of ${esc(s.judge_incomplete.join(", "))}
+    (see judge errors), so the ranking would rest on exact checks alone. Fix the judge, then run <code>rejudge.py ${esc(run.id)}</code>.</div></div>`
+    : w
     ? `<div class="tile hero"><div class="label">${close ? "Too close to call — leader" : "Winner"}</div>
     <div class="value"><span class="swatch" style="background:${colorOf(run, w.id)}"></span>${esc(w.label)}</div>
     <div class="sub">Overall ${fmt(w.overall, 1)} / 100${range(w)}${s.winner.margin != null ? ` · ${fmt(s.winner.margin, 1)} points ahead of ${esc(ranked[1].label)}${range(ranked[1])}` : ""}.${sure}</div></div>`

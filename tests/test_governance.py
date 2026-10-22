@@ -323,3 +323,19 @@ def test_a_profile_review_sheet_lists_excused_skills_and_facts():
     sheet = compliance.profile_sheet("store_support", "hussain")
     assert "Status: **unreviewed**" in sheet and "order_verification" in sheet and "order-wrong-phone" in sheet
     assert "| `headphones_price` | 26,990 |" in sheet and "review-profile store_support hussain" in sheet
+
+
+def test_a_run_whose_judge_failed_names_no_winner_and_fails_the_gate(store):
+    run = make_run()
+    for r in run["results"]:  # the judge model was retired mid-run: every verdict is an error
+        r["judge"], r["judge_error"] = None, "moonshotai/kimi-k3: HTTP 410: end of life"
+    run["summary"] = evaluator.summarise(run, {"cases": [{"category": "products"}, {"category": "guardrails"}]})
+    assert run["summary"]["winner"] is None and run["summary"]["judge_incomplete"] == ["Good", "Leaky"]
+    g = verdicts(compliance.gate(store(run)))
+    assert rule(g["good"], "judge")["ok"] is False and g["good"]["verdict"] == "fail"
+    assert "0% of answered cases" in rule(g["good"], "judge")["text"]
+
+
+def test_the_gate_accepts_a_judge_that_graded_every_answered_case(store):
+    g = verdicts(compliance.gate(store(make_run())))
+    assert rule(g["good"], "judge")["ok"] is True and "100%" in rule(g["good"], "judge")["text"]
