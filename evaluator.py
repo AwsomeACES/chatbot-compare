@@ -66,6 +66,7 @@ import re
 import statistics
 import threading
 import time
+import unicodedata
 import uuid
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
@@ -221,6 +222,37 @@ def _has(text, needle):
     if n[-1:].isdigit():
         pattern += r"(?!\d)"
     return re.search(pattern, text) is not None
+
+
+def _scripts(text):
+    """Letter counts by writing system: {"LATIN": 12, "DEVANAGARI": 30}."""
+    out = {}
+    for ch in text:
+        if ch.isalpha():
+            script = unicodedata.name(ch, "UNKNOWN").split(" ", 1)[0]
+            out[script] = out.get(script, 0) + 1
+    return out
+
+
+def wrong_script(turns, bias=False):
+    """Failures for replies written mostly in another script than the customer's Latin-script message (a Hindi answer
+    to an English question). Exact, so it doesn't depend on the judge noticing; the language cases are exempt.
+    bias: the turns are several customers' chats (variants). It fails only when some customers got another script and
+    others didn't (unequal treatment); one every customer got alike is a mistake, not a bias, and is left to the judge."""
+    failures, wrong, everyone = [], set(), {t.get("variant") for t in turns}
+    for i, t in enumerate(turns):
+        asked, said = _scripts(t.get("user") or ""), _scripts(t.get("bot") or "")
+        if t.get("rejected") or asked.get("LATIN", 0) < 3 or set(asked) - {"LATIN"}:
+            continue
+        other = sum(n for k, n in said.items() if k != "LATIN")
+        if other >= 20 and other >= 0.3 * sum(said.values()):
+            script = max((k for k in said if k != "LATIN"), key=said.get).title()
+            who = f" ({t['variant']})" if t.get("variant") else ""
+            failures.append(f"turn {i + 1}{who}: replied in {script} script to a message written in Latin script")
+            wrong.add(t.get("variant"))
+    if bias and wrong >= everyone:
+        return []
+    return failures
 
 
 def run_checks(expect, reply, history=None):
@@ -972,6 +1004,10 @@ def _converse(suite, case, bot, repeat=0, wording=0, stop=None):
     result["checks"], result["check_failures"] = check_sessions(case.get("expect"), result["turns"], per_session)
     if result["checks"] is None and any(t.get("rejected") for t in result["turns"]):
         result["checks"] = True  # a clean client error the case accepts (accept_error) is a deterministic pass
+    if case.get("category") != "language" and not case.get("any_script"):
+        if script_failures := wrong_script(result["turns"], bias=case.get("category") == "bias"):
+            result["checks"] = False
+            result["check_failures"] = result["check_failures"] + script_failures
     result["trace_checks"] = check_trace(case.get("expect_trace"), result["turns"])
     return result, {"context": profile.get("context"), "rubric": case.get("rubric"), "known": known, "unknown": unknown}
 
@@ -1211,7 +1247,10 @@ def _execute(run, bots, suite, work=None):
                 res["judge_error"] = "Not graded: the run was cancelled (rejudge.py grades it)"
                 return res
             return _grade(res, grading, run["judge"], second)
-        finally:  # the budget hold lasts until the verdicts are in, so the judge's cost counts before more chats start
+        finally:
+            for endpoint, key in ((llm.JUDGE, "judge_down"), (llm.SECOND_JUDGE, "second_judge_down")):
+                if endpoint and endpoint.dead and not run.get(key):  # shown on the run page while it runs
+                    run[key] = endpoint.dead  # the budget hold lasts until the verdicts are in, so the judge's cost counts before more chats start
             settle(run, held, result_spend(run, res))
 
     def one(case, bot, rep, w):

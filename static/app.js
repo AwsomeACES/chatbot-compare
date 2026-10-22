@@ -364,6 +364,11 @@ function renderRun(run) {
       + (RESUMABLE.has(run.status) ? ` ${done} of ${total} done; resume to ask only what's missing or was blocked.` : "")
     : run.phase === "timing" ? `Timing each bot on its own (speed)… ${done} of ${total}`
     : run.phase === "comparing" ? `Comparing answers side by side… ${done} of ${total}` : `Running… ${done} of ${total} conversations`;
+  // A judge with a bad key or a retired model fails every verdict: say so at once, not after hours of chats
+  const judgeDown = [run.judge_down && `AI judge`, run.second_judge_down && `second judge`].filter(Boolean);
+  if (judgeDown.length && run.status === "running") $("progressText").textContent += ` · ⚠ The ${judgeDown.join(" and ")} `
+    + `can't grade (${(run.judge_down || run.second_judge_down).slice(0, 160)}). Chats go on, but their verdicts fail: `
+    + `cancel, fix the judge in .env, then resume (rejudge.py grades what's missing).`;
   $("cancelBtn").hidden = run.status !== "running";
   $("resumeBtn").hidden = !RESUMABLE.has(run.status);
 
