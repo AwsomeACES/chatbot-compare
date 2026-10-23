@@ -140,7 +140,12 @@
    },
    "data_files": [
     "~/projects/reliance-digital-chatbot/data.py"
-   ]
+   ],
+   "review": {
+    "by": "Gayitri Suravaram",
+    "at": "2026-10-23T16:48:49",
+    "sha256": "5cae9b7af70906013929d90bcb3709ee528da6f7e114ce4dfee835ba2b0ce1f6"
+   }
   },
   "hussain": {
    "name": "Reliance Digital multi-agent (Hussain's chatbot)",
