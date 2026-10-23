@@ -1,0 +1,307 @@
+{
+  "version": "evidence-guidance-v1",
+  "notice": "Guidance explains what evidence is missing and how to collect it. It never changes a recorded verdict.",
+  "statuses": {
+    "ready": "Ready",
+    "needs_input": "Needs input",
+    "tool_unavailable": "Tool unavailable",
+    "not_applicable": "Not applicable"
+  },
+  "outcomes": {
+    "measured_pass": {
+      "label": "Passed within scope",
+      "cause": "measured",
+      "text": "The check produced evidence and passed its recorded rules. Other risks may remain."
+    },
+    "flagged": {
+      "label": "Flagged, needs review",
+      "cause": "target_finding",
+      "text": "The check produced evidence of a possible problem. A person should confirm it before calling it a defect."
+    },
+    "confirmed_defect": {
+      "label": "Confirmed by review",
+      "cause": "target_finding",
+      "text": "A reviewer kept this flagged result after reading its evidence."
+    },
+    "review_cleared": {
+      "label": "Cleared by human review",
+      "cause": "human_review",
+      "text": "A reviewer marked the original flag as a false positive. The original result is kept in the audit history."
+    },
+    "declaration": {
+      "label": "Declaration only",
+      "cause": "target_information",
+      "text": "A control is declared in the supplied files. Whether it works needs a behavior test."
+    },
+    "insufficient_evidence": {
+      "label": "Finished, not enough evidence",
+      "cause": "target_information",
+      "text": "The scanner finished but the supplied files did not contain enough evidence to score this check."
+    },
+    "tool_unavailable": {
+      "label": "Tool unavailable",
+      "cause": "studio_limitation",
+      "text": "The scanner or its offline database was not available on this computer, so nothing was checked."
+    },
+    "tool_error": {
+      "label": "Tool error",
+      "cause": "studio_limitation",
+      "text": "The scanner started but its output could not be used. No pass was inferred."
+    },
+    "missing_input": {
+      "label": "Input missing",
+      "cause": "target_information",
+      "text": "The file or connection this check needs was not supplied."
+    },
+    "not_attempted": {
+      "label": "Not attempted",
+      "cause": "not_attempted",
+      "text": "The test stopped or was interrupted before this check ran."
+    },
+    "unverified": {
+      "label": "Not verified",
+      "cause": "unknown",
+      "text": "No evidence was recorded for this check."
+    }
+  },
+  "causes": {
+    "measured": "Measured result",
+    "human_review": "Human review",
+    "target_finding": "Possible problem in the bot",
+    "target_information": "Information missing from the bot's files",
+    "studio_limitation": "Studio limitation",
+    "not_attempted": "Not attempted",
+    "unknown": "Reason not recorded"
+  },
+  "checks": {
+    "white": {
+      "hardcoded_secrets": {
+        "title": "Hard-coded secrets",
+        "source_scope": "Gitleaks rules over the uploaded source.",
+        "gap": "studio_limitation",
+        "why_unverified": "The only matches were model names or other context that needs a person to review.",
+        "required_evidence": ["The cited source lines reviewed by a person"],
+        "owner_action": "Review each cited line. Rotate any real key and move it to a secret store.",
+        "next_test": "Rerun White-box testing after removing real keys."
+      },
+      "unsafe_patterns": {
+        "title": "Unsafe code patterns",
+        "source_scope": "Semgrep rules bundled with Studio.",
+        "gap": "studio_limitation",
+        "why_unverified": "Semgrep could not complete or no supported files were inspected.",
+        "required_evidence": ["Supported source files (.py, .js, .ts)"],
+        "owner_action": "Include the application source files in the ZIP.",
+        "next_test": "Rerun White-box testing."
+      },
+      "python_security": {
+        "title": "Python security issues",
+        "source_scope": "Bandit over Python files only.",
+        "gap": "target_information",
+        "applies_to": "python",
+        "why_unverified": "No Python source was inspected.",
+        "required_evidence": ["Python source files"],
+        "owner_action": "Include the Python source, or ignore this check for a non-Python bot.",
+        "next_test": "Rerun White-box testing with the Python source."
+      },
+      "dependency_vulnerabilities": {
+        "title": "Dependency vulnerabilities",
+        "source_scope": "OSV Scanner over dependency manifests and lockfiles, using an offline database.",
+        "gap": "target_information",
+        "why_unverified": "Package versions were missing, unresolved or placeholders, so advisories cannot be matched to installed versions.",
+        "required_evidence": [
+          "A lockfile or pinned inventory with exact versions (for example requirements.txt with ==, poetry.lock, uv.lock or package-lock.json)",
+          "An offline OSV database that covers every listed package"
+        ],
+        "owner_action": "Commit a lockfile with exact versions, or export the deployed environment (pip freeze or npm ls) into the ZIP.",
+        "next_test": "Rerun White-box testing; confirm the deployed versions match the lockfile."
+      },
+      "container_vulnerabilities": {
+        "title": "Container and dependency targets (Trivy)",
+        "source_scope": "Trivy filesystem scan of lockfiles and container/infrastructure configuration. This is not an image scan.",
+        "gap": "target_information",
+        "why_unverified": "Trivy finished but found no lockfile or container configuration it supports, so there was nothing to judge.",
+        "required_evidence": [
+          "A supported lockfile (for example poetry.lock, Pipfile.lock, package-lock.json, yarn.lock)",
+          "A Dockerfile or Kubernetes/Compose configuration for misconfiguration checks"
+        ],
+        "owner_action": "Add the lockfile and the Dockerfile the bot is deployed with. Studio does not build or scan uploaded images.",
+        "next_test": "Rerun White-box testing. A built-image scan needs a separate, isolated adapter that Studio does not have yet."
+      },
+      "prompt_injection_paths": {
+        "title": "Prompt injection paths",
+        "source_scope": "Semgrep rules that look for untrusted text placed into prompts.",
+        "gap": "studio_limitation",
+        "why_unverified": "Semgrep could not complete or no supported files were inspected.",
+        "required_evidence": ["Source files that build prompts"],
+        "owner_action": "Include the prompt-building source files.",
+        "next_test": "Pair with Black-box testing injection cases on the running bot."
+      },
+      "guardrail_path": {
+        "title": "Guardrail on the response path",
+        "source_scope": "Limited text rules looking for a guardrail, moderation or output-validation call.",
+        "gap": "target_information",
+        "why_unverified": "The limited source rules found no guardrail call. That does not prove there is none, and a call in code would still not prove it works.",
+        "required_evidence": [
+          "The written policy: which requests must be refused and which must be allowed",
+          "A running, authorized test endpoint for the bot"
+        ],
+        "owner_action": "Point Studio at the guardrail function or policy file, and share a test endpoint with written permission to test.",
+        "next_test": "Run Black-box testing Guardrails cases and Gray-box testing declared-behavior checks against the endpoint."
+      },
+      "tool_permissions": {
+        "title": "Tool permissions and ownership",
+        "source_scope": "Limited text rules looking for an allowlist, confirmation or approval control.",
+        "gap": "target_information",
+        "why_unverified": "Tool handlers and order ID or phone checks were found, but nothing shows the caller is authenticated and owns the record.",
+        "required_evidence": [
+          "The tool list with each tool's allowed callers (Gray-box Tools input)",
+          "Two synthetic test accounts on an isolated test endpoint",
+          "Tool-call logs showing whether a tool actually ran"
+        ],
+        "owner_action": "Supply a tools definition with permissions, and set up two synthetic test users who must not see each other's orders.",
+        "next_test": "Run Gray-box testing with the runtime tool permissions check. A bot saying it cannot do something is not proof the tool did not run."
+      },
+      "pii_logging": {
+        "title": "Private data in logs",
+        "source_scope": "Limited text rules looking for log statements that mention private fields.",
+        "gap": "target_information",
+        "why_unverified": "No deployed log or redaction evidence was supplied.",
+        "required_evidence": [
+          "Logs captured after a Gray-box canary chat, carrying the same run ID"
+        ],
+        "owner_action": "Run a Gray-box canary chat, then export the bot's logs from that time window and attach them to the same test.",
+        "next_test": "Use Attach updated test logs on the Gray-box test. A partial log cannot prove anything about other logging paths."
+      },
+      "retention": {
+        "title": "Data retention and expiry",
+        "source_scope": "Limited text rules looking for retention, TTL or expiry settings.",
+        "gap": "target_information",
+        "why_unverified": "Sessions are kept in memory with a manual reset, but no automatic expiry setting or test was found.",
+        "required_evidence": [
+          "The retention or TTL configuration",
+          "A controlled test environment where a synthetic session can be created and checked after expiry"
+        ],
+        "owner_action": "Document the retention period and provide a test environment. Do not use real customer sessions.",
+        "next_test": "Run the Gray-box runtime session expiry check with a synthetic session."
+      },
+      "model_config": {
+        "title": "Model configuration",
+        "source_scope": "A narrow text rule that looks for an unpinned 'latest' model alias. It is not a general model validator.",
+        "gap": "studio_limitation",
+        "why_unverified": "The rule only checks for a 'latest' alias. No expected model was declared and no response metadata was compared.",
+        "required_evidence": [
+          "The expected provider and model name",
+          "Response or trace metadata that reports the model actually used"
+        ],
+        "owner_action": "State the expected model in the Gray-box Configuration input and enable model metadata in the bot's logs.",
+        "next_test": "Run the Gray-box runtime model check with correlated response metadata. Studio will not guess a model from answer style."
+      },
+      "timeouts_retries": {
+        "title": "Timeouts and retries",
+        "source_scope": "Limited text rules looking for timeout, retry or fallback settings.",
+        "gap": "target_information",
+        "why_unverified": "Error handling or a library default does not show that a slow or failing provider is handled within a bounded time.",
+        "required_evidence": [
+          "The configured timeout and retry limits",
+          "A test environment where the provider can be made slow or return 429/5xx errors"
+        ],
+        "owner_action": "Set explicit timeout and retry limits and share a test environment with a controllable provider stub.",
+        "next_test": "Run the Gray-box runtime timeouts check against a slow/error provider stub."
+      },
+      "endpoint_controls": {
+        "title": "Endpoint access and rate controls",
+        "source_scope": "Limited text rules looking for authentication or rate-limit declarations.",
+        "gap": "target_information",
+        "why_unverified": "A matching line was found, but it may handle an upstream provider limit rather than limit incoming requests.",
+        "required_evidence": [
+          "The authentication and inbound rate-limit configuration",
+          "An authorized test endpoint and a synthetic user"
+        ],
+        "owner_action": "Confirm which code limits incoming requests and checks session ownership.",
+        "next_test": "Send authorized and unauthorized synthetic requests and record the responses."
+      },
+      "ci_safety": {
+        "title": "Safety tests in CI",
+        "source_scope": "Text rules over .github/workflows files that name safety test tools.",
+        "gap": "target_information",
+        "why_unverified": "The ZIP had no CI workflow that names safety, guardrail or injection tests.",
+        "required_evidence": [
+          "The CI workflow files",
+          "A link to a CI run for the exact commit being tested"
+        ],
+        "owner_action": "Add a CI job that runs safety tests and share the run link for the tested commit.",
+        "next_test": "Rerun White-box testing with the workflow; attach the run link. Studio's own CI does not prove the bot's CI."
+      }
+    },
+    "gray": {
+      "_default": {
+        "title": "Gray-box check",
+        "source_scope": "Private inputs you supply, used to target chat tests.",
+        "gap": "target_information",
+        "why_unverified": "The private input this check needs was not supplied, or no matching behavior was recorded.",
+        "required_evidence": ["The private input named for this check"],
+        "owner_action": "Upload the named private input.",
+        "next_test": "Rerun Gray-box testing."
+      },
+      "runtime_tool_permissions": {
+        "title": "Tool permissions at runtime",
+        "source_scope": "Run-correlated records from an isolated fixture with two synthetic users.",
+        "gap": "target_information",
+        "why_unverified": "No correlated record showed both an unauthorized attempt that did not run and an authorized call that did.",
+        "required_evidence": [
+          "Records with check=tool_permissions, run_id, principal, resource_owner, tool and tool_executed (true/false)"
+        ],
+        "owner_action": "Have synthetic user A try to use a tool on user B's record, and record whether the tool actually ran.",
+        "next_test": "Upload structured logs or fixture records that carry this test's run_id, then use Attach updated test logs."
+      },
+      "runtime_retention": {
+        "title": "Session expiry at runtime",
+        "source_scope": "Run-correlated observations of a synthetic session in a test environment.",
+        "gap": "target_information",
+        "why_unverified": "No observation showed the synthetic session existed before the declared expiry and was gone after it.",
+        "required_evidence": [
+          "retention_ttl_seconds in the Gray-box configuration",
+          "Records with check=retention, run_id, session_ref, session_created_at, observed_at and session_present"
+        ],
+        "owner_action": "Create one synthetic session, check it before and after the declared TTL, and export both observations.",
+        "next_test": "Upload structured logs or fixture records that carry this test's run_id, then use Attach updated test logs."
+      },
+      "runtime_model": {
+        "title": "Model used at runtime",
+        "source_scope": "Response or trace model metadata that carries this test's run_id.",
+        "gap": "target_information",
+        "why_unverified": "No expected model was declared, or correlated records carry no model metadata.",
+        "required_evidence": [
+          "expected_model in the Gray-box configuration or the bot's model field",
+          "Records with run_id and gen_ai.response.model"
+        ],
+        "owner_action": "Log the provider's reported model for each response, with the run ID.",
+        "next_test": "Upload structured logs or fixture records that carry this test's run_id, then use Attach updated test logs."
+      },
+      "runtime_timeouts": {
+        "title": "Timeouts and retries at runtime",
+        "source_scope": "Run-correlated attempt records from a slow or failing provider stub, plus the bot's timed response.",
+        "gap": "target_information",
+        "why_unverified": "No injected slow or error response with the bot's timed answer was recorded.",
+        "required_evidence": [
+          "timeout_seconds and max_retries in the Gray-box configuration",
+          "Records with check=timeouts_retries, run_id, stage=upstream_attempt and status_code or injected_delay_ms",
+          "A stage=bot_response record with elapsed_ms"
+        ],
+        "owner_action": "Point the bot's provider at a stub that delays or returns 429/5xx in a test environment, then export the attempt records.",
+        "next_test": "Upload structured logs or fixture records that carry this test's run_id, then use Attach updated test logs."
+      }
+    },
+    "black": {
+      "_default": {
+        "title": "Black-box chat test",
+        "source_scope": "Conversations with the running bot, judged by the selected AI judge.",
+        "gap": "target_information",
+        "why_unverified": "The bot could not be reached or the judge could not score the answer.",
+        "required_evidence": ["A working chat link or API endpoint", "An available judge"],
+        "owner_action": "Check the bot connection and judge settings.",
+        "next_test": "Resume the test."
+      }
+    }
+  }
+}

@@ -95,6 +95,20 @@ def trace_rows(raw: bytes) -> tuple[list[dict], dict]:
         "provider",
         "test_marker",
         "tool_allowed",
+        # Run-correlated runtime fixture records (see runtime_evidence.py).
+        "check",
+        "stage",
+        "principal",
+        "resource_owner",
+        "tool_executed",
+        "session_ref",
+        "session_created_at",
+        "observed_at",
+        "session_present",
+        "attempt",
+        "status_code",
+        "injected_delay_ms",
+        "elapsed_ms",
     }
     rows, canaries = [], []
     for row in data:

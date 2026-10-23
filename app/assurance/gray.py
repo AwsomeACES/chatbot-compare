@@ -14,6 +14,7 @@ from ..blackbox.studio_engine import panel
 from .intake import load
 from .models import Evidence, Finding, missing
 from .privacy import CANARY_MARKER, CANARY_PHONE, CANARY_SECRET, policy_rules, safe
+from .runtime_evidence import RUNTIME_CHECKS, evaluate
 
 CHECKS = {
     "declared_behavior": ("guardrails", ["system_prompt"]),
@@ -29,7 +30,29 @@ CHECKS = {
     "model_drift": ("configuration_reliability", ["logs"]),
     "token_cost": ("configuration_reliability", ["logs"]),
     "declared_config": ("configuration_reliability", ["config"]),
+    **{test: (category, ["logs"]) for test, (category, _) in RUNTIME_CHECKS.items()},
 }
+EXPECTATION_KEYS = ("expected_model", "retention_ttl_seconds", "timeout_seconds", "max_retries")
+
+
+def runtime_expectations(declared: object, target, policy: dict) -> dict:
+    """Owner-declared limits for runtime checks. Only plain numbers and a model name are kept."""
+    values = dict(policy)
+    if isinstance(declared, dict):
+        source = declared.get("runtime_expectations", declared)
+        for key in EXPECTATION_KEYS:
+            value = source.get(key) if isinstance(source, dict) else None
+            if key == "expected_model" and isinstance(value, str) and len(value) <= 200:
+                values[key] = value
+            elif (
+                key != "expected_model"
+                and isinstance(value, (int, float))
+                and not isinstance(value, bool)
+            ):
+                values[key] = value
+    if not values.get("expected_model") and target.model:
+        values["expected_model"] = target.model
+    return values
 
 
 async def private_settings(config: Settings, cloud_opt_in: bool) -> Settings:
@@ -192,6 +215,8 @@ class GrayEngine:
                 "kind": fields[0],
                 "bot": inputs.get("bot", 0),
             }
+            if test in RUNTIME_CHECKS:
+                row["config_input"] = inputs.get("config", "")
             if test == "declared_behavior" and row["input"]:
                 data, _ = load(row["input"], "system_prompt")
                 rules = policy_rules(str(data))
@@ -358,7 +383,17 @@ class GrayEngine:
                 continue
             try:
                 data, record = load(row["input"], row["kind"])
-                if test == "knowledge_hhem":
+                if test in RUNTIME_CHECKS:
+                    declared = (
+                        load(row["config_input"], "config")[0] if row.get("config_input") else {}
+                    )
+                    expectations = runtime_expectations(
+                        declared, config.targets[bot], self.suite.get("runtime_policy", {})
+                    )
+                    finding = evaluate(test, data, self.run_id, bot, expectations)
+                    finding.details["expectations"] = safe(expectations)
+                    findings.append(finding)
+                elif test == "knowledge_hhem":
                     findings.append(await self.hhem(row, data, config))
                 elif test == "canary_chat":
                     findings.append(await self.conversation(row, data, config))

@@ -16,6 +16,7 @@ from .gray import GrayEngine
 from .intake import load, remove
 from .models import Assessment, Finding, missing
 from .privacy import safe
+from .readiness import evidence_status
 from .white import WhiteEngine
 
 TASKS: dict[str, asyncio.Task] = {}
@@ -66,7 +67,8 @@ def integrity(run: dict) -> dict:
     return result
 
 
-def start(request: Assessment, original: dict | None = None) -> dict:
+def start(request: Assessment, original: dict | None = None, preflight: dict | None = None) -> dict:
+    """Plan, seal and launch an assessment. Preflight readiness is stored, never scored."""
     if len(TASKS) >= 2:
         raise ValueError("Two assurance assessments are active; wait or stop one first.")
     config = request.settings
@@ -177,6 +179,8 @@ def start(request: Assessment, original: dict | None = None) -> dict:
                         ).model_dump()
                     )
     run["planned_checks"] = planned
+    if preflight is not None:
+        run["preflight"] = preflight
     LIVE_CONFIGS[run["id"]] = config
     LIVE_RUNS[run["id"]] = run
     governance.append(
@@ -189,6 +193,14 @@ def start(request: Assessment, original: dict | None = None) -> dict:
         price_snapshot=config.price_snapshot_id,
         scanner_rules_version="source-audit-v1",
     )
+    if preflight is not None:
+        governance.append(
+            run,
+            "preflight_recorded",
+            preflight_hash=digest(preflight),
+            counts=preflight.get("counts", {}),
+            guidance_version=preflight.get("version", ""),
+        )
     checkpoint(run)
     stop = STOPS[run["id"]] = asyncio.Event()
     task = asyncio.create_task(execute(run, request, config, stop))
@@ -422,6 +434,7 @@ def release_inputs(run: dict) -> None:
 def export(run: dict, include_child: bool = True) -> dict:
     clean = safe(copy.deepcopy(run))
     clean["audit_integrity"] = integrity(run)
+    clean["evidence_status"] = safe(evidence_status(run))
     from ..blackbox.cost_summary import totals
 
     rows = metering.events(run["id"])

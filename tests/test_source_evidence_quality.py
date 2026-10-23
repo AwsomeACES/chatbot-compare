@@ -236,3 +236,30 @@ def test_out_of_bounds_secret_line_is_rejected(tmp_path):
             tmp_path,
             0,
         )
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        '    "opus": {"label": "Claude Opus 5", "provider": "anthropic", "api_model": "claude-opus-5",',
+        '                        "api_model": "gemini-2.5-flash-lite", "tier": "Pro"},',
+    ],
+)
+def test_model_name_in_mapping_entry_is_reviewable_not_a_confirmed_key(tmp_path, line):
+    result = secret_finding(tmp_path, line)
+    assert result.verdict == "not_tested" and result.review
+    assert result.details["model_context_matches"] == 1
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        '"x": {"api_model": "claude-opus-5", "api_key": "Cred12345678abcd"},',
+        '"api_model": "claude-opus-5", "note": "sk-abcdefghijkl"',
+        '"api_model": "claude-opus-5", "x": "Q8fj2KsLm09xYzPq"',
+        '"api_model": "claude-opus-5"}; key = "Cred12345678"',
+        '"api_key": "claude-opus-5",',
+    ],
+)
+def test_mapping_entry_with_other_opaque_values_keeps_the_alert(tmp_path, line):
+    assert secret_finding(tmp_path, line).verdict == "fail"

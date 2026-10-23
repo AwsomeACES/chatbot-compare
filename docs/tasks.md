@@ -2,7 +2,7 @@
 
 Purpose: connect product requirements to verified code and explicit remaining work.
 Owner: AI Agent Studio maintainers; named task owners: TODO: confirm.
-Last updated: 2026-10-17.
+Last updated: 2026-10-21.
 
 ## Contents
 
@@ -23,13 +23,13 @@ Last updated: 2026-10-17.
 
 ## Next 5 tasks
 
-These are proposed next implementation tasks, not work performed by this documentation request.
+These are proposed next implementation tasks. T-011, T-012, T-016 and T-017 are already implemented and tested; see their entries.
 
-1. **T-011:** stop model identifiers from becoming credential alerts without weakening real-secret detection.
-2. **T-012:** distinguish unresolved dependency versions from confirmed vulnerable installed versions.
-3. **T-017:** show prerequisites and applicability before users start scans.
-4. **T-016:** reconcile winner-confidence wording/statistics and historical Category tie settings.
-5. **T-013:** build a reusable, consent-aware White AI explanation service with honest provider failure handling.
+1. **T-013:** build a reusable, consent-aware White AI explanation service with honest provider failure handling.
+2. **T-014:** productize offline scanner/database readiness and provisioning.
+3. **T-019:** finish consistent status copy and keyboard-usable review controls.
+4. **T-020:** carry optional AI review and redaction tests into every export.
+5. **T-033:** lock Python dependencies.
 
 ## Status and sizing
 
@@ -69,9 +69,9 @@ P0 means correctness/privacy blocker; P1 means important product work; P2 means 
 
 - [x] **T-012 — Done · P0 · M:** qualify dependency advisories when installed versions are unknown. **Files:** `app/assurance/white.py`, `sandbox.py`; `tests/test_scanner_runtime.py`, `test_assurance.py`. **Requirements:** FR-07, FR-13, FR-18. **Acceptance:** `0.0.0`/unresolved requirements cannot be labeled confirmed installed vulnerabilities; real locked vulnerable and unaffected fixtures are distinguished; report requests a lockfile or resolved inventory. **Dependencies:** T-010. **Evidence:** `tests/test_source_evidence_quality.py` covers exact, unresolved, placeholder, mixed and empty inventories. Unresolved versions remain Not tested; scanner-reported exact versions are distinguished from verified deployed versions.
 
-- [ ] **T-013 — Todo · P1 · L:** make White AI explanation a product feature. **Files:** `app/assurance/service.py`, `routes.py`, `privacy.py`; `app/blackbox/judge.py`, `metering.py`; `app/blackbox_static/assurance.js`; `tests/test_assurance.py`, `test_assurance_ui.py`. **Requirements:** FR-08, FR-09, FR-10, FR-13, NFR-03. **Acceptance:** explicit private-source consent, bounded redacted excerpts, strict check-ID/evidence validation, permitted local fallback, no invented successful verdict after parse failure, audited provenance and every attempt metered. **Dependencies:** T-001, T-003, T-010. **Current gap:** optional UI fields exist; the latest review used external helpers and AI assistant review, not a reusable successful provider pipeline.
+- [ ] **T-013 — In progress · P1 · L:** make White AI explanation a product feature. **Files:** `app/assurance/service.py`, `routes.py`, `privacy.py`; `app/blackbox/judge.py`, `metering.py`; `app/blackbox_static/assurance.js`; `tests/test_assurance.py`, `test_assurance_ui.py`. **Requirements:** FR-08, FR-09, FR-10, FR-13, NFR-03. **Acceptance:** explicit private-source consent, bounded redacted excerpts, strict check-ID/evidence validation, permitted local fallback, no invented successful verdict after parse failure, audited provenance and every attempt metered. **Dependencies:** T-001, T-003, T-010. **Progress:** `app/assurance/explain.py` and `POST /api/assurance/runs/{id}/explain` implement a bounded explanation with exact check IDs, a strict schema, exact-quote grounding, local-only judges unless cloud use is consented per request, metered attempts (Unknown billing kept), retained parse failures and audit provenance; `tests/test_white_explanation.py` uses mocked providers. **Current gap:** no real provider has been validated with it yet, and the saved VoltKart narrative remains the earlier assistant review.
 
-- [ ] **T-014 — Todo · P1 · M:** productize offline scanner/database readiness and provisioning guidance. **Files:** `app/assurance/sandbox.py`, `routes.py`; `app/studio/scanners.json`; `docs/assurance-guide.md`; planned `scripts/prepare_scanner_data.py` (does not exist). **Requirements:** FR-07, FR-18, NFR-05. **Acceptance:** dependencies outside an OSV snapshot's package coverage are clearly blocked; hashes are verified; no update occurs inside the networkless scan; setup explains disk/time requirements. **Dependencies:** T-010. **Current gap:** project-scoped OSV preparation was done with helpers outside this repository.
+- [ ] **T-014 — In progress · P1 · M:** productize offline scanner/database readiness and provisioning guidance. **Files:** `app/assurance/sandbox.py`, `routes.py`; `app/studio/scanners.json`; `docs/assurance-guide.md`; `scripts/prepare_scanner_data.py`. **Requirements:** FR-07, FR-18, NFR-05. **Acceptance:** dependencies outside an OSV snapshot's package coverage are clearly blocked; hashes are verified; no update occurs inside the networkless scan; setup explains disk/time requirements. **Dependencies:** T-010. **Progress:** `prepare_scanner_data.py check` inspects images, databases and scoped-snapshot hashes offline and reports package coverage for a ZIP; `scope` builds a package-scoped OSV snapshot from an already downloaded official `all.zip` (`tests/test_prepare_scanner_data.py`). Readiness names packages outside a scoped snapshot. **Current gap:** Trivy database provisioning and disk/time guidance are still manual; not validated on macOS/Linux.
 
 ## Phase 4 — Combiner and labels
 
@@ -79,7 +79,7 @@ P0 means correctness/privacy blocker; P1 means important product work; P2 means 
 
 - [x] **T-016 — Done · P0 · M:** align winner confidence and Category tie handling with their saved protocol. **Files:** `app/blackbox/studio_engine.py`, `comparison_quality.py`, `reports.py`, `app/blackbox_static/simple.js`; `tests/test_simple_studio.py`, `test_comparison_quality.py`, `test_comparison_ui.py`. **Requirements:** FR-11, FR-17. **Acceptance:** choose and document the statistical resampling unit; method and displayed label agree; repeats do not inflate independent evidence; Category ties use the Run's saved tie margin; incompatible panels/coverage withhold the overall winner. **Dependencies:** T-003. **Evidence:** `comparison_quality.py`, `tests/test_comparison_quality.py` and `tests/test_comparison_ui.py` implement scenario means within fixed categories, all-pair adjustment, minimum distinct-scenario gates, saved tie margins and report parity. Default screening cases may be insufficient for a statistical winner; authored independence is not automatically validated.
 
-- [ ] **T-017 — Todo · P1 · M:** preview readiness and applicability across all selected Engines. **Files:** `app/assurance/models.py`, `routes.py`, `service.py`, `white.py`; `app/blackbox_static/simple.js`, `assurance.js`; `tests/test_assurance.py`, `test_assurance_ui.py`. **Requirements:** FR-18, NFR-02, NFR-07. **Acceptance:** before start, each check shows Ready, Needs input, Tool unavailable or Not applicable with a reason; completed versus measured counts stay separate; absence of source-pattern evidence is not treated as runtime proof. **Dependencies:** T-005, T-014. **Current gap:** plans/prerequisite reasons exist, but no complete shared applicability model or status panel.
+- [x] **T-017 — Done · P1 · M:** preview readiness and applicability across all selected Engines. **Files:** `app/assurance/models.py`, `routes.py`, `service.py`, `white.py`; `app/blackbox_static/simple.js`, `assurance.js`; `tests/test_assurance.py`, `test_assurance_ui.py`. **Requirements:** FR-18, NFR-02, NFR-07. **Acceptance:** before start, each check shows Ready, Needs input, Tool unavailable or Not applicable with a reason; completed versus measured counts stay separate; absence of source-pattern evidence is not treated as runtime proof. **Dependencies:** T-005, T-014. **Evidence:** `app/assurance/readiness.py`, `app/studio/evidence-guidance.json`, `POST /api/assurance/preflight`, the Evaluate readiness panel and `tests/test_evidence_readiness.py`. White readiness lists the ZIP without extracting it and inspects local scanner images/databases. Each started run stores its preflight and an audit hash. Results show processed, measured, declaration, unverified and review counts separately. **Remaining limit:** Gray and Black readiness only check that inputs/endpoints are supplied; they do not prove a bot is online or a judge is funded.
 
 ## Phase 5 — Dashboard
 
@@ -136,8 +136,8 @@ Source-inspected or recorded issues, not newly reproduced exploits:
 | White AI automation failed for the latest sample        | Gemini/Gemma structured-output failures, provider failure and invalid/timeout local replies; final explanations were assistant review. | T-013                              |
 | Resampling label differs from implementation            | Resolved by paired scenario means within fixed category strata; method is recorded explicitly.                                         | T-016                              |
 | Category tie display uses live settings                 | Resolved: backend category decisions and historical fallback use the saved Run tie margin.                                             | T-016                              |
-| Declaration wording is source-specific                  | `exists` maps to Found in code even for Gray inputs.                                                                                   | T-019                              |
-| “Not tested” groups different reasons                   | Missing inputs/tools, unsupported targets and insufficient source evidence share one verdict. Not all require a live bot to improve.   | T-017                              |
+| Declaration wording is source-specific                  | Finding lists now say Declaration only; the combined matrix and some summaries still use older wording.                                | T-019                              |
+| “Not tested” groups different reasons                   | Resolved for display: one verdict is kept, but results now show why (missing input, tool unavailable, insufficient evidence, etc.).    | T-017                              |
 | Partial reproducibility/redaction                       | External revisions are not all frozen; pattern redaction can mask public IDs or miss contextual PII.                                   | T-023, T-024                       |
 | Performance history is mixed                            | Progress includes a fixed-gate failure and later fixes; do not infer the current benchmark result.                                     | T-027                              |
 | Historical handoff text says history empty              | Later audit section retains a completed assessment; earlier empty-history statement describes cleanup time only.                       | T-030 documentation reconciliation |

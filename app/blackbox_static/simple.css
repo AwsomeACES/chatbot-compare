@@ -767,6 +767,22 @@ pre {
   font-size: 0.85rem;
   color: var(--muted);
 }
+.readiness-ok {
+  color: #11683a;
+  font-weight: 600;
+}
+.readiness-warn {
+  color: #8a4b00;
+  font-weight: 600;
+}
+.readiness-muted {
+  color: var(--muted);
+}
+.evidence-help {
+  border-left: 3px solid var(--border);
+  padding-left: 12px;
+  margin: 8px 0;
+}
 .finding-list > h3 {
   margin-top: 22px;
 }

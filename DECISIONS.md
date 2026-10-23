@@ -271,3 +271,30 @@ Store ordinary judge credentials in Studio's own ignored .env. Resolve them by t
 - Generic secret matches in narrowly recognized model-name assignments are unverified review items, not confirmed credentials or automatic passes. OSV placeholders/unresolved versions are Not tested with retained advisory context. Exact scanner-reported versions do not establish deployed versions. Raw secrets/matched source text remain redacted.
 - Assurance mutations must validate the existing audit/findings seal. Recovery and automatic retention cannot re-seal corrupt records; the owner can inspect/delete them explicitly. Open review items block a Ready to launch label. This is local tamper detection, not immutable external audit storage or certification.
 - This phase is validated with offline synthetic fixtures and local browser tests, not real provider evaluations or uploaded application execution. Shared-host authentication, dependency locking and native platform qualification remain separate work.
+
+## 2026-10-21 — Readiness and outcome are explanations, not verdicts
+
+- Keep the four `Finding.verdict` values. Preflight readiness (Ready, Needs input, Tool unavailable, Not applicable) is a separate stored report, and outcome classes (insufficient evidence, tool unavailable, missing input, not attempted, declaration, flagged, confirmed by review, cleared by review) are derived for display and export. This avoids a scoring, export and backward-compatibility migration.
+- Not applicable is used only when a check structurally cannot apply (Bandit with no Python files). Missing lockfiles, workflows or container files are Needs input, never Not applicable.
+- A scanner "fail" is Flagged until a person keeps it in review; only then is it Confirmed by review. Source declarations stay Declaration only.
+- Historical runs are explained by conservative inference from saved fields and are never rewritten. New White findings record `details.outcome` explicitly.
+- Guidance text and cause types live in `app/studio/evidence-guidance.json` so wording can change without code changes.
+
+## 2026-10-21 — Runtime evidence must be run-correlated
+
+- Runtime checks are Gray-box Findings with their own IDs (`runtime_*`) that name the White check they corroborate in `details.corroborates`. They never change the White Finding, so a source declaration is never promoted into a pass.
+- Only records with this assessment's `run_id` (and the matching `check` name) are evaluated. Uncorrelated or other-run records are counted and excluded. Bot wording is never evidence that a tool did not run.
+- A pass needs both sides of the behavior: an unauthorized attempt that did not execute and an authorized one that did; a session seen before and gone after the TTL; an injected fault plus a timed response. Otherwise the check stays Not tested.
+- Expectations are captured when the run starts and reused when later logs are attached, so a later upload cannot change the limits it is judged against.
+- The control worker parses Python with `ast` inside the scanner container and copies out only recognizable model names and numbers, never other literals.
+
+## 2026-10-21 — White AI explanations and scanner provisioning
+
+- An automated explanation is accepted only with every planned check ID exactly once, a fixed assessment vocabulary, and quotes that are exact substrings of the supplied reason or excerpts. Anything else is rejected and kept as a failed attempt; there is no partial acceptance.
+- Explanations are appended to `ai_explanations` with an audit event; they never rewrite `ai_source_review`, findings, scores or reviews. The earlier assistant review stays the displayed review where present.
+- Cloud judges are used only when the explanation request sets `cloud_consent`; earlier consent for specific VoltKart excerpts is not generalized.
+- Scanner data preparation is an explicit maintainer step outside evaluations. The script works only on files already on disk and writes a new folder; scoped snapshots are checked again at scan time against every package OSV inspected.
+
+## 2026-10-21 — Model names in mapping literals
+
+A generic secret match on a dict-literal line is qualified as a model-name review item only when the line contains nothing but string literals and `: , { }`, at least one `*model` key holds a structured model identifier, no key looks secret-like, and every other value is a model identifier or plain words. Everything else keeps the credential alert. Qualified matches remain Not tested with review, never a pass.

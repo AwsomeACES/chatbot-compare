@@ -170,6 +170,15 @@
             ><input type="checkbox" id="consent" />Allow test messages and AI review of the answers
             and reference facts. Provider charges may apply.</label
           >
+          <details id="readiness-panel">
+            <summary>Check readiness before starting <span class="muted">— optional</span></summary>
+            <p class="helper">
+              See which checks can run with the files and tools you have. Ready means a check can be
+              attempted, not that it will pass.
+            </p>
+            <button id="check-readiness" type="button">Check readiness</button>
+            <div id="readiness-results" aria-live="polite"></div>
+          </details>
           <div class="actions start-actions">
             <button id="start" class="primary" disabled>Start test</button
             ><button id="apply-judges" disabled>Update judges for this run</button>
@@ -208,6 +217,7 @@
             <details class="action-menu">
               <summary>More actions</summary>
               <button id="assurance-json" type="button">Download data (JSON)</button>
+              <button id="assurance-teammate" type="button">Download list for a teammate</button>
               <button id="assurance-reproduce" type="button">Repeat this test</button>
               <button id="assurance-delete" type="button" class="danger-quiet">
                 Delete this test

@@ -2,8 +2,11 @@
 
 import ast
 import asyncio
+import io
 import re
 import tempfile
+import tokenize
+import zipfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -11,6 +14,7 @@ from . import sandbox
 from .intake import load, unpack
 from .models import Evidence, Finding, missing
 from .privacy import safe
+from .readiness import check_guidance, inventory
 
 CHECKS = {
     "hardcoded_secrets": ("code_security", "gitleaks"),
@@ -30,6 +34,87 @@ CHECKS = {
 }
 
 
+def unverified(bot: int, test: str, reason: str, outcome: str, tool: str = "") -> Finding:
+    """A not-tested White Finding that records why, so the UI never has to guess."""
+    finding = missing("white", bot, CHECKS[test][0], test, reason)
+    finding.details = {"outcome": outcome}
+    finding.tool = tool
+    action = check_guidance("white", test).get("owner_action")
+    if outcome == "insufficient_evidence" and action:
+        finding.fix = action
+    elif outcome == "missing_input":
+        finding.fix = "Supply a valid source ZIP or public repository, then rerun this check."
+    elif outcome in ("tool_unavailable", "tool_error"):
+        finding.fix = "Install or repair the named scanner, then rerun this check."
+    return finding
+
+
+def _model_literal(literal: str) -> bool:
+    """A structured, lower-case model identifier; key prefixes never qualify."""
+    return bool(
+        re.fullmatch(r"[a-z][a-z0-9]*(?:[./:_-][a-z0-9]+)+", literal)
+        and not re.match(r"(?:sk-|gh[opusr]_|xox[baprs]-|AIza|AQ\.)", literal, re.I)
+        and (any(character.isdigit() for character in literal) or literal.endswith("-latest"))
+    )
+
+
+def _model_key(name: str) -> bool:
+    name = name.lower()
+    return name == "model" or name.endswith("_model")
+
+
+def _model_mapping_entry(line: str) -> bool:
+    """Qualify a dict-literal line such as ``"x": {"api_model": "model-1", ...}``.
+
+    Only string literals and ``: , { }`` are allowed, so assignments or code on the same
+    line take the normal credential path. Every other string value must look like a
+    model name or plain words without digits; anything opaque keeps the alert.
+    """
+    try:
+        tokens = []
+        for token in tokenize.generate_tokens(io.StringIO(line.strip()).readline):
+            tokens.append(token)
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        pass  # An unclosed brace at end of a fragment is expected.
+    significant = [
+        t
+        for t in tokens
+        if t.type not in (tokenize.NEWLINE, tokenize.NL, tokenize.ENDMARKER, tokenize.INDENT)
+    ]
+    if not significant or any(
+        t.type not in (tokenize.STRING, tokenize.OP)
+        or (t.type == tokenize.OP and t.string not in ":,{}")
+        for t in significant
+    ):
+        return False
+    try:
+        values = [
+            (ast.literal_eval(significant[i - 2].string), ast.literal_eval(t.string))
+            for i, t in enumerate(significant)
+            if t.type == tokenize.STRING
+            and i >= 2
+            and significant[i - 1].string == ":"
+            and significant[i - 2].type == tokenize.STRING
+        ]
+    except (ValueError, SyntaxError):
+        return False
+    if not all(isinstance(k, str) and isinstance(v, str) for k, v in values):
+        return False
+    if not any(_model_key(k) and _model_literal(v) for k, v in values):
+        return False
+    if any(re.search(r"key|secret|token|passw|credential|auth", k, re.I) for k, _ in values):
+        return False
+    return all(
+        not re.match(r"(?:sk-|gh[opusr]_|xox[baprs]-|AIza|AQ\.)", v, re.I)
+        and (
+            _model_literal(v)
+            or re.fullmatch(r"[A-Za-z][A-Za-z_ .()&/'-]*", v)
+            or (" " in v and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 .()&/'+-]*", v))
+        )
+        for _, v in values
+    )
+
+
 def _model_assignment(line: str, rule: str) -> bool:
     """Qualify generic model-name matches; never allowlist provider credential rules."""
     if rule != "generic-api-key":
@@ -37,27 +122,21 @@ def _model_assignment(line: str, rule: str) -> bool:
     try:
         statements = ast.parse(line.strip()).body
     except (SyntaxError, ValueError, RecursionError):
-        return False
+        return _model_mapping_entry(line)
     if len(statements) != 1 or not isinstance(statements[0], (ast.Assign, ast.AnnAssign)):
         return False
     statement = statements[0]
     targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
     if len(targets) != 1 or not isinstance(targets[0], ast.Name):
         return False
-    name = targets[0].id.lower()
     value = statement.value
-    if not (name == "model" or name.endswith("_model")):
+    if not _model_key(targets[0].id):
         return False
     if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
         return False
     # A structured, lower-case name is only context for review, never proof of safety.
     # Key prefixes and opaque/random strings still take the normal credential path.
-    literal = value.value
-    return bool(
-        re.fullmatch(r"[a-z][a-z0-9]*(?:[./:_-][a-z0-9]+)+", literal)
-        and not re.match(r"(?:sk-|gh[opusr]_|xox[baprs]-|AIza|AQ\.)", literal, re.I)
-        and (any(character.isdigit() for character in literal) or literal.endswith("-latest"))
-    )
+    return _model_literal(value.value)
 
 
 def _reported_exact_version(version: object) -> bool:
@@ -99,10 +178,9 @@ def parse(test: str, output: dict, source: Path, bot: int) -> Finding:
     review_note = ""
 
     def unscored(reason: str) -> Finding:
-        finding = missing("white", bot, category, test, reason)
-        finding.tool = tool
+        finding = unverified(bot, test, reason, "insufficient_evidence", tool)
         finding.tool_version = output["version"]
-        finding.details = details
+        finding.details = {**details, "outcome": "insufficient_evidence"}
         finding.evidence = evidence
         finding.consequence = "Available scanner evidence is insufficient to score this check; do not treat it as a pass."
         return finding
@@ -273,10 +351,35 @@ def parse(test: str, output: dict, source: Path, bot: int) -> Finding:
         if not data.get("files"):
             return unscored("No supported source files were inspected.")
         hits = data.get("hits", {}).get(test, [])
-        if not hits:
-            return unscored(
-                "No matching control evidence found by these limited text rules; absence is not proven.",
+        observed = data.get("observations", {}).get(test, [])
+        if observed or "observations" in data:
+            details.update(
+                source_observations=safe(observed[:10]),
+                python_files_parsed=data.get("python_files_parsed", 0),
+                python_parse_errors=safe(data.get("python_parse_errors", [])[:10]),
+                observation_note="Structured source declarations; not runtime behavior.",
             )
+        if test == "endpoint_controls" and any(
+            o.get("kind") == "upstream_rate_limit_handler" for o in observed
+        ):
+            review_note = (
+                " Upstream provider rate-limit handlers were found; they do not limit or "
+                "authenticate incoming requests."
+            )
+        if not hits:
+            reason = (
+                "No matching control evidence found by these limited text rules; "
+                "absence is not proven."
+            )
+            if observed:
+                reason += " Source parsing observed: " + "; ".join(
+                    f"{o['kind'].replace('_', ' ')}"
+                    + (f" ({o['value']})" if "value" in o else "")
+                    + f" at {o['file']}:{o['line']}"
+                    for o in observed[:3]
+                )
+                reason += ". These are declarations, not runtime proof."
+            return unscored(str(safe(reason)) + review_note)
         evidence = [source_evidence(source, h["file"], h["line"]) for h in hits[:10]]
         control = test not in ("pii_logging", "model_config")
     # A successful scan is scoped to its rules, not universal security coverage.
@@ -358,12 +461,11 @@ class WhiteEngine:
         bot, ident = plan[0]["bot"], plan[0]["code"]
         if not ident:
             return [
-                missing(
-                    "white",
+                unverified(
                     bot,
-                    row["category"],
                     row["test"],
                     "Upload a source ZIP or import a GitHub repository.",
+                    "missing_input",
                 )
                 for row in plan
             ]
@@ -391,17 +493,32 @@ class WhiteEngine:
                     path.chmod(0o755 if path.is_dir() else 0o644)
                 if not any(p.is_file() for p in source.rglob("*")):
                     return [
-                        missing(
-                            "white",
+                        unverified(
                             bot,
-                            r["category"],
                             r["test"],
                             "Source archive contains no files to scan.",
+                            "missing_input",
                         )
                         for r in plan
                     ]
                 tools = {}
                 results = []
+                try:
+                    files = await asyncio.to_thread(inventory, archive)
+                except (ValueError, OSError, zipfile.BadZipFile):
+                    files = None
+                summary = (
+                    {
+                        "lockfiles": files["lockfiles"][:20],
+                        "requirements_files": files["requirements"][:20],
+                        "container_configs": files["container_configs"][:20],
+                        "exact_packages": len(files["exact_packages"]),
+                        "unresolved_packages": files["unresolved_packages"][:50],
+                        "note": "Supplied files only; not proof of deployed versions.",
+                    }
+                    if files
+                    else None
+                )
                 # Keep memory bounded on modest hardware; parallel engines, serial scanner tools.
                 for tool in dict.fromkeys(row["tool"] for row in plan):
                     try:
@@ -413,15 +530,19 @@ class WhiteEngine:
                         output = tools[tool]
                         if isinstance(output, str):
                             batch.append(
-                                missing("white", bot, row["category"], row["test"], output)
+                                unverified(bot, row["test"], output, "tool_unavailable", tool)
                             )
                             continue
                         try:
                             batch.append(parse(row["test"], output, source, bot))
                         except (ValueError, KeyError, TypeError) as exc:
-                            batch.append(
-                                missing("white", bot, row["category"], row["test"], str(exc))
-                            )
+                            batch.append(unverified(bot, row["test"], str(exc), "tool_error", tool))
+                    for finding in batch:
+                        if summary and finding.test_id in (
+                            "dependency_vulnerabilities",
+                            "container_vulnerabilities",
+                        ):
+                            finding.details["inventory"] = summary
                     results.extend(batch)
                     if self.on_progress:
                         self.on_progress(batch)
@@ -429,12 +550,8 @@ class WhiteEngine:
                 return [indexed[r["test"]] for r in plan]
         except (ValueError, OSError) as exc:
             return [
-                missing(
-                    "white",
-                    bot,
-                    row["category"],
-                    row["test"],
-                    type(exc).__name__ + ": input unavailable.",
+                unverified(
+                    bot, row["test"], type(exc).__name__ + ": input unavailable.", "missing_input"
                 )
                 for row in plan
             ]

@@ -1,5 +1,9 @@
 # Continue AI Agent Studio: evidence readiness and the eight unverified checks
 
+## Update on 2026-10-23 — read before the historical prompt
+
+D: is available again. Another continuation implemented Phases A-C and completed a fresh White scan (Phase D) in commits 6474d5d, 0c0b7be, cb6f0d1 and 740ae4c. Those 30 changed source/test/doc files have now been integrated into the C: publishing checkout while preserving this earlier prompt. Do not reimplement those phases from the historical instructions below. Read the newest HANDOFF/PROGRESS sections and current code first. Preflight, runtime-log checks, grounded White explanations and offline OSV preparation now exist. Live target evidence, supported model availability, image/SBOM adapters and the other documented integration limits remain separate work. The original eight-check report remains historical; the fresh White run is 4da69475-ca0a-42f5-b796-b3560b346115.
+
 Prepared for the next coding AI on 2026-10-21, Asia/Calcutta. This is a self-contained continuation prompt. Read it, verify the current files, then implement the next small phase. Do not restart the project or simply repeat a proposal.
 
 Latest environment update: D: disappeared again while saving this handoff. Windows reported that drive D: does not exist. This document and the updated HANDOFF/PROGRESS files are saved in the C: studio-publish checkout only; their synchronization to D: is pending. Start from C: if D: is still absent. The application upgrade had already been synchronized to D: and published successfully before this new disconnection. The previously running D: server may now be unable to read its files; verify health and stored-result endpoints before relying on it.

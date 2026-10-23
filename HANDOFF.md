@@ -1,3 +1,29 @@
+## 2026-10-23 — Latest source integration and CI verification
+
+Current request: resolve the pictured historical Ubuntu socket-cleanup failure and push the latest update to AwsomeACES/chatbot-compare/hussain-code. The current test already contains the bounded descendant-resource release fix. It passed on Windows and five consecutive isolated Ubuntu WSL checks. The screenshot predates successful personal-repository runs and the shared c5e461f run; do not rerun an obsolete failed commit expecting new code.
+
+D: returned with newer local commits through 740ae4c. Integrated its 30 changed files on top of C:'s shared history, retaining both handoff/progress histories and the prior continuation prompt. All four evidence-readiness commits below are included. D:'s application source was not overwritten or reset. The previous prompt is historical, with a new warning not to rebuild already completed phases. Publication verification results are recorded in the latest PROGRESS entry and final response.
+
+## 2026-10-21 — Evidence readiness and the eight unverified checks (completed implementation phases)
+
+Worked in `D:/AI-Agent-Testing-Studio`, branch `codex/industry-reliability`, local commits only (origin is the personal repo `Simali2724/AI-Agent-Testing-Studio`; nothing was pushed, and the C: publishing checkout was not touched). Commits on top of `0c00e3b`: `6474d5d` (Phase A readiness and guidance), `0c0b7be` (Phase B AST controls and runtime checks), `cb6f0d1` (Phase C explanations and scanner provisioning), and the Phase D commit with the mapping-entry secret qualifier and these docs.
+
+What exists now:
+
+- `app/assurance/readiness.py` + `app/studio/evidence-guidance.json`: preflight (Ready / Needs input / Tool unavailable / Not applicable), stored per run with an audit hash; derived outcome classes and guidance for every Finding; teammate Markdown export (`download?format=teammate`). `POST /api/assurance/preflight`. Results page and PDF show processed, measured, declaration, unverified and review counts.
+- `app/assurance/rules/control_worker.py` `controls-v2`: Python `ast` parsing in the scanner container; upstream RateLimitError handlers are not access control; structured observations.
+- `app/assurance/runtime_evidence.py`: Gray checks `runtime_tool_permissions`, `runtime_retention`, `runtime_model`, `runtime_timeouts` from run-correlated records; re-evaluated by Attach updated test logs. Record format in `docs/assurance-guide.md`.
+- `app/assurance/explain.py`, `POST /runs/{id}/explain`: grounded, metered White explanations; local judges unless per-request cloud consent.
+- `scripts/prepare_scanner_data.py` `check` and `scope`.
+
+Server: Studio runs hidden on `http://127.0.0.1:2708/` from the D: venv with `STUDIO_AUTO_RESUME=0`, `PYTHONUTF8=1`, `PYTHONDONTWRITEBYTECODE=1`, `STUDIO_SCANNER_WSL_DISTRO=Ubuntu`, `STUDIO_SCANNER_OSV_DATABASE=D:/AI-Agent-Testing-Studio/runtime/scanner-databases/osv-voltkart-421c026122ab`; logs `runtime/logs/20261021-135931-server.*.log`. Check the listener rather than trusting a PID. Ollama was not running.
+
+Saved assessments: `5fc9089d…` (historical, unchanged), `b7df09b7…` (fresh run before the mapping-entry fix), `4da69475-ca0a-42f5-b796-b3560b346115` (final fresh run; see PROGRESS Phase D). Exports: `C:/Users/Moinuddeen hussain/Documents/ChatGPT/Moinuddeen_airm/comparison-reports/voltkart-white-4da69475-{evidence.json,report.pdf,teammate.md}`.
+
+Tests: full suite 386 passed, 1 skipped; navigation 11 passed. New test files: `test_evidence_readiness.py`, `test_source_controls.py`, `test_runtime_evidence.py`, `test_white_explanation.py`, `test_prepare_scanner_data.py`.
+
+Blocked on external inputs (ask only for these): VoltKart's running test endpoint with written permission; two synthetic test users and tool-call logs; expected model and response metadata; retention TTL and a test environment; timeout/retry limits and a provider stub; a lockfile or `pip freeze`; CI workflow files and a run link; a running local Ollama model (or explicit cloud consent) for the AI explanation. Not implemented: built-image/SBOM scanning (unsupported input), Trivy DB provisioning automation, native macOS/Linux qualification, publication to `hussain-code` (needs the user's request and the C: checkout).
+
 ## 2026-10-21 — Publication, running Studio and next-AI prompt
 
 Start with [NEXT_AI_PROMPT.md](NEXT_AI_PROMPT.md) for the complete, self-contained continuation request, exact folders, remaining eight-check evidence gaps, phased implementation plan and commands. It is saved in the C: studio-publish checkout. D: disappeared again during the documentation synchronization attempt (Windows: drive D: does not exist), before any new documents were copied there. Keep this C: handoff safe; compare files and sync only when D: returns. Verify server and database availability instead of assuming the previously started D: process remains healthy.

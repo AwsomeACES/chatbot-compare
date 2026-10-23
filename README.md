@@ -12,6 +12,8 @@ Open **Actions → Code quality and regression tests → Run workflow**, select 
 
 **Re-run jobs** inside an older failed run tests that run's original commit and workflow again. It does not pick up later fixes. For example, historical run #3 uses `663d90d`; the dependency-isolation fix was added afterward. Old failed records keep their original result.
 
+An older Ubuntu run also failed `test_shutdown_releases_descendant_database_and_listening_socket` with **Address already in use**. The current regression test waits up to five seconds for a terminated descendant to release its socket and database file; a parent process exiting does not mean its descendants have finished releasing their resources. The check still fails if the resources remain occupied. Open the [latest hussain-code runs](https://github.com/AwsomeACES/chatbot-compare/actions/workflows/quality.yml?query=branch%3Ahussain-code) and check the commit instead of rerunning the old failure. The Starlette deprecation warning shown beside that error was not its cause.
+
 ## Start
 
 **Windows:** open PowerShell in this folder:

@@ -30,6 +30,57 @@
     exists: "Found in code",
   };
   const friendly = (value) => String(value).replaceAll("_", " ");
+  const genericFix = "Supply the missing input or install the named tool, then rerun this check.";
+  const readinessClass = {
+    ready: "ok",
+    needs_input: "warn",
+    tool_unavailable: "warn",
+    not_applicable: "muted",
+  };
+  function renderReadiness(report) {
+    const counts = report.counts || {};
+    const labels = {
+      ready: "Ready",
+      needs_input: "Needs input",
+      tool_unavailable: "Tool unavailable",
+      not_applicable: "Not applicable",
+    };
+    const summary = Object.entries(labels)
+      .map(([key, label]) => `${esc(label)}: ${Number(counts[key] || 0)}`)
+      .join(" · ");
+    const names = [...document.querySelectorAll(".bot")].map(
+      (card, index) => card.querySelector('[data-field="name"]')?.value || `Bot ${index + 1}`,
+    );
+    $("readiness-results").innerHTML = report.error
+      ? `<p>Readiness could not be checked (${esc(report.error)}). You can still start the test.</p>`
+      : `<p><strong>${summary}</strong></p><p class="helper">${esc(report.notice)}</p>${table(
+          ["Bot", "Testing type", "Check", "Status", "Why", "Next step"],
+          report.checks.map((row) => [
+            esc(names[row.bot] || `Bot ${row.bot + 1}`),
+            esc(modeNames[row.mode] || row.mode),
+            esc(row.title),
+            `<span class="readiness-${readinessClass[row.status] || "muted"}">${esc(row.status_label)}</span>`,
+            esc(row.reason) +
+              (row.best_outcome ? `<br><small>${esc(row.best_outcome)}</small>` : ""),
+            esc(row.next_action),
+          ]),
+        )}`;
+  }
+  async function checkReadiness() {
+    const modes = [...document.querySelectorAll("[data-mode]:checked")].map((e) => e.dataset.mode);
+    if (!modes.length) throw new Error("Select at least one test mode.");
+    const inputs = [...document.querySelectorAll(".bot")].map((card) => cards.get(card) || {});
+    const targets = [...document.querySelectorAll(".bot")].map((card) => ({
+      url: card.querySelector('[data-field="url"]')?.value.trim() || "",
+      archive_id: card.dataset.archive || "",
+    }));
+    $("readiness-results").textContent = "Checking files and scanner tools…";
+    renderReadiness(await api("/api/assurance/preflight", { modes, inputs, targets }));
+  }
+  function clearReadiness() {
+    if ($("readiness-results").textContent)
+      $("readiness-results").textContent = "Inputs changed. Check readiness again.";
+  }
   function syncInputs() {
     document.querySelectorAll("[data-evidence-mode]").forEach((element) => {
       element.hidden = !document.querySelector(`[data-mode="${element.dataset.evidenceMode}"]`)
@@ -92,6 +143,7 @@
                   typeof result.detail === "string" ? result.detail : "Upload failed",
                 );
               cards.get(card)[input.dataset.private] = result.id;
+              clearReadiness();
               card.querySelector(`[data-ready=${input.dataset.private}]`).textContent =
                 `File ready · ${result.unlocks} checks available`;
             } catch (error) {
@@ -106,6 +158,7 @@
             ownership_confirmed: $("ownership").checked,
           });
           cards.get(card).code = result.id;
+          clearReadiness();
           card.querySelector("[data-ready=code]").textContent =
             `${result.unlocks} source checks have their input.`;
         } catch (error) {
@@ -166,7 +219,25 @@
     const run = current,
       c = run.combined,
       costs = run.assurance_costs;
-    const aiReview = run.ai_source_review;
+    const explanations = run.ai_explanations || [];
+    const accepted = [...explanations].reverse().find((item) => item.status === "accepted");
+    const aiReview =
+      run.ai_source_review ||
+      (accepted && {
+        ...accepted,
+        model: `${accepted.source} by ${accepted.model}`,
+        automation_status: accepted.attempts.map((a) => `${a.model}: ${a.status}`).join("; "),
+      });
+    const lastExplanation = explanations[explanations.length - 1];
+    const explainPanel =
+      run.modes.includes("white") && !active(run) && tab !== "gray"
+        ? `<details class="explain-panel"><summary>Ask an AI judge to explain the White-box results</summary>
+          <p class="helper">The explanation is added beside the results. It never changes a result. Local judges are used unless you allow a cloud judge below.</p>
+          <label><input type="checkbox" id="explain-cloud"> Allow the selected cloud judge to read redacted source excerpts for this explanation only.</label>
+          <button type="button" id="explain-run">Explain results</button>
+          ${lastExplanation ? `<p class="helper">Last attempt: ${esc(lastExplanation.status === "accepted" ? `accepted from ${lastExplanation.model}` : lastExplanation.reason || "not accepted")}</p><ul>${lastExplanation.attempts.map((a) => `<li>${esc(a.model)} · ${esc(a.status)}${a.reason ? ` · ${esc(a.reason)}` : ""}</li>`).join("")}</ul>` : ""}
+        </details>`
+        : "";
     const aiChecks = new Map((aiReview?.checks || []).map((item) => [item.test_id, item]));
     const headings = ["What we checked", "What we found", "Why it matters", "How to fix it"];
     const opened = new Set(
@@ -189,20 +260,37 @@
         r.confidence,
       ]),
     );
-    const sourceChecks = rows.filter((f) => f.mode === "white");
+    const status = run.evidence_status;
+    const guidance = new Map((status?.checks || []).map((row) => [row.key, row]));
+    const shown = rows.map((f) => guidance.get(`${f.bot}:${f.mode}:${f.test_id}`)).filter(Boolean);
     const count = (verdict) => rows.filter((f) => f.verdict === verdict).length;
     const stat = (label, value) =>
       `<article><strong>${esc(value)}</strong><span>${esc(label)}</span></article>`;
-    const sourceSummary = sourceChecks.length
-      ? `<p class="helper">Source scan: ${sourceChecks.filter((f) => f.details?.scanner_completed).length}/${sourceChecks.length} checks processed. A completed scan can still lack enough evidence to pass a check.</p>`
+    const outcomeCounts = {};
+    shown.forEach(
+      (row) => (outcomeCounts[row.outcome_label] = (outcomeCounts[row.outcome_label] || 0) + 1),
+    );
+    const notProcessed = ["not_attempted", "missing_input", "tool_unavailable", "unverified"];
+    const sourceSummary = status
+      ? `<p class="helper">${esc(status.notice)}</p><p class="helper">Breakdown: ${Object.entries(
+          outcomeCounts,
+        )
+          .map(([label, value]) => `${esc(label)} ${value}`)
+          .join(
+            " · ",
+          )}</p>${aiReview ? `<p class="helper">${esc(status.historical_note)}</p>` : ""}`
       : "";
     $("assurance-content").innerHTML = `
       <div class="verdict-card">${aiReview ? '<p class="helper">Original scanner summary — see the qualified AI source review below.</p>' : ""}<h3>${esc(c.verdict)}</h3><p>${esc(c.reason)}</p></div>
       <div class="result-stats">
         ${stat("checks recorded", `${c.integrity.accounted}/${c.integrity.planned}`)}
-        ${stat("passed", count("pass"))}${stat("need attention", count("fail"))}${stat("not tested", count("not_tested"))}
+        ${stat("processed", shown.filter((row) => !notProcessed.includes(row.outcome)).length)}
+        ${stat("measured", count("pass") + count("fail"))}
+        ${stat("passed", count("pass"))}${stat("need attention", count("fail"))}
+        ${stat("declarations only", count("exists"))}${stat("not verified", count("not_tested"))}
+        ${stat("waiting for review", rows.filter((f) => f.review && !f.overridden).length)}
       </div>
-      ${count("exists") ? `<p>${count("exists")} checks found a code declaration; its behavior is not verified.</p>` : ""}
+      ${count("exists") ? `<p>${count("exists")} checks found a declaration in the supplied files; its behavior is not verified.</p>` : ""}
       ${sourceSummary}
       <p class="helper">${run.duration_seconds == null ? "Test in progress" : `${run.duration_seconds} seconds`} · ${esc(c.assurance_note)}</p>
       ${costs ? `<p><strong>Usage:</strong> Bot ${costs.bot.calls ? costMoney(costs.bot) : "$0 (no bot API calls)"} · AI review ${costMoney(costs.evaluation)}<br><small>Bot tokens: ${costs.bot.input_tokens + costs.bot.output_tokens} · Review tokens: ${costs.evaluation.input_tokens + costs.evaluation.output_tokens}. Missing usage or prices stay Unknown.${costs.evaluation.unknown_calls ? ` Known metered review cost: $${(costs.evaluation.known_cost_micro_usd / 1000000).toFixed(6)}; ${costs.evaluation.unknown_calls} call(s) have unknown billing.` : ""}</small></p>` : ""}
@@ -215,10 +303,22 @@
             const key = `${f.bot}:${f.mode}:${f.test_id}`;
             const name = run.config?.targets?.[f.bot]?.name || `Bot ${f.bot + 1}`;
             const ai = f.mode === "white" ? aiChecks.get(f.test_id) : null;
+            const g = guidance.get(key);
+            const label =
+              g && ["not_tested", "exists"].includes(f.verdict)
+                ? g.outcome_label
+                : resultNames[f.verdict] || f.verdict;
+            const texts = [f.checked, f.explanation, f.consequence, f.fix];
+            const replaced = g && g.unresolved && f.fix === genericFix && g.owner_action;
+            if (replaced) texts[3] = g.owner_action;
+            const help = g
+              ? `<div class="evidence-help"><p><strong>Result type:</strong> ${esc(g.outcome_label)} · ${esc(g.cause_label)}</p><p><strong>Why:</strong> ${esc(g.why)}</p>${g.source_scope ? `<p class="helper">What this check can see: ${esc(g.source_scope)}</p>` : ""}${g.required_evidence.length ? `<p><strong>Evidence needed:</strong></p><ul>${g.required_evidence.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>` : ""}${g.next_test ? `<p><strong>Next test:</strong> ${esc(g.next_test)}</p>` : ""}${replaced ? `<p class="helper">Original suggestion: ${esc(f.fix)}</p>` : ""}</div>`
+              : "";
             return `<details data-finding="${esc(key)}" ${opened.has(key) ? "open" : ""}>
-            <summary>${esc(friendly(f.test_id))} <span class="summary-meta">${esc(resultNames[f.verdict] || f.verdict)}${f.verdict === "fail" ? ` · ${esc(f.severity)}` : ""}${f.overridden ? " · Overridden" : ""}</span></summary>
-            <p class="helper">${esc(name)} · ${modeNames[f.mode]} · ${esc(f.confidence)} confidence</p>
-            ${[f.checked, f.explanation, f.consequence, f.fix].map((text, i) => `<p><strong>${headings[i]}:</strong> ${esc(text)}</p>`).join("")}
+            <summary>${esc(g?.title || friendly(f.test_id))} <span class="summary-meta">${esc(label)}${f.verdict === "fail" ? ` · ${esc(f.severity)}` : ""}${f.overridden ? " · Overridden" : ""}</span></summary>
+            <p class="helper">${esc(name)} · ${modeNames[f.mode]} · ${esc(f.confidence)} confidence${f.overridden && f.original_finding ? ` · Original result: ${esc(resultNames[f.original_finding.verdict] || f.original_finding.verdict)}` : ""}</p>
+            ${texts.map((text, i) => `<p><strong>${headings[i]}:</strong> ${esc(text)}</p>`).join("")}
+            ${help}
             ${ai ? `<p><strong>AI explanation (${esc(aiReview.model)}):</strong> ${esc(ai.explanation)}</p><p><strong>AI review:</strong> ${esc(friendly(ai.assessment))}</p><p><strong>Suggested next step:</strong> ${esc(ai.fix)}</p>` : ""}
             ${f.evidence.length ? f.evidence.map((e) => `<p class="helper">${esc(e.file || e.source_id || e.kind)}${e.line ? ":" + e.line : ""}</p><blockquote>${esc(e.excerpt)}</blockquote>`).join("") : "<p>No supporting evidence was obtained.</p>"}
             ${f.tool ? `<p class="helper">Checked by ${esc(f.tool)} ${esc(f.tool_version)}</p>` : ""}
@@ -227,7 +327,30 @@
           })
           .join("")}
       </div>
+      ${explainPanel}
       <p class="helper">${c.review_queue.length} findings need review. <a href="#governance" data-view="governance">View governance</a></p>`;
+    const explainButton = root.querySelector("#explain-run");
+    if (explainButton)
+      explainButton.onclick = async () => {
+        try {
+          explainButton.disabled = true;
+          tell("Asking the judge to explain the results…");
+          const result = await api(`/api/assurance/runs/${id}/explain`, {
+            judges: judges(),
+            cloud_consent: root.querySelector("#explain-cloud").checked,
+          });
+          tell(
+            result.status === "accepted"
+              ? "Explanation added. Results are unchanged."
+              : result.reason || "No explanation was accepted.",
+          );
+          await refresh();
+        } catch (error) {
+          tell(error.message);
+        } finally {
+          explainButton.disabled = false;
+        }
+      };
     root.querySelectorAll("[data-review]").forEach(
       (button) =>
         (button.onclick = async () => {
@@ -421,7 +544,11 @@
       tell(error.message);
     }
   };
-  for (const format of ["json", "pdf"])
+  $("check-readiness").onclick = () => checkReadiness().catch((error) => tell(error.message));
+  document
+    .querySelectorAll("[data-mode]")
+    .forEach((e) => e.addEventListener("change", clearReadiness));
+  for (const format of ["json", "pdf", "teammate"])
     $("assurance-" + format).onclick = () => {
       if (id) location.href = `/api/assurance/runs/${id}/download?format=${format}`;
     };

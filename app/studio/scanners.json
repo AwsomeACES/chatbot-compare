@@ -38,7 +38,7 @@
       "args": ["bandit", "-r", "/source", "-c", "/rules/bandit.yaml", "-f", "json", "--exit-zero"]
     },
     "controls": {
-      "version": "controls-v1",
+      "version": "controls-v2",
       "image": "studio-source-scanners:1",
       "args": ["python", "-I", "/rules/control_worker.py"]
     },

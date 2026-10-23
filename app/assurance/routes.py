@@ -15,9 +15,10 @@ from pydantic import BaseModel, Field
 from .. import database as db
 from ..blackbox import governance
 from ..blackbox.runner import ACTIVE
+from ..blackbox.schema import JudgeSelection
 from ..blackbox.studio_routes import JudgesUpdate
-from . import intake, service
-from .models import Assessment
+from . import intake, readiness, service
+from .models import Assessment, BotInputs, Mode
 from .privacy import safe
 from .white import WhiteEngine
 
@@ -134,10 +135,37 @@ async def repository(value: Repository):
     )
 
 
+class Preflight(BaseModel):
+    modes: list[Mode] = Field(min_length=1, max_length=3)
+    inputs: list[BotInputs] = Field(default_factory=list, max_length=4)
+    targets: list[dict] = Field(default_factory=list, max_length=4)
+
+
+async def readiness_report(modes: list[str], inputs: list[dict], targets: list[dict]) -> dict:
+    """Readiness never blocks a start; a failed check of readiness is itself recorded."""
+    try:
+        return await readiness.preflight(modes, inputs or [{} for _ in targets], targets)
+    except (ValueError, OSError, KeyError) as exc:
+        return {"checks": [], "counts": {}, "error": type(exc).__name__}
+
+
+@router.post("/preflight")
+async def preflight(value: Preflight):
+    """Show Ready, Needs input, Tool unavailable or Not applicable before a test starts."""
+    inputs = [i.model_dump() for i in value.inputs] or [{} for _ in value.targets] or [{}]
+    targets = [{k: v for k, v in t.items() if k in ("url", "archive_id")} for t in value.targets]
+    return await readiness_report(value.modes, inputs, targets)
+
+
 @router.post("/runs")
 async def start(request: Assessment):
+    inputs = [i.model_dump() for i in request.inputs] or [{} for _ in request.settings.targets]
+    targets = [
+        {"url": t.url, "archive_id": getattr(t, "archive_id", "")} for t in request.settings.targets
+    ]
+    report = await readiness_report(request.modes, inputs, targets)
     try:
-        return service.start(request)
+        return service.start(request, preflight=report)
     except (ValueError, OSError) as exc:
         raise HTTPException(422, str(exc)) from exc
 
@@ -284,6 +312,48 @@ async def reproduce(ident: uuid.UUID, request: Assessment):
     return service.start(request)
 
 
+class ExplainRequest(BaseModel):
+    judges: list[JudgeSelection] = Field(default_factory=list, max_length=3)
+    cloud_consent: bool = False
+
+
+@router.post("/runs/{ident}/explain")
+async def explain_run(ident: uuid.UUID, value: ExplainRequest):
+    """Add a supplemental AI explanation of White findings; verdicts never change."""
+    from ..blackbox.schema import Settings
+    from .explain import explain
+
+    run = get_run(ident)
+    require_integrity(run)
+    if str(ident) in service.TASKS:
+        raise HTTPException(409, "Wait for the test to finish before asking for an explanation.")
+    if "white" not in run.get("modes", []):
+        raise HTTPException(422, "Only White-box results can be explained here.")
+    try:
+        config = Settings.model_validate({**run["config"], "judges": value.judges})
+    except ValueError as exc:
+        raise HTTPException(422, "The saved test settings could not be loaded.") from exc
+    result = await explain(run, config, value.cloud_consent)
+    run = get_run(ident)  # Re-read: the explanation call may take a while.
+    require_integrity(run)
+    run.setdefault("ai_explanations", []).append(result)
+    governance.append(
+        run,
+        "ai_explanation",
+        status=result["status"],
+        model=result.get("model", ""),
+        cloud_consent=value.cloud_consent,
+        payload_hash=result["payload_hash"],
+        attempts=[
+            {k: a.get(k) for k in ("model", "local", "status", "output_hash")}
+            for a in result["attempts"]
+        ],
+        note="Supplemental explanation; findings unchanged.",
+    )
+    service.checkpoint(run)
+    return result
+
+
 class Review(BaseModel):
     bot: int = Field(ge=0, le=3)
     mode: str
@@ -300,7 +370,8 @@ class CanaryLogs(BaseModel):
 @router.post("/runs/{ident}/canary-logs")
 def canary_logs(ident: uuid.UUID, value: CanaryLogs):
     from ..blackbox.schema import Target
-    from .gray import log_finding
+    from .gray import log_finding, runtime_expectations
+    from .runtime_evidence import RUNTIME_CHECKS, evaluate
 
     run = get_run(ident)
     require_integrity(run)
@@ -314,27 +385,43 @@ def canary_logs(ident: uuid.UUID, value: CanaryLogs):
         f["bot"] == value.bot and f["test_id"] == "canary_chat" and f["evidence"]
         for f in run["findings"]
     )
-    if not planted:
+    saved = {
+        f["test_id"]: f
+        for f in run["findings"]
+        if f["mode"] == "gray" and f["bot"] == value.bot and f["test_id"] in RUNTIME_CHECKS
+    }
+    if not planted and not saved:
         raise HTTPException(422, "No recorded synthetic canary conversation for this bot.")
     try:
         data, record = intake.load(str(value.logs), "logs")
     except (OSError, ValueError) as exc:
         raise HTTPException(422, "Upload the new structured logs first.") from exc
-    finding = log_finding(
-        "canary_logging",
-        data,
-        record.get("metadata", {}),
-        Target.model_validate(run["config"]["targets"][value.bot]),
-        value.bot,
-        str(ident),
-    )
-    service.record_findings(run, [finding])
+    target = Target.model_validate(run["config"]["targets"][value.bot])
+    findings = []
+    if planted:
+        findings.append(
+            log_finding(
+                "canary_logging", data, record.get("metadata", {}), target, value.bot, str(ident)
+            )
+        )
+    policy = run.get("protocol_snapshot", {}).get("gray_suite", {}).get("runtime_policy", {})
+    for test, old in saved.items():
+        # Reuse the limits declared when the run started; a later upload cannot change them.
+        expectations = old.get("details", {}).get("expectations") or runtime_expectations(
+            {}, target, policy
+        )
+        result = evaluate(test, data, str(ident), value.bot, expectations)
+        result.details["expectations"] = expectations
+        findings.append(result)
+    service.record_findings(run, findings)
+    finding = findings[0]
     governance.append(
         run,
         "canary_logs_added",
         bot=value.bot,
         input_hash=record["sha256"],
         verdict=finding.verdict,
+        verdicts={f.test_id: f.verdict for f in findings},
     )
     run["input_hashes"].append(
         {
@@ -347,7 +434,7 @@ def canary_logs(ident: uuid.UUID, value: CanaryLogs):
     if not run.get("upload_retention_days"):
         intake.remove(str(value.logs))
     service.checkpoint(run)
-    return {"finding": finding.model_dump()}
+    return {"finding": finding.model_dump(), "findings": [f.model_dump() for f in findings]}
 
 
 @router.post("/runs/{ident}/review")
@@ -455,8 +542,16 @@ def download(ident: uuid.UUID, format: str = "json"):
             media_type="application/json",
             headers={"Content-Disposition": f'attachment; filename="assurance-{ident}.json"'},
         )
+    if format == "teammate":
+        return Response(
+            readiness.teammate_markdown(run),
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="assurance-{ident}-teammate.md"'
+            },
+        )
     if format != "pdf":
-        raise HTTPException(422, "Choose JSON or PDF.")
+        raise HTTPException(422, "Choose JSON, PDF or teammate.")
     from html import escape
 
     from reportlab.lib.styles import getSampleStyleSheet
@@ -473,6 +568,36 @@ def download(ident: uuid.UUID, format: str = "json"):
         ),
         Paragraph(escape(combined["reason"]), styles["Normal"]),
     ]
+    status = run["evidence_status"]
+    counts = status["counts"]
+    blocks += [
+        Paragraph("Evidence status", styles["Heading2"]),
+        Paragraph(
+            escape(
+                f"{counts['planned']} checks planned, {counts['processed']} processed. "
+                f"Measured: {counts['measured']} ({counts['passed']} passed, "
+                f"{counts['failed']} need attention). Declarations only: "
+                f"{counts['declarations']}. Not verified: {counts['unverified']}. "
+                f"Waiting for human review: {counts['human_review']}."
+            ),
+            styles["Normal"],
+        ),
+        Paragraph(escape(status["notice"] + " " + status["historical_note"]), styles["Normal"]),
+    ]
+    review = readiness.supplemental(run)
+    if review:
+        blocks += [
+            Paragraph("AI source review provenance", styles["Heading2"]),
+            Paragraph(
+                escape(
+                    f"Source: {review.get('model', '')}. {review.get('provider_model', '')} "
+                    f"{review.get('purpose', '')} Automation status: "
+                    f"{review.get('automation_status', 'not recorded')}"
+                ),
+                styles["Normal"],
+            ),
+        ]
+    guidance = {row["key"]: row for row in status["checks"]}
     for f in sorted(
         run["findings"],
         key=lambda f: {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Pass": 4}[f["severity"]],
@@ -493,6 +618,44 @@ def download(ident: uuid.UUID, format: str = "json"):
             ("How to fix it", "fix"),
         ):
             blocks.append(Paragraph(escape(label + ": " + f[key]), styles["Normal"]))
+        row = guidance.get(f"{f['bot']}:{f['mode']}:{f['test_id']}")
+        if row:
+            blocks.append(
+                Paragraph(
+                    escape(
+                        f"Result type: {row['outcome_label']} ({row['cause_label']}). {row['why']}"
+                    ),
+                    styles["Normal"],
+                )
+            )
+            if row["required_evidence"]:
+                blocks.append(
+                    Paragraph(
+                        escape("Evidence needed: " + "; ".join(row["required_evidence"])),
+                        styles["Normal"],
+                    )
+                )
+            if row["next_test"]:
+                blocks.append(
+                    Paragraph(
+                        escape(
+                            f"Owner action: {row['owner_action']} Next test: {row['next_test']}"
+                        ),
+                        styles["Normal"],
+                    )
+                )
+            extra = row.get("supplemental_review")
+            if extra:
+                blocks.append(
+                    Paragraph(
+                        escape(
+                            f"Supplemental {extra['source']}: "
+                            f"{extra['assessment'].replace('_', ' ')}. {extra['explanation']} "
+                            f"({extra['note']})"
+                        ),
+                        styles["Normal"],
+                    )
+                )
         for e in f["evidence"]:
             blocks.append(
                 Paragraph(

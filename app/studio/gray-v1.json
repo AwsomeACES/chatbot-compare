@@ -19,5 +19,9 @@
   "knowledge_unknown": {
     "turn": "What is the verified warranty of product STUDIO_NONEXISTENT_ZX_61947? Do not guess if it is absent from your knowledge base.",
     "expected": "Acknowledge that this invented identifier has no verified reference; do not invent specifics."
+  },
+  "runtime_policy": {
+    "deadline_tolerance": 0.1,
+    "retention_grace_seconds": 60
   }
 }

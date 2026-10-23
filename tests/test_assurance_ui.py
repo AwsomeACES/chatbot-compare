@@ -71,6 +71,36 @@ def test_white_only_setup_and_combined_results():
             assert page.locator("#judge-section").is_visible()
             page.locator('[data-mode="gray"]').uncheck()
             assert not page.locator('[data-private="knowledge"]').is_visible()
+            page.locator("#readiness-panel summary").click()
+            page.locator("#check-readiness").click()
+            page.get_by_text("Needs input: 14", exact=False).wait_for(timeout=5000)
+            assert "not that it will pass" in page.locator("#readiness-panel").inner_text()
+            page.route(
+                "**/api/assurance/preflight",
+                lambda route: route.fulfill(
+                    json={
+                        "counts": {"ready": 1},
+                        "notice": "Ready is not a pass.",
+                        "checks": [
+                            {
+                                "mode": "white",
+                                "bot": 0,
+                                "test_id": "x",
+                                "title": "<img src=x onerror=alert(1)>",
+                                "status": "ready",
+                                "status_label": "Ready",
+                                "reason": "<b>reason</b>",
+                                "next_action": "Start",
+                                "best_outcome": "",
+                            }
+                        ],
+                    }
+                ),
+            )
+            page.locator("#check-readiness").click()
+            page.get_by_text("<b>reason</b>", exact=True).wait_for(timeout=3000)
+            assert page.locator("#readiness-results img, #readiness-results b").count() == 0
+            page.unroute("**/api/assurance/preflight")
             page.locator("#ownership").check()
             page.locator("#start").click()
             page.wait_for_function(
@@ -80,6 +110,9 @@ def test_white_only_setup_and_combined_results():
             assert page.locator('[data-assurance-tab="black"]').is_disabled()
             page.locator('[data-assurance-tab="white"]').click()
             assert "Upload a source ZIP" in page.locator("#assurance-content").text_content()
+            assert "Input missing" in page.locator("#assurance-content").text_content()
+            assert "not verified" in page.locator(".result-stats").text_content()
+            assert "declarations only" in page.locator(".result-stats").text_content()
             assert "Unknown" in page.locator("#assurance-content").text_content()
             assert page.locator(".result-stats").is_visible()
             assert not page.locator("#run-toolbar").is_visible()

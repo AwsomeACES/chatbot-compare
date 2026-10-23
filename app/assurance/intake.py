@@ -21,7 +21,7 @@ LIMITS = {
     "file_bytes": 2 * 1024 * 1024,
     "seconds": 10,
 }
-UNLOCKS = {"system_prompt": 2, "config": 1, "tools": 1, "knowledge": 3, "logs": 6, "code": 14}
+UNLOCKS = {"system_prompt": 2, "config": 1, "tools": 1, "knowledge": 3, "logs": 10, "code": 14}
 
 
 def root() -> Path:
