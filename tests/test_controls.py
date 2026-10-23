@@ -301,3 +301,24 @@ def test_every_new_case_fills_all_its_placeholders(suite_id):
         for c in new:
             rendered = evaluator.render({k: c[k] for k in ("turns", "variants", "expect", "rubric") if k in c}, profile["vars"])
             assert not re.findall(r"\{\w+\}", json.dumps(rendered)), c["id"]
+
+
+def test_rejudge_keeps_cases_a_budget_stopped_blocked(monkeypatch, tmp_path):
+    """A case the budget never asked must stay blocked (left out), not turn into a failed case on a re-grade."""
+    import sys
+    import rejudge
+    monkeypatch.setattr(evaluator, "RUNS_DIR", str(tmp_path))
+    monkeypatch.setattr(evaluator, "load_suite", lambda _: SUITE)
+    monkeypatch.setattr(rejudge, "ROOT", str(tmp_path))
+    (tmp_path / "bots.json").write_text(json.dumps({"bots": [BOT_A]}))
+    stopped = {"case_id": "price", "bot_id": "a", "repeat": 0, "category": "products", "turns": [], "judge": None,
+               "error": "Budget limit reached ($1.0000 of $1.0000 spent): not asked.", "blocked": True,
+               "budget_blocked": True, "unsupported": False, "checks": None, "check_failures": []}
+    run = {"id": "r1", "suite": "t", "status": "over_budget", "judge": False, "bots": [{"id": "a", "label": "A"}],
+           "bot_configs": [BOT_A], "results": [stopped]}
+    (tmp_path / "r1.json").write_text(json.dumps(run))
+    monkeypatch.setattr(sys, "argv", ["rejudge.py", "r1", "--checks-only"])
+    rejudge.main()
+    saved = json.loads((tmp_path / "r1.json").read_text())
+    assert saved["results"][0]["blocked"] is True
+    assert evaluator.outcome(saved["results"][0]) == "blocked"

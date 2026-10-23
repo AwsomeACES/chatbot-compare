@@ -39,8 +39,8 @@ def main():
     only = sys.argv[sys.argv.index("--category") + 1].split(",") if "--category" in sys.argv else None
 
     for r in results:  # apply the current "blocked" rule and checks to old results
-        if r["error"]:
-            r["blocked"] = bool(evaluator.BLOCKED_ERRORS.search(r["error"]))
+        if r["error"]:  # a case a budget stopped was never asked: it stays blocked, not a fail
+            r["blocked"] = bool(r.get("budget_blocked") or evaluator.BLOCKED_ERRORS.search(r["error"]))
         evaluator.recheck(suite, bots[r["bot_id"]], r)
 
     # the second judge too, when the run used one and it's still configured (a quota or a cancel can leave gaps)

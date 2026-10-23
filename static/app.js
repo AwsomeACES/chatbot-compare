@@ -286,7 +286,7 @@ async function loadRuns() {
     row.querySelector(".del").onclick = async (e) => {
       e.stopPropagation();
       if (!confirm("Delete this run?")) return;
-      await api(`/api/runs/${r.id}`, { method: "DELETE" });
+      try { await api(`/api/runs/${r.id}`, { method: "DELETE" }); } catch (err) { alert(err.message); return; }
       if (currentRunId === r.id) { currentRunId = null; $("results").hidden = true; $("resultsEmpty").hidden = false; }
       loadRuns();
     };

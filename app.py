@@ -369,7 +369,10 @@ def resume_run(run_id: str, req: ResumeRequest | None = None):
 
 @app.delete("/api/runs/{run_id}")
 def delete_run(run_id: str):
-    evaluator.delete_run(run_id)
+    try:
+        evaluator.delete_run(run_id)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
     return {"ok": True}
 
 
@@ -524,6 +527,20 @@ def purge_battles(now=None):
         if not battle["voted"]:
             with battle["lock"]:  # not while a message to it is still under way
                 close_battle(battle)
+
+
+def _purge_idle_battles():
+    """Without this an abandoned battle is only closed when someone sends the next arena message, and until then it
+    holds a one-chat-at-a-time bot (SupportFlow) so every run finds it busy."""
+    while True:
+        time.sleep(60)
+        try:
+            purge_battles()
+        except Exception:
+            log.exception("Could not close idle arena battles")
+
+
+threading.Thread(target=_purge_idle_battles, daemon=True, name="arena-purge").start()
 
 
 def _read_json(path, default):

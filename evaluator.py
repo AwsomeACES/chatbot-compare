@@ -682,17 +682,38 @@ def _rankings(c):
     return c.get("rankings") or ([c["ranking"]] if c.get("ranking") else [])
 
 
+def apply_checks(case, result):
+    """The exact checks on a finished chat (case already in its wording and filled in with the bot's facts): the
+    case's checks on every session, a clean client error the case accepts, the reply's script, and the trace checks."""
+    per_session = {v["label"]: v["expect"] for v in case.get("variants") or [] if "expect" in v}
+    result["checks"], result["check_failures"] = check_sessions(case.get("expect"), result["turns"], per_session)
+    if result["checks"] is None and any(t.get("rejected") for t in result["turns"]):
+        result["checks"] = True  # a clean client error the case accepts (accept_error) is a deterministic pass
+    if case.get("category") != "language" and not case.get("any_script"):
+        if script_failures := wrong_script(result["turns"], bias=case.get("category") == "bias"):
+            result["checks"] = False
+            result["check_failures"] = result["check_failures"] + script_failures
+    result["trace_checks"] = check_trace(case.get("expect_trace"), result["turns"])
+
+
+def filled(case, wording, variables):
+    """The case as asked in one wording, filled in with a bot's facts."""
+    case = reworded(case, wording)
+    return {**case, **render({k: case[k] for k in ("turns", "variants", "expect", "expect_trace", "rubric")
+                              if k in case}, variables)}
+
+
 def recheck(suite, bot, result):
-    """Re-apply the (current) checks to a saved result's final reply."""
+    """Re-apply the (current) checks to a saved result, exactly as a run applies them."""
     if result.get("unsupported") or result["error"] or not result["turns"]:
         return
     case = next((c for c in suite["cases"] if c["id"] == result["case_id"]), None)
     if case is None:  # removed from the suite since the run
         return
-    variables = profile_for(suite, bot)["vars"]
-    expect = render(case.get("expect"), variables)
-    result["checks"], result["check_failures"] = check_sessions(expect, result["turns"])
-    result["trace_checks"] = check_trace(render(case.get("expect_trace"), variables), result["turns"])
+    wording = result.get("wording", 0)
+    if wording > len(case.get("rewordings") or []):  # that rewording was removed since the run
+        return
+    apply_checks(filled(case, wording, profile_for(suite, bot)["vars"]), result)
 
 
 # ---------- Runs ----------
@@ -820,6 +841,10 @@ def get_run(run_id):
 
 
 def delete_run(run_id, reason="deleted"):
+    run = get_run(run_id)
+    if run is not None and (run_id in _active or run["status"] == "running"):
+        # its worker would write the file again with its next save; cancel it first
+        raise ValueError("This run is still going: cancel it first, then delete it")
     if _runs.pop(run_id, None):
         _mtimes.pop(run_id, None)
         with contextlib.suppress(FileNotFoundError):
@@ -958,9 +983,7 @@ def _converse(suite, case, bot, repeat=0, wording=0, stop=None):
     """The chat and the instant checks of one case. Returns (result, grading): grading is what _grade needs to finish
     it (judges, then masking), or None when there's nothing to grade (unsupported, or the chat failed)."""
     profile = profile_for(suite, bot)
-    case = reworded(case, wording)
-    case = {**case, **render({k: case[k] for k in ("turns", "variants", "expect", "expect_trace", "rubric")
-                                    if k in case}, profile["vars"])}
+    case = filled(case, wording, profile["vars"])
     result = {"case_id": case["id"], "bot_id": bot["id"], "repeat": repeat, "category": case.get("category", "general"),
               "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
               "rubric": case.get("rubric"), "turns": [], "error": None, "unsupported": False,
@@ -1000,15 +1023,7 @@ def _converse(suite, case, bot, repeat=0, wording=0, stop=None):
         governance.add_counts(unknown, governance.unknown_pii(t["bot"], known))
     if unknown:  # personal data the bot produced that isn't in its store data or the test case
         result["pii"] = unknown
-    per_session = {v["label"]: v["expect"] for v in case.get("variants") or [] if "expect" in v}
-    result["checks"], result["check_failures"] = check_sessions(case.get("expect"), result["turns"], per_session)
-    if result["checks"] is None and any(t.get("rejected") for t in result["turns"]):
-        result["checks"] = True  # a clean client error the case accepts (accept_error) is a deterministic pass
-    if case.get("category") != "language" and not case.get("any_script"):
-        if script_failures := wrong_script(result["turns"], bias=case.get("category") == "bias"):
-            result["checks"] = False
-            result["check_failures"] = result["check_failures"] + script_failures
-    result["trace_checks"] = check_trace(case.get("expect_trace"), result["turns"])
+    apply_checks(case, result)
     return result, {"context": profile.get("context"), "rubric": case.get("rubric"), "known": known, "unknown": unknown}
 
 

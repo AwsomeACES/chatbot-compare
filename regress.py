@@ -210,7 +210,7 @@ def cmd_resume(run):
     if run["status"] != "done":
         print(f"Run {run['id']} {run['status']}: {run.get('failure', '')}")
         return 3
-    return report(run)
+    return report(run, bots=bots)  # critical breaks are re-tested, as after "run"
 
 
 def main(args):

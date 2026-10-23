@@ -438,7 +438,8 @@ class OpenAICompatibleConversation(Conversation):
     def _send(self, message):
         self.messages.append({"role": "user", "content": message})
         data = _post(f"{self.cfg['base_url'].rstrip('/')}/chat/completions",
-                     {"model": self.cfg["model"], "messages": self.messages}, _headers(self.cfg))
+                     {"model": self.cfg["model"], "messages": self.messages}, _headers(self.cfg),
+                     timeout=self.cfg.get("timeout"))
         text = data["choices"][0]["message"].get("content") or ""
         self.usage = data.get("usage")
         cached = ((self.usage or {}).get("prompt_tokens_details") or {}).get("cached_tokens") or 0
