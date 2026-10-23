@@ -104,7 +104,7 @@
     {
       "id": "mouni-gemini",
       "label": "Mouni's chatbot · Gemini 3.6 Flash",
-      "description": "SupportFlow AI (Flask, Mouni's GitHub main, be890ac of 2026-10-09): database lookups (products, orders, refunds, warranties, offers) then Gemini 3.6 Flash (free tier); pure-AI mode, no human hand-off",
+      "description": "SupportFlow AI (Flask, Mouni's GitHub main, 4f0c598 of 2026-10-23): database lookups (products, orders, refunds, warranties, offers) then Gemini 3.6 Flash (free tier); hands the chat to a human agent when the customer asks for one",
       "profile": "mouni",
       "source": "~/projects/mouni-bot/github-latest",
       "llm": "Gemini 3.6 Flash",
@@ -115,8 +115,9 @@
       "email": "customer@example.com",
       "password_env": "BOT_MOUNI_PASSWORD",
       "max_concurrency": 1,
+      "close_path": "/api/conversations/{id}/close",
       "db_path": "~/projects/mouni-bot/github-latest/backend/compare-test.db",
-      "handoff": false,
+      "restore_tables": ["orders", "order_items", "payments", "returns", "refunds", "warranties", "service_requests", "support_tickets"],
       "pricing": {
         "input": 0,
         "output": 0,
@@ -215,8 +216,8 @@
      "env": {"GEMINI_API_KEY": "$GOOGLE_API_KEY", "DATABASE_URL": "sqlite:///compare-test.db", "AI_PROVIDER": "gemini",
              "GEMINI_MODEL": "gemini-3.6-flash"},
      "health": {"path": "/api/health", "expect": "\"ok\""},
-     "cmd": [".venv-local/bin/python", "app.py"],
-     "note": "Mouni's GitHub version, on its own test database (the adapter closes finished test chats there)"}
+     "cmd": [".venv-local/bin/flask", "--app", "app", "run", "--port", "5000", "--no-reload"],
+     "note": "Mouni's GitHub version, on its own test database (the adapter closes finished test chats with its close endpoint). Started with flask run: since 4f0c598 `python app.py` refuses to start unless debug mode is on"}
   ],
   "judge_pricing": [
     {

@@ -237,6 +237,44 @@ def test_supportflow_without_escalate_closes_chats_in_its_db(http, fresh_support
                                                                                 (9, "AI_ACTIVE")]
 
 
+def test_supportflow_closes_chats_with_its_close_endpoint(http, fresh_supportflow):
+    calls, queue = http
+    queue += [FakeResponse(data={"token": "jwt"}),
+              FakeResponse(data=[{"id": 7, "status": "WAITING_FOR_AGENT"}]),   # a handed-off chat left open
+              FakeResponse(data={"status": "CLOSED"}),
+              FakeResponse(data={"conversation_id": 8, "reply": "hi"}),
+              FakeResponse(data={"status": "CLOSED"})]
+    conv = open_conversation({**SUPPORTFLOW, "close_path": "/api/conversations/{id}/close"})
+    conv.send("hi")
+    conv.close()
+    assert [c["url"] for c in calls if c["url"].endswith("/close")] == \
+        ["http://sf/api/conversations/7/close", "http://sf/api/conversations/8/close"]
+
+
+def test_supportflow_puts_back_what_a_chat_changed(http, fresh_supportflow, monkeypatch, tmp_path):
+    import sqlite3
+    monkeypatch.setattr(adapters.SupportFlowConversation, "_snapshots", {})
+    adapters.SupportFlowConversation._cleaned.add(("http://sf", "e"))
+    db = tmp_path / "compare-test.db"
+    with sqlite3.connect(db) as c:
+        c.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, order_status TEXT)")
+        c.execute("CREATE TABLE returns (id INTEGER PRIMARY KEY, order_id INTEGER)")
+        c.execute("INSERT INTO orders VALUES (1, 'SHIPPED')")
+    _, queue = http
+    queue += [FakeResponse(data={"token": "jwt"}), FakeResponse(data={"conversation_id": 8, "reply": "Cancelled"}),
+              FakeResponse(data={"status": "CLOSED"})]
+    conv = open_conversation({**SUPPORTFLOW, "close_path": "/api/conversations/{id}/close", "db_path": str(db),
+                              "restore_tables": ["orders", "returns"]})
+    conv.send("cancel my order")
+    with sqlite3.connect(db) as c:  # what the bot did during the chat
+        c.execute("UPDATE orders SET order_status = 'CANCELLED'")
+        c.execute("INSERT INTO returns VALUES (1, 1)")
+    conv.close()
+    with sqlite3.connect(db) as c:
+        assert c.execute("SELECT * FROM orders").fetchall() == [(1, "SHIPPED")]
+        assert c.execute("SELECT * FROM returns").fetchall() == []
+
+
 def test_supportflow_only_writes_to_a_test_database(http, fresh_supportflow, tmp_path):
     conv = open_conversation({**SUPPORTFLOW, "db_path": str(tmp_path / "production.db"), "handoff": False})
     with pytest.raises(BotError, match="test database"):

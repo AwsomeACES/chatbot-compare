@@ -303,18 +303,22 @@ class SSEChatConversation(Conversation):
 
 class SupportFlowConversation(Conversation):
     """SupportFlow AI (Mouni's Flask bot): JWT login, then POST /api/chat {message, conversation_id}.
-    The bot continues the customer's latest open conversation, so for this login only one test chat runs
-    at a time, and each chat is retired (escalated) when it closes, so the next one starts fresh.
-    Config: base_url, email, and password_env (the .env variable holding the test login's password; "password" in
-    bots.json still works). Her GitHub version (main, 2026-10-09) has no escalate endpoint and no other way to end a chat,
-    so for it set "db_path" (the bot's SQLite file) and chats are retired by marking them CLOSED there. That writes
-    into the system under test, so it is only done on a test database: the file name must contain "test" (e.g.
-    compare-test.db), and only conversations this login opened are touched. Set "handoff": false as it never hands
-    chats to a human."""
+    For this login only one test chat runs at a time, and each chat is closed when it ends, so the next one starts
+    fresh. Config: base_url, email, and password_env (the .env variable holding the test login's password; "password"
+    in bots.json still works). Chats are closed with "close_path" (her main since 2026-10-23 has
+    /api/conversations/{id}/close; older versions had /api/conversations/{id}/escalate, the default). Her 2026-10-09
+    version had no way to end a chat: for it set "db_path" (the bot's SQLite file) and no "close_path", and chats are
+    marked CLOSED there. That writes into the system under test, so it is only done on a test database: the file name
+    must contain "test" (e.g. compare-test.db), and only conversations this login opened are touched. Set "handoff":
+    false for a version that never hands chats to a human.
+    Her bot acts on what it's told (cancels an order, opens a return), so one case would change the data the next ones
+    are graded against. With "db_path" and "restore_tables", those tables are copied before the first chat and put
+    back before and after every later one, so each case starts from the same data."""
 
     _tokens = {}
     _locks = {}
     _cleaned = set()
+    _snapshots = {}
     _guard = threading.Lock()
 
     def __init__(self, cfg):
@@ -345,20 +349,41 @@ class SupportFlowConversation(Conversation):
             raise BotError(f"HTTP {r.status_code}: {r.text[:300]}")
         return _json(r)
 
+    def _test_db(self):
+        db_path = self.cfg["db_path"]
+        if "test" not in os.path.basename(db_path).lower():
+            raise BotError(f"Won't write to {db_path}: the bot's data is only changed directly in a test database "
+                           "(a file name with \"test\" in it, e.g. compare-test.db)")
+        return closing(sqlite3.connect(os.path.expanduser(db_path), timeout=30))
+
+    def _restore(self):
+        """Puts the "restore_tables" back as they were before this process's first chat (see the class docstring)."""
+        tables = self.cfg.get("restore_tables")
+        if not tables or not self.cfg.get("db_path"):
+            return
+        try:
+            with self._test_db() as db, db:
+                if self.key not in self._snapshots:
+                    self._snapshots[self.key] = {t: db.execute(f'SELECT * FROM "{t}"').fetchall() for t in tables}
+                    return
+                for t, rows in self._snapshots[self.key].items():
+                    db.execute(f'DELETE FROM "{t}"')
+                    if rows:
+                        db.executemany(f'INSERT INTO "{t}" VALUES ({",".join("?" * len(rows[0]))})', rows)
+        except sqlite3.Error as e:
+            raise BotError(f"Could not restore {', '.join(tables)} in {self.cfg['db_path']}: {e}") from e
+
     def _retire(self, conversation_id):
-        if db_path := self.cfg.get("db_path"):
-            if "test" not in os.path.basename(db_path).lower():
-                raise BotError(f"Won't write to {db_path}: chats are only closed directly in a test database "
-                               "(a file name with \"test\" in it, e.g. compare-test.db)")
+        if self.cfg.get("db_path") and not self.cfg.get("close_path"):
             try:
-                with closing(sqlite3.connect(os.path.expanduser(db_path), timeout=30)) as db, db:
+                with self._test_db() as db, db:
                     db.execute("UPDATE conversations SET status = 'CLOSED', closed_at = CURRENT_TIMESTAMP WHERE id = ? "
                                "AND customer_id = (SELECT id FROM users WHERE email = ?)",
                                (conversation_id, self.cfg["email"]))
             except sqlite3.Error as e:
-                raise BotError(f"Could not close chat {conversation_id} in {db_path}: {e}") from e
+                raise BotError(f"Could not close chat {conversation_id} in {self.cfg['db_path']}: {e}") from e
             return
-        self._call("POST", f"/api/conversations/{conversation_id}/escalate")
+        self._call("POST", self.cfg.get("close_path", "/api/conversations/{id}/escalate").format(id=conversation_id))
 
     def _send(self, message):
         if not self.held:
@@ -368,9 +393,10 @@ class SupportFlowConversation(Conversation):
             self.held = True
             if self.key not in self._cleaned:  # chats left open from earlier use would be continued
                 for c in self._call("GET", "/api/conversations"):
-                    if c["status"] in ("AI_ACTIVE", "WAITING_FOR_CUSTOMER"):
+                    if c["status"] in ("AI_ACTIVE", "WAITING_FOR_CUSTOMER", "WAITING_FOR_AGENT", "AGENT_ACTIVE"):
                         self._retire(c["id"])
                 self._cleaned.add(self.key)
+            self._restore()
         body = {"message": message, "conversation_id": self.conversation_id}
         if self.debug:
             body["debug"] = True
@@ -394,6 +420,10 @@ class SupportFlowConversation(Conversation):
             self._cleaned.discard(self.key)  # clean up before the next chat instead
         finally:
             if self.held:
+                try:
+                    self._restore()
+                except BotError:
+                    pass  # restored again before the next chat
                 self.held = False
                 self.lock.release()
 

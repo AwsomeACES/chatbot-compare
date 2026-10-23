@@ -171,15 +171,16 @@ cd ~/projects/hussain-bot/digital-multi-agent-ai-main/backend
 RAG_DATA_ROOT="$PWD/../data" CHROMA_PATH="$PWD/../data/chroma_db" GEMINI_MODEL=gemini-3.6-flash CLAUDE_MODEL=claude-sonnet-5 OPENAI_MODEL=gpt-5-mini \
   ~/projects/chatbot-compare/.bots/reliance222-venv/bin/uvicorn main:app --port 8001
 
-# Mounika's chatbot (port 5000): her GitHub main (github.com/Mounika6115/AI-customer-support-chatbot, be890ac of
-#    2026-10-09; `git pull` for her latest), cloned into ~/projects/mouni-bot/github-latest, packages in
-#    backend/.venv-local (the repo's own venv/ is broken). It
-#    runs on a test database, compare-test.db, where the adapter closes each finished test chat of the test login
-#    (the app itself has no way to end one; the adapter refuses a database whose file name lacks "test"). The test
-#    login's password is BOT_MOUNI_PASSWORD in .env.
+# Mounika's chatbot (port 5000): her GitHub main (github.com/Mounika6115/AI-customer-support-chatbot, 4f0c598 of
+#    2026-10-23; `git pull` for her latest), cloned into ~/projects/mouni-bot/github-latest, packages in
+#    backend/.venv-local (the repo's own venv/ is broken). It runs on a test database, compare-test.db (delete it to
+#    re-seed). The adapter closes each finished test chat with her close endpoint, and puts back the order tables after
+#    every chat, since her bot really cancels orders and opens returns (it only writes to a file named *test*). Since
+#    4f0c598 `python app.py` won't start without debug mode, so it's started with `flask run`. The test login's
+#    password is BOT_MOUNI_PASSWORD in .env.
 cd ~/projects/mouni-bot/github-latest/backend
 DATABASE_URL=sqlite:///compare-test.db GEMINI_API_KEY=... AI_PROVIDER=gemini GEMINI_MODEL=gemini-3.6-flash \
-  .venv-local/bin/python app.py
+  .venv-local/bin/flask --app app run --port 5000 --no-reload
 
 # 3. This app (port 8080)
 cd ~/projects/chatbot-compare && .venv/bin/uvicorn app:app --port 8080
