@@ -311,3 +311,31 @@ A generic secret match on a dict-literal line is qualified as a model-name revie
 - Diagnostic only: no Finding, score, winner, override or model-to-model agreement is changed; no enforcement gate.
 - Retention: copied evidence follows its source. Run, assessment or expiry deletion tombstones copies, drops cached Judge output and invalidates dependents; audit chains keep hashes only. Explicit set deletion removes everything dependent.
 - Provider-returned model names are not immutable revisions, and a small labeled sample does not generalize across rubrics or categories.
+
+## 2026-10-23 — Only the first litellm import is serialized
+
+The initialization lock exists because concurrent first imports deadlock inside litellm's own package setup. It must not become a per-request lock. The module is cached on first success and read without the lock afterwards, and `completion()` reads that cache directly rather than hopping through a worker thread, so provider requests keep their own concurrency and a cancelled caller cannot strand a thread-pool worker on the lock. A failed import caches nothing and releases the lock, so the next caller retries rather than blocking forever. Any future change here needs the four regression tests in `tests/test_costs.py` to keep passing: serialized first import, lock-free reuse, retry after failure, and no worker thread per request.
+
+## 2026-10-23 — Calibration sampling spreads coverage without revealing Judge output
+
+- A flat seeded draw can omit whole Categories, so the default sample takes one conversation per Category in turn. Both the flat draw and the seeded order remain available and reproducible for a given seed.
+- Optional outcome balancing alternates the saved Judge's own passes and failures inside each Category, because a Run that passed almost everything cannot measure false acceptance. The saved outcome is an allocation key only: it is never written to an item, never shown while labeling and never sent to a Judge, so blind labeling is preserved structurally rather than by convention. Because it changes the sampled failure rate, the selection method records a base-rate note and false acceptance and false rejection are reported as conditional on the sample, never as population rates.
+- A held-out subset is split by scenario, never by item. Repeats of one scenario are not independent observations, so splitting by item would let a held-out number restate reviewed work. A holdout requires at least two distinct scenarios; otherwise freezing is refused rather than producing a degenerate fold.
+- Fold metrics carry their own denominators and the headline stays the whole frozen sample. A smaller fold is never presented as a stronger result, and a fold below the configured minimums reports `insufficient_sample` as any sample would.
+- The product cannot enforce the development-then-holdout sequence or detect prior exposure. `docs/judge-validation.md` states the procedure and the reviewer limitations the owner must record; fingerprint invalidation marks a changed configuration stale rather than carrying the old result forward.
+
+## 2026-10-23 — Dependency locking is universal, hash-verified and pinned to the tested set (T-033)
+
+- Format: `uv pip compile --universal --generate-hashes`, installed with `pip install --require-hashes`. Universal resolution keeps environment markers so one committed lock serves Windows, Linux and macOS; `pip` verifies every sha256 before installing. pip-tools was rejected because it resolves for the running platform only, which would make the committed lock a Windows artifact.
+- `uv` is a maintenance tool, not a project dependency. It is installed into a throwaway environment, never globally and never into the project environment; `scripts/lock_dependencies.py` takes the interpreter that has it.
+- Locks pin the versions the test suite actually exercised, by constraining the resolution to the installed environment. Taking the newest versions the ranges allow is a separate, deliberate `--upgrade` step followed by a full suite run, because a locking change must not smuggle in an untested upgrade.
+- The optional evaluation set is resolved unconstrained and its lock is labelled `Unverified`, because the project neither installs nor exercises those packages. An unverified lock that says so is more useful than no lock.
+- `requirements-dev.txt` no longer pins `filelock>=4.0.9`. That pin was added to satisfy a CI runner's preinstalled pipx during a global `pip check`; isolating CI in its own virtual environment superseded it, and because litellm requires `filelock<4.0` the pin made a clean development install impossible.
+- Lock validity is asserted by tests rather than by regenerating in CI, so the checks run on every platform without `uv`.
+
+## 2026-10-23 — Browser coverage follows the active shell; unrunnable checks are removed
+
+- A browser check must start its own loopback server against a temporary runtime with synthetic fixtures. It may not depend on a running Studio, saved history, a fixed run identifier, a machine-specific browser path, or anything under the gitignored `runtime/` directory. A check that cannot run from a clean checkout is not coverage.
+- The legacy `index.html` interface stays served and keeps its browser check, because saved reports and documented links still point at it. Retiring it is a separate, explicit decision.
+- The current shell gets its own check covering navigation, opening a saved report, escaped provider output, Judge calibration and Governance alignment. Failure artifacts are a trace and a screenshot of synthetic fixtures only, never user data.
+- CI wiring is guarded by tests (`tests/test_verification_wiring.py`), because the regression found here was configuration drifting away from the current UI while still reporting green.

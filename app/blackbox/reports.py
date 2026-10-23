@@ -319,6 +319,13 @@ def generate_pdf(run):
 NL = chr(10)
 
 
+def _rate_text(rate: dict) -> str:
+    """A rate always shows its denominator, and an empty denominator says so."""
+    if rate.get("percent") is None:
+        return f"unavailable (0/{rate.get('denominator', 0)})"
+    return f"{rate['percent']}% ({rate['numerator']}/{rate['denominator']})"
+
+
 def calibration_markdown(export: dict) -> str:
     """Readable calibration summary. Reads an already-redacted export; never mutates a report."""
     evaluation = export["evaluation"]
@@ -342,9 +349,43 @@ def calibration_markdown(export: dict) -> str:
             + ("unavailable" if agreement is None else f"{agreement}%")
             + f" ({summary['agreement']['numerator']}/{summary['agreement']['denominator']})",
             "- Counts: " + ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in counts.items()),
+        ]
+        matrix = summary["confusion"]
+        lines += [
+            "",
+            "## Confusion matrix",
+            "",
+            "| | Judge pass | Judge fail |",
+            "| --- | --- | --- |",
+            f"| Human pass | {matrix['human_pass_judge_pass']} | {matrix['human_pass_judge_fail']} |",
+            f"| Human fail | {matrix['human_fail_judge_pass']} | {matrix['human_fail_judge_fail']} |",
+            "",
+            f"- False acceptance (human fail, Judge pass): {_rate_text(summary['false_acceptance'])}",
+            f"- False rejection (human pass, Judge fail): {_rate_text(summary['false_rejection'])}",
+            f"- Distinct scenarios: {summary['sufficiency']['distinct_scenarios']} "
+            f"({summary['sufficiency']['repeated_scenarios']} with repeats, which do not count "
+            "as distinct)",
             "",
             *[f"> {w}" for w in summary["warnings"]],
         ]
+        folds = evaluation.get("by_fold") or {}
+        if folds:
+            lines += [
+                "",
+                "## Development and held-out folds",
+                "",
+                "| Fold | Judged | Agreement | Scenarios | State |",
+                "| --- | --- | --- | --- | --- |",
+                *[
+                    f"| {name} | {entry['counts']['validly_judged']} | "
+                    f"{_rate_text(entry['agreement'])} | "
+                    f"{entry['sufficiency']['distinct_scenarios']} | {entry['state']} |"
+                    for name, entry in sorted(folds.items())
+                ],
+                "",
+                "Each fold carries its own denominators and is smaller than the whole sample, "
+                "so a fold is descriptive rather than a stronger result.",
+            ]
     else:
         lines.append("- Source evidence was deleted; this calibration is invalidated.")
     lines += ["", "## Limitations", *[f"- {item}" for item in export["limitations"]]]

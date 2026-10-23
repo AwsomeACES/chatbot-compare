@@ -28,7 +28,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements*.txt
+          cache-dependency-path: |
+            requirements*.txt
+            requirements*.lock
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -44,13 +46,18 @@ jobs:
         run: |
           python -c "import sys; assert sys.prefix != sys.base_prefix, 'CI must use its isolated virtual environment'; print(sys.executable)"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Install development dependencies
+      - name: Install locked development dependencies
         run: |
-          python -m pip install -r requirements-dev.txt
+          python -m pip install --require-hashes -r requirements-dev.lock
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m pip check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -m playwright install chromium
+          if ($IsLinux) {
+            # Linux needs the browser's shared libraries; Windows and macOS runners ship them.
+            python -m playwright install --with-deps chromium
+          } else {
+            python -m playwright install chromium
+          }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm ci --ignore-scripts --no-audit --no-fund
       - name: Check Python formatting and lint
@@ -66,5 +73,15 @@ jobs:
         run: npm run test:ui
       - name: Run regression tests with local fixtures
         run: python -m pytest -q
-      - name: Check comparison UI in an isolated workspace
+      - name: Check the current Studio shell in a browser
+        run: python scripts/check-studio-ui.py --artifacts runtime/ui-artifacts
+      - name: Check the retained legacy comparison UI in an isolated workspace
         run: python scripts/check-exact-compare.py
+      - name: Keep browser failure traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-failure-${{ matrix.os }}
+          path: runtime/ui-artifacts
+          if-no-files-found: ignore
+          retention-days: 7

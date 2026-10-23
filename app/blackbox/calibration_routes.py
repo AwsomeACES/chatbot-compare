@@ -108,7 +108,13 @@ def label(ident: uuid.UUID, item_id: uuid.UUID, update: LabelUpdate):
 
 @router.post("/sets/{ident}/freeze")
 def freeze(ident: uuid.UUID, request: Freeze):
-    return guarded(cal.freeze, str(ident), request.expected_set_revision)
+    return guarded(
+        cal.freeze,
+        str(ident),
+        request.expected_set_revision,
+        request.holdout_percent,
+        request.holdout_seed,
+    )
 
 
 @router.delete("/sets/{ident}")

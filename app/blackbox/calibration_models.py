@@ -43,9 +43,18 @@ class ItemRef(BaseModel):
 
 
 class Sample(BaseModel):
+    """A reproducible draw. Stratification spreads the sample; it never reveals Judge output."""
+
     model_config = {"extra": "forbid"}
     size: int = Field(ge=1, le=1000)
     seed: int = Field(default=42, ge=0, le=2**31 - 1)
+    stratify: Literal["category", "none"] = "category"
+    balance_outcomes: bool = Field(
+        default=False,
+        description="Alternate the saved Judge's own passes and failures so the sample contains "
+        "ordinary successes and meaningful failures. Changes the sampled base rate, so false "
+        "acceptance and false rejection become conditional on it.",
+    )
 
 
 class SourceRef(BaseModel):
@@ -117,8 +126,12 @@ class LabelUpdate(BaseModel):
 
 
 class Freeze(BaseModel):
+    """Freezing may reserve a held-out subset, split by scenario so repeats stay together."""
+
     model_config = {"extra": "forbid"}
     expected_set_revision: int = Field(ge=0)
+    holdout_percent: float = Field(default=0, ge=0, le=50)
+    holdout_seed: int = Field(default=42, ge=0, le=2**31 - 1)
 
 
 class CloudConsent(BaseModel):

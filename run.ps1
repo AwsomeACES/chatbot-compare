@@ -10,7 +10,8 @@ if (-not (Test-Path '.venv\Scripts\python.exe')) {
     py -3.12 -m venv .venv
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-    & '.\.venv\Scripts\python.exe' -m pip install -r requirements.txt
+    # Exact, hash-verified resolution. Regenerate with scripts/lock_dependencies.py.
+    & '.\.venv\Scripts\python.exe' -m pip install --require-hashes -r requirements.lock
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & .\.venv\Scripts\python.exe -m playwright install chromium
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

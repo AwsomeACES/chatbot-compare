@@ -90,12 +90,14 @@ Key endpoints: GET /api/health; GET /api/blackbox/capabilities; GET /api/blackbo
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
-node --check app/blackbox_static/app.js
-node --check app/blackbox_static/dashboard.js
-node scripts/check-simple-ui.cjs
+node scripts/check-js-syntax.cjs
+.\.venv\Scripts\python.exe scripts/check-exact-compare.py
+.\.venv\Scripts\python.exe scripts/check-studio-ui.py
 ```
 
-The browser regression uses this workspace's installed Playwright runtime and saved Reliance run. It mocks progress/compare responses in the browser to verify UI behavior; it does not store fabricated benchmark results or call an external judge. Backend tests isolate their database and exercise local protocol fixtures.
+`check-exact-compare.py` is the browser regression for this retained legacy interface; `check-studio-ui.py` covers the current shell. Both start their own loopback server against a temporary runtime and synthetic fixtures, so neither reads saved history, calls an external judge or stores fabricated benchmark results. Backend tests isolate their database and exercise local protocol fixtures.
+
+The earlier `scripts/check-*.cjs` browser checks were removed on 2026-10-23. They loaded Playwright from the gitignored `runtime/ui-check/node_modules`, hardcoded one machine's `chrome.exe` path and deleted run identifiers, and asserted retired selectors, so they could not run from a clean checkout. See PROGRESS.md for the per-file reasons.
 
 ## Troubleshooting and limitations
 

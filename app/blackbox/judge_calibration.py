@@ -60,6 +60,8 @@ WARNINGS = {
 }
 LIMITATIONS = [
     "Conditional on this sample and rubric; not certification, universal Judge accuracy or an industry standard.",
+    "Precision is limited by sample size: a small sample cannot detect uncommon failure modes, and class coverage below the configured minimum is reported as insufficient rather than estimated.",
+    "Items come only from the selected saved Runs, so agreement does not transfer to other bots, Categories, prompts, languages or future traffic.",
     "Returned provider model names are not guaranteed immutable revisions; silent upstream changes are not detected.",
     "Human labels are entered by the local owner and may reflect prior exposure to original Judge output.",
     "Calibration is diagnostic only: it does not change Findings, scores, winners or model-to-model agreement.",
@@ -278,6 +280,69 @@ def eligible_items(run: dict, assessment: str = "") -> tuple[list[dict], list[di
     return items, excluded
 
 
+def original_outcome(run: dict) -> dict[tuple[str, int], str]:
+    """(Case ID, bot slot) -> the saved Judge's own outcome class.
+
+    Used only to spread a sample across ordinary successes and meaningful failures. It is never
+    stored on an item, exported to the labeling view or sent to a Judge, so labeling stays blind.
+    """
+    index: dict[tuple[str, int], str] = {}
+    for case in run.get("cases", []):
+        for slot, result in enumerate(case.get("results") or []):
+            status = result.get("status")
+            index[(case["id"], slot)] = status if status in ("passed", "failed") else "unmeasured"
+    return index
+
+
+def _seeded_order(items: list[dict], seed: int) -> list[dict]:
+    """Deterministic shuffle keyed by the seed and the item's source identity."""
+    return sorted(
+        items,
+        key=lambda i: hashlib.sha256(
+            f"{seed}:{i['source']['case_id']}:{i['source']['bot_slot']}".encode()
+        ).hexdigest(),
+    )
+
+
+def _round_robin(groups: list[list[dict]], size: int) -> list[dict]:
+    """Take one item from each non-empty group in turn, so every group is represented first."""
+    queues = [list(group) for group in groups]
+    chosen: list[dict] = []
+    while len(chosen) < size and any(queues):
+        for queue in queues:
+            if not queue:
+                continue
+            chosen.append(queue.pop(0))
+            if len(chosen) >= size:
+                break
+    return chosen
+
+
+OUTCOME_ORDER = ("failed", "passed", "unmeasured")
+
+
+def _strata(items: list[dict], sample, outcomes: dict[tuple[str, int], str]) -> list[list[dict]]:
+    """One deterministic queue per Category, optionally alternating saved failures and passes."""
+    by_category: dict[str, list[dict]] = {}
+    for item in _seeded_order(items, sample.seed):
+        by_category.setdefault(item["category"], []).append(item)
+    strata = []
+    for category in sorted(by_category):
+        rows = by_category[category]
+        if not sample.balance_outcomes:
+            strata.append(rows)
+            continue
+        buckets: dict[str, list[dict]] = {}
+        for item in rows:
+            key = outcomes.get(
+                (item["source"]["case_id"], item["source"]["bot_slot"]), "unmeasured"
+            )
+            buckets.setdefault(key, []).append(item)
+        ordered = [buckets[k] for k in OUTCOME_ORDER if k in buckets]
+        strata.append(_round_robin(ordered, len(rows)))
+    return strata
+
+
 def select(selection: Selection) -> tuple[list[dict], list[dict], dict]:
     """Explicit Case/slot picks or a reproducible seeded sample from one saved Run."""
     run, assessment = resolve_source(selection.source.kind, selection.source.id)
@@ -285,14 +350,24 @@ def select(selection: Selection) -> tuple[list[dict], list[dict], dict]:
     index = {(i["source"]["case_id"], i["source"]["bot_slot"]): i for i in items}
     if selection.sample:
         s = selection.sample
-        ordered = sorted(
-            items,
-            key=lambda i: hashlib.sha256(
-                f"{s.seed}:{i['source']['case_id']}:{i['source']['bot_slot']}".encode()
-            ).hexdigest(),
-        )
-        chosen = ordered[: min(s.size, policy().max_sample_size)]
-        method = {"kind": "seeded_sample", "seed": s.seed, "requested": s.size}
+        size = min(s.size, policy().max_sample_size)
+        if s.stratify == "category":
+            chosen = _round_robin(_strata(items, s, original_outcome(run)), size)
+        else:
+            chosen = _seeded_order(items, s.seed)[:size]
+        method = {
+            "kind": "seeded_sample",
+            "seed": s.seed,
+            "requested": s.size,
+            "stratify": s.stratify,
+            "balance_outcomes": s.balance_outcomes,
+        }
+        if s.balance_outcomes:
+            method["base_rate_note"] = (
+                "The sample alternates the saved Judge's own passes and failures, so its "
+                "failure rate is not the Run's failure rate. Read false acceptance and false "
+                "rejection as conditional on this sample, not as population rates."
+            )
     else:
         wanted = {(r.case_id, r.bot_slot) for r in selection.items}
         known = {(e["case_id"], e["bot_slot"]): e for e in excluded}
@@ -511,13 +586,54 @@ def version_hash(items: list[dict]) -> str:
     )
 
 
-def freeze(ident: str, expected_revision: int) -> dict:
+def scenario_key(item: dict) -> tuple[str, str]:
+    return (item["category"], item["source"]["base_case_id"])
+
+
+def assign_folds(items: list[dict], percent: float, seed: int) -> dict:
+    """Mark each item development or holdout, splitting whole scenarios.
+
+    Repeats of one scenario are not independent observations, so they always land in the same
+    fold; otherwise a held-out result would partly restate work already reviewed.
+    """
+    scenarios = sorted(
+        {scenario_key(i) for i in items},
+        key=lambda k: hashlib.sha256(f"{seed}:{k[0]}:{k[1]}".encode()).hexdigest(),
+    )
+    if not percent:
+        for item in items:
+            item["fold"] = "development"
+        return {
+            "holdout_percent": 0,
+            "seed": seed,
+            "scenarios": {"development": len(scenarios), "holdout": 0},
+            "note": "No held-out subset was reserved; every item is available for review.",
+        }
+    if len(scenarios) < 2:
+        raise CalibrationError(
+            "A held-out subset needs at least two distinct scenarios in the set."
+        )
+    count = max(1, min(round(len(scenarios) * percent / 100), len(scenarios) - 1))
+    holdout = set(scenarios[:count])
+    for item in items:
+        item["fold"] = "holdout" if scenario_key(item) in holdout else "development"
+    return {
+        "holdout_percent": percent,
+        "seed": seed,
+        "scenarios": {"development": len(scenarios) - count, "holdout": count},
+        "note": "Review disagreements in the development fold only. After changing the Judge, "
+        "prompt or rubric, evaluate again and read the holdout fold as the unreviewed result.",
+    }
+
+
+def freeze(ident: str, expected_revision: int, holdout_percent: float = 0, holdout_seed: int = 42):
     def mutate(record, conn):
         items = copy.deepcopy(record["draft"]["items"])
         if not items:
             raise CalibrationError("Add at least one item before freezing a version.")
         if not any(latest(i) for i in items):
             raise CalibrationError("Label at least one item before freezing a version.")
+        folds = assign_folds(items, holdout_percent, holdout_seed)
         version = {
             "version": len(record["versions"]) + 1,
             "frozen_at": now(),
@@ -526,11 +642,17 @@ def freeze(ident: str, expected_revision: int) -> dict:
             "threshold": 80,
             "items": items,
             "sample_methods": copy.deepcopy(record["selection_methods"]),
+            "folds": folds,
         }
         record["versions"].append(version)
         record["current_version"] = version["version"]
         chain_append(
-            record, conn, "version_frozen", version=version["version"], version_hash=version["hash"]
+            record,
+            conn,
+            "version_frozen",
+            version=version["version"],
+            version_hash=version["hash"],
+            holdout_scenarios=folds["scenarios"]["holdout"],
         )
 
     record = _guard(KIND_SET, ident, mutate, expected_revision)
@@ -553,6 +675,7 @@ def summarize_set(record: dict) -> dict:
                 "hash": v["hash"],
                 "frozen_at": v["frozen_at"],
                 "items": len(v["items"]),
+                "folds": v.get("folds"),
                 "purged": bool(v.get("purged")),
             }
             for v in record["versions"]
@@ -583,12 +706,21 @@ def _rate(numerator: int, denominator: int) -> dict:
     }
 
 
-def metrics(items: list[dict], results: dict, evaluator_id: str, p: CalibrationPolicy) -> dict:
+def metrics(
+    items: list[dict],
+    results: dict,
+    evaluator_id: str,
+    p: CalibrationPolicy,
+    fold: str | None = None,
+) -> dict:
     """Human-alignment metrics for one actual evaluator over a frozen version's items.
 
     Only valid Judge results from this evaluator are comparable; everything else stays Not tested,
     so a missing judgment can never improve agreement by shrinking the denominator silently.
+    `fold` restricts the items to one side of a held-out split and keeps its own denominators.
     """
+    if fold:
+        items = [i for i in items if i.get("fold", "development") == fold]
     labeled = [i for i in items if latest(i)]
     comparable, tested = [], 0
     for item in labeled:
@@ -659,6 +791,7 @@ def metrics(items: list[dict], results: dict, evaluator_id: str, p: CalibrationP
     ]
     return {
         "evaluator_id": evaluator_id,
+        "fold": fold or "all",
         "threshold": p.pass_threshold,
         "counts": {
             "total_selected": total,
@@ -1227,6 +1360,7 @@ def disagreements(evaluation: dict, version: dict) -> list[dict]:
                 "item_id": item_id,
                 "source": item["source"],
                 "category": item["category"],
+                "fold": item.get("fold", "development"),
                 "human": {
                     "verdict": "pass" if label["binary_pass"] else "fail",
                     "score": label["score"],
@@ -1283,6 +1417,18 @@ def view_evaluation(evaluation: dict, detail: bool = True) -> dict:
         )
     view["by_evaluator"] = by_eval
     view["summary"] = by_eval[evaluation["evaluator"]["id"]]
+    view["folds"] = version.get("folds")
+    present = sorted({i.get("fold", "development") for i in version["items"]})
+    if len(present) > 1:
+        # Each fold reports its own denominators. The headline stays the whole sample so a
+        # small fold cannot be read as a stronger result than the sample supports.
+        view["by_fold"] = {}
+        for name in present:
+            fold_entry = metrics(
+                version["items"], evaluation["results"], evaluation["evaluator"]["id"], p, name
+            )
+            fold_entry["state"], fold_entry["warnings"] = classify(fold_entry, p, complete)
+            view["by_fold"][name] = fold_entry
     view["progress"] = {
         "labeled": sum(bool(latest(i)) for i in version["items"]),
         "done": sum(

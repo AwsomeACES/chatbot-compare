@@ -964,3 +964,149 @@ def test_markdown_export_states_limitations_and_warnings():
     text = calibration_markdown(cal.export_evaluation(ident))
     assert "Limitations" in text and "not certification" in text
     assert cal.WARNINGS["incomplete"] in text or cal.WARNINGS["insufficient_sample"] in text
+
+
+# --- sampling coverage and the held-out subset (Phase B) ------------------------------------
+
+
+def test_category_stratified_sample_covers_every_category():
+    """A flat seeded draw can miss a whole Category; the default sample must not."""
+    run = make_run(scenarios=24)
+    flat = cal.select(selection(run, sample=Sample(size=2, seed=11, stratify="none")))[0]
+    spread = cal.select(selection(run, sample=Sample(size=2, seed=11)))[0]
+    assert {i["category"] for i in spread} == {"functional", "guardrails"}
+    assert len(flat) == len(spread) == 2
+    # The flat draw is still available and still reproducible.
+    again = cal.select(selection(run, sample=Sample(size=2, seed=11, stratify="none")))[0]
+    assert [i["source"]["case_id"] for i in flat] == [i["source"]["case_id"] for i in again]
+
+
+def test_stratified_sample_stays_reproducible_for_a_seed():
+    run = make_run(scenarios=20)
+
+    def pick(seed):
+        chosen = cal.select(selection(run, sample=Sample(size=6, seed=seed)))[0]
+        return [i["source"]["case_id"] for i in chosen]
+
+    assert pick(3) == pick(3)
+    assert pick(3) != pick(4)
+    assert len(pick(3)) == 6
+
+
+def test_outcome_balanced_sample_includes_saved_failures_without_revealing_them():
+    """Coverage of ordinary successes and meaningful failures, with the base rate disclosed."""
+    run = make_run(scenarios=20)
+    for index, case in enumerate(run["cases"]):
+        case["results"][0]["status"] = "passed" if index else "failed"
+        case["results"][0]["score"] = 91.0 if index else 12.0
+    db.save("blackbox", run)
+
+    plain = cal.select(selection(run, sample=Sample(size=4, seed=2, balance_outcomes=False)))
+    balanced = cal.select(selection(run, sample=Sample(size=4, seed=2, balance_outcomes=True)))
+    outcomes = cal.original_outcome(run)
+
+    def classes(chosen):
+        return {outcomes[(i["source"]["case_id"], i["source"]["bot_slot"])] for i in chosen}
+
+    assert "failed" not in classes(plain[0])  # one failure among forty items is easily missed
+    assert classes(balanced[0]) == {"failed", "passed"}
+    assert balanced[2]["balance_outcomes"] is True
+    assert "not the Run's failure rate" in balanced[2]["base_rate_note"]
+    # The saved outcome never reaches the labeling view or the item record.
+    for item in balanced[0]:
+        assert "status" not in item
+        assert "score" not in item
+        view = cal.public_item(item)
+        assert "ORIGINAL JUDGE REASON" not in json.dumps(view)
+        assert not {"status", "score", "reason"} & set(view["payload"])
+
+
+def test_holdout_split_keeps_repeats_of_one_scenario_together():
+    run = make_run(scenarios=10, repeats=2)
+    record, _ = labeled_set(run)
+    frozen = cal.freeze(record["id"], cal.get_set(record["id"])["revision"], holdout_percent=40)
+    version = cal.version_of(cal.get_set(record["id"]), frozen["current_version"])
+    folds = {}
+    for item in version["items"]:
+        folds.setdefault(cal.scenario_key(item), set()).add(item["fold"])
+    assert all(len(v) == 1 for v in folds.values()), "a scenario straddled the two folds"
+    assert version["folds"]["scenarios"]["holdout"] == 4
+    assert version["folds"]["scenarios"]["development"] == 6
+    assert set(i["fold"] for i in version["items"]) == {"development", "holdout"}
+
+
+def test_holdout_split_is_seeded_and_needs_two_scenarios():
+    run = make_run(scenarios=8)
+    record, _ = labeled_set(run)
+
+    def holdout(seed):
+        frozen = cal.freeze(
+            record["id"],
+            cal.get_set(record["id"])["revision"],
+            holdout_percent=25,
+            holdout_seed=seed,
+        )
+        version = cal.version_of(cal.get_set(record["id"]), frozen["current_version"])
+        return {cal.scenario_key(i) for i in version["items"] if i["fold"] == "holdout"}
+
+    assert holdout(1) == holdout(1)
+    assert holdout(1) != holdout(2)
+
+    single = make_run(scenarios=1, category="functional")
+    one, _ = labeled_set(single, name="one")
+    with pytest.raises(cal.CalibrationError):
+        cal.freeze(one["id"], cal.get_set(one["id"])["revision"], holdout_percent=20)
+
+
+def test_fold_metrics_report_separate_denominators_and_never_raise_the_headline():
+    run = make_run(scenarios=10)
+    record, _ = labeled_set(run)
+    frozen = cal.freeze(record["id"], cal.get_set(record["id"])["revision"], holdout_percent=30)
+    provider = Provider()
+    ident = run_eval(record["id"], request(version=frozen["current_version"]), provider)
+    view = cal.view_evaluation(cal.get_evaluation(ident))
+
+    assert set(view["by_fold"]) == {"development", "holdout"}
+    whole = view["summary"]["counts"]["validly_judged"]
+    parts = sum(f["counts"]["validly_judged"] for f in view["by_fold"].values())
+    assert parts == whole
+    for name, entry in view["by_fold"].items():
+        assert entry["fold"] == name
+        assert entry["counts"]["validly_judged"] < whole
+        assert entry["agreement"]["denominator"] == entry["counts"]["validly_judged"]
+    # The headline remains the whole frozen sample, not the easier fold.
+    assert view["summary"]["fold"] == "all"
+    assert view["folds"]["holdout_percent"] == 30
+    for row in view["disagreements"]:
+        assert row["fold"] in ("development", "holdout")
+
+
+def test_limitations_state_sample_size_and_representativeness():
+    text = " ".join(cal.LIMITATIONS)
+    assert "sample size" in text
+    assert "does not transfer" in text
+    assert "not certification" in text
+
+
+def test_markdown_export_carries_confusion_folds_and_denominators():
+    """JSON and Markdown must agree on the numbers a reviewer needs."""
+    from app.blackbox.reports import calibration_markdown
+
+    run = make_run(scenarios=10)
+    record, _ = labeled_set(run)
+    frozen = cal.freeze(record["id"], cal.get_set(record["id"])["revision"], holdout_percent=30)
+    ident = run_eval(record["id"], request(version=frozen["current_version"]), Provider())
+    body = cal.export_evaluation(ident)
+    text = calibration_markdown(body)
+    summary = body["evaluation"]["summary"]
+
+    assert "## Confusion matrix" in text
+    assert "False acceptance" in text and "False rejection" in text
+    assert "## Development and held-out folds" in text
+    for name in body["evaluation"]["by_fold"]:
+        assert f"| {name} |" in text
+    agreement = summary["agreement"]
+    assert f"({agreement['numerator']}/{agreement['denominator']})" in text
+    assert "Distinct scenarios:" in text
+    for limitation in body["limitations"]:
+        assert limitation in text

@@ -5,7 +5,8 @@ cd "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 PYTHON="${PYTHON:-python3}"
 "$PYTHON" -c 'import sys; assert sys.version_info >= (3,12), "Install Python 3.12 or newer first."'
 if [ ! -x .venv/bin/python ]; then "$PYTHON" -m venv .venv; fi
-.venv/bin/python -m pip install -r requirements.txt
+# Exact, hash-verified resolution. Regenerate with scripts/lock_dependencies.py.
+.venv/bin/python -m pip install --require-hashes -r requirements.lock
 if [ ! -f .env ]; then cp .env.example .env; fi
 if command -v ollama >/dev/null 2>&1; then
   echo "Ollama installed. Start ollama serve and install a model to enable local fallback."
