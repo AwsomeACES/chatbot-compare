@@ -519,6 +519,9 @@ def delete(ident: uuid.UUID):
     from ..blackbox.governance import purge_run
 
     purge_run(str(ident))
+    from ..blackbox.judge_calibration import purge_source
+
+    purge_source(assessment_id=str(ident))
     from ..blackbox import metering
 
     with db.connect() as connection:

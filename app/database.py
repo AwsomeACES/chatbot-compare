@@ -117,3 +117,39 @@ def record_summaries(kind: str, fields: tuple[str, ...]) -> list[dict]:
 def delete(kind, ident):
     with connect() as db:
         db.execute("DELETE FROM records WHERE kind=? AND id=?", (kind, str(ident)))
+
+
+class RevisionConflict(Exception):
+    """The stored record changed since the caller read it."""
+
+
+class RecordMissing(Exception):
+    pass
+
+
+def update(kind, ident, mutate, expected_revision=None):
+    """Atomic read-modify-write guarded by an integer `revision` field.
+
+    `mutate(record, connection)` edits the decoded record in place; related rows (such as audit
+    anchors) written on `connection` commit or roll back with it. The write happens inside one immediate
+    transaction, so concurrent writers serialize and a stale `expected_revision` fails clearly.
+    """
+    with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute(
+            "SELECT body FROM records WHERE kind=? AND id=?", (kind, str(ident))
+        ).fetchone()
+        if not row:
+            raise RecordMissing(str(ident))
+        record = json.loads(row[0])
+        if expected_revision is not None and record.get("revision", 0) != expected_revision:
+            raise RevisionConflict(
+                f"Revision {expected_revision} is stale; current revision is {record.get('revision', 0)}."
+            )
+        result = mutate(record, db)
+        record["revision"] = record.get("revision", 0) + 1
+        db.execute(
+            "UPDATE records SET body=? WHERE kind=? AND id=?",
+            (json.dumps(record), kind, str(ident)),
+        )
+    return record if result is None else result

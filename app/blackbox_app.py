@@ -17,6 +17,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from . import database as db
 from .assurance.routes import router as assurance_router
 from .blackbox import metering, pricing
+from .blackbox.calibration_routes import router as calibration_router
 from .blackbox.catalog import build_cases
 from .blackbox.cost_summary import estimate
 from .blackbox.governance_routes import router as governance_router
@@ -36,6 +37,9 @@ from .config import MAX_UPLOAD, ROOT, RUNTIME
 @asynccontextmanager
 async def lifespan(app):
     metering.recover_interrupted()
+    from .blackbox.judge_calibration import recover_interrupted as recover_calibration
+
+    recover_calibration()
     from .blackbox.governance import expire_runs
 
     expire_runs(set(ACTIVE))
@@ -730,6 +734,9 @@ def delete_run(ident: uuid.UUID):
     from .blackbox.governance import purge_run
 
     purge_run(value)
+    from .blackbox.judge_calibration import purge_source
+
+    purge_source(run_id=value)
     (RUNTIME / "reports" / f"blackbox-{value}.pdf").unlink(missing_ok=True)
     with db.connect() as conn:
         metering.init_db(conn)
@@ -745,6 +752,7 @@ app.include_router(studio_router)
 app.include_router(assurance_router)
 
 app.include_router(governance_router)
+app.include_router(calibration_router)
 
 
 @app.get("/")

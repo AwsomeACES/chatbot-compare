@@ -28,9 +28,16 @@
     generation++;
     loaded = null;
     storedJudges = [];
-    ["integrity", "cards", "warnings", "metadata", "audit", "mapping", "credentials"].forEach(
-      (id) => (el(id).textContent = ""),
-    );
+    [
+      "integrity",
+      "cards",
+      "warnings",
+      "metadata",
+      "audit",
+      "mapping",
+      "credentials",
+      "human",
+    ].forEach((id) => (el(id).textContent = ""));
     controls.forEach((id) => (el(id).disabled = true));
     el("export").hidden = true;
     el("status").textContent = selected
@@ -55,7 +62,12 @@
       const metric = (label, value, note) =>
         `<article class="metric"><small>${escape(label)}</small><strong class="stat-value">${escape(value)}</strong><p>${escape(note)}</p></article>`;
       el("integrity").innerHTML =
-        `<div class="grid integrity-grid">${metric("Accounted for", `${i.accounted_for}/${i.planned}`, `${i.scored} scored · ${i.not_tested} not tested · ${i.pending} pending`)}${metric("Audit chain", chain === null ? "Unavailable" : chain ? "Intact" : "Changed", g.audit_integrity.reason)}${metric("Judge agreement", i.agreement_percent == null ? "Not measured" : `${i.agreement_percent}%`, `${i.low_agreement_cases.length} items flagged for review`)}${metric("Human overrides", i.overrides, "Every override keeps the original score and a written reason.")}</div>`;
+        `<div class="grid integrity-grid">${metric("Accounted for", `${i.accounted_for}/${i.planned}`, `${i.scored} scored · ${i.not_tested} not tested · ${i.pending} pending`)}${metric("Audit chain", chain === null ? "Unavailable" : chain ? "Intact" : "Changed", g.audit_integrity.reason)}${metric("Judge agreement (model vs model)", i.agreement_percent == null ? "Not measured" : `${i.agreement_percent}%`, `${i.low_agreement_cases.length} items flagged for review`)}${metric("Human overrides", i.overrides, "Every override keeps the original score and a written reason.")}</div>`;
+      el("human").innerHTML = (g.human_alignment || [])
+        .map((entry) => window.CalibrationUI.renderAlignment(entry, entry.judge_model || "Judge"))
+        .join("");
+      if (!g.human_alignment?.length)
+        el("human").innerHTML = window.CalibrationUI.renderAlignment(null);
       el("warnings").innerHTML =
         g.warnings.map((warning) => `<p class="notice">${escape(warning)}</p>`).join("") +
         (i.low_agreement_cases.length

@@ -1,3 +1,13 @@
+## 2026-10-23 — T-035 Judge calibration (current task)
+
+Implemented locally in `D:/AI-Agent-Testing-Studio` (branch `codex/industry-reliability`), uncommitted and unpushed. See PROGRESS.md for files, DECISIONS.md for decisions and docs/tasks.md T-035 (In progress: needs owner commit/review and real human-labeled data).
+
+Verified: calibration tests 56 (core 47, API 6, UI 3), related suites 118, navigation 11, Ruff, Prettier, JS syntax and docs checker. Full-suite result: 447 passed, 1 skipped (Windows symlink privilege) in 183 s.
+
+Next steps: review and commit the scoped diff; collect representative human labels and record a validation run with a real local Judge; consider mapping rubric changes for reference-driven categories; verify native macOS/Linux separately (not exercised).
+
+## 2026-10-23 — Published upgrades and runtime evidence correction
+
 ## 2026-10-23 — Latest source integration and CI verification
 
 Current request: resolve the pictured historical Ubuntu socket-cleanup failure and push the latest update to AwsomeACES/chatbot-compare/hussain-code. The current test already contains the bounded descendant-resource release fix. It passed on Windows and five consecutive isolated Ubuntu WSL checks. The screenshot predates successful personal-repository runs and the shared c5e461f run; do not rerun an obsolete failed commit expecting new code.

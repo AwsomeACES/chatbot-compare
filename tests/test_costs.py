@@ -1,5 +1,7 @@
 import asyncio
 import json
+import threading
+import time
 from decimal import Decimal
 
 import pytest
@@ -601,3 +603,133 @@ def test_budget_preserves_completed_target_evidence(monkeypatch):
     assert run["status"] == "budget_limit"
     assert run["cases"][0]["results"][0]["transcript"][0]["output"] == "hello"
     assert all(c["results"][0]["status"] == "not_tested" for c in run["cases"])
+
+
+def _uncached_metering(monkeypatch):
+    """Give one test an empty litellm cache without leaking a stub into later tests."""
+    from app.blackbox import metering
+
+    monkeypatch.setattr(metering, "_litellm_module", None, raising=False)
+    monkeypatch.setattr(metering, "_litellm_lock", threading.Lock(), raising=False)
+    return metering
+
+
+def test_first_litellm_import_is_serialized(monkeypatch):
+    """Found in a live run: concurrent first imports deadlocked inside litellm."""
+    import importlib
+    from concurrent.futures import ThreadPoolExecutor
+
+    metering = _uncached_metering(monkeypatch)
+    module = object()
+    active, peak, imports = [0], [0], []
+    guard = threading.Lock()
+
+    def slow_import(name):
+        assert name == "litellm"
+        with guard:
+            imports.append(name)
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        time.sleep(0.02)
+        with guard:
+            active[0] -= 1
+        return module
+
+    monkeypatch.setattr(importlib, "import_module", slow_import)
+    with ThreadPoolExecutor(6) as pool:
+        loaded = list(pool.map(lambda _: metering._load_litellm(), range(6)))
+    assert peak[0] == 1
+    assert imports == ["litellm"]  # the import itself happens once, not once per caller
+    assert loaded == [module] * 6
+
+
+def test_loaded_litellm_is_returned_without_the_initialization_lock(monkeypatch):
+    """After the first import, requests must not serialize on the import lock."""
+    import importlib
+    from concurrent.futures import ThreadPoolExecutor
+
+    metering = _uncached_metering(monkeypatch)
+    module = object()
+    monkeypatch.setattr(importlib, "import_module", lambda name: module)
+    assert metering._load_litellm() is module
+
+    def refuse(name):
+        raise AssertionError("litellm was imported again after it had been loaded")
+
+    monkeypatch.setattr(importlib, "import_module", refuse)
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold_the_lock():
+        with metering._litellm_lock:
+            held.set()
+            release.wait(5)
+
+    with ThreadPoolExecutor(2) as pool:
+        holder = pool.submit(hold_the_lock)
+        assert held.wait(5)
+        try:
+            # Would block until `release` if the cached module needed the lock.
+            assert pool.submit(metering._load_litellm).result(timeout=2) is module
+        finally:
+            release.set()
+        holder.result(timeout=5)
+
+
+def test_failed_litellm_import_does_not_block_later_callers(monkeypatch):
+    """An initialization exception must release the lock and leave the cache retryable."""
+    import importlib
+
+    metering = _uncached_metering(monkeypatch)
+    module = object()
+    attempts = []
+
+    def flaky_import(name):
+        attempts.append(name)
+        if len(attempts) == 1:
+            raise ImportError("litellm initialization failed")
+        return module
+
+    monkeypatch.setattr(importlib, "import_module", flaky_import)
+    with pytest.raises(ImportError):
+        metering._load_litellm()
+    assert not metering._litellm_lock.locked()
+    assert metering._litellm_module is None
+    assert metering._load_litellm() is module
+    assert len(attempts) == 2
+
+
+def test_completion_reuses_the_loaded_litellm_without_a_worker_thread(monkeypatch):
+    """The per-request path must not hop through a thread once litellm is loaded."""
+    from app.blackbox import connectors, metering
+
+    class FakeLitellm:
+        telemetry = True
+        suppress_debug_info = False
+
+        def __init__(self):
+            self.calls = []
+
+        async def acompletion(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    fake = FakeLitellm()
+    monkeypatch.setattr(metering, "_litellm_module", fake, raising=False)
+
+    async def allow(url):
+        return None
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a worker thread was used although litellm was already loaded")
+
+    monkeypatch.setattr(connectors, "validate_destination", allow)
+    monkeypatch.setattr(metering.asyncio, "to_thread", refuse)
+    body = {"model": "fixture-model", "messages": [{"role": "user", "content": "hi"}]}
+    result = asyncio.run(
+        metering.completion("http://127.0.0.1:11434/v1/chat/completions", body, key="")
+    )
+    assert result["choices"][0]["message"]["content"] == "ok"
+    assert fake.calls[0]["num_retries"] == 0  # retry accounting still belongs to Meter
+    assert fake.calls[0]["max_retries"] == 0
+    assert fake.calls[0]["caching"] is False

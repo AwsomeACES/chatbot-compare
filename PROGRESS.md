@@ -790,6 +790,29 @@ Validation after the fix: full suite 386 passed, 1 skipped (Windows symlink priv
 
 ## 2026-10-23 — Verify historical Ubuntu failure and publish latest source
 
+All four evidence-readiness commits through 740ae4c were integrated into the shared C: publishing history and pushed as c43261c to AwsomeACES/chatbot-compare/hussain-code. CI found a random UUID/phone-redaction collision in runtime logs, separate from the historical socket-release failure. Fix f263e5c preserves only canonical top-level run_id UUIDs while retaining PII and credential redaction. Deterministic regression tests reproduce the collision; 67 focused tests pass. The two fixed source/test files were copied here byte-for-byte from the tested C: checkout. Check the latest shared workflow for final remote status. This local repository's personal origin was not pushed. Historical saved runs and credentials were untouched.
+
+## 2026-10-23 — T-035 human-aligned Judge calibration (local implementation, not committed)
+
+Work in `D:/AI-Agent-Testing-Studio`, branch `codex/industry-reliability`, clean tree at start; nothing pushed, no provider called, no saved Run or history modified (tests use isolated runtime storage and mocked providers).
+
+Phase 1 (core): `app/blackbox/calibration_models.py`, `judge_calibration.py` (selection, immutable versions, labels, evaluation, metrics, compatibility, export, retention), `judge_prompts.py` (template/validation/rubric/evaluator fingerprints from the executing builder and source), `app/database.py` (`update()` revision-checked atomic write passing its connection so audit anchors commit with the record), `app/studio/settings.json` (`judge_calibration` policy).
+Phase 2 (API/integration): `calibration_routes.py` registered in `blackbox_app.py`; `governance.describe()` adds `human_alignment` (separate from `run_integrity.agreement_percent`); source deletion hooks in `blackbox_app.delete_run`, `governance.expire_runs`, `assurance/routes.delete`; `judge.py` one-line change so mode `calibration` hashes private request payloads like Gray; `reports.calibration_markdown`.
+Phase 3 (UI): `calibration.js`, `simple.html/css`, `governance.js`, `assurance-governance.js`.
+Phase 4 (docs): tasks (T-035 In progress), PRD, Architecture, Design, comparison-reliability, bias-governance, DECISIONS, HANDOFF.
+
+File-plan adjustments: `studio_engine.py`, `studio_routes.py`, `governance_routes.py`, `judge_recovery.py`, `judge_credentials.py` (read only), `execution_cache.py` and `metering.py` needed no edit: compatibility is served by `calibration_routes.py` and Governance; the existing run-scoped cache and metering scope are reused under the evaluation ID.
+
+Tests: `tests/test_judge_calibration.py` (47), `test_calibration_api.py` (6), `test_calibration_ui.py` (3, Chromium via Playwright) pass. Judge/recovery/credentials, bias/governance/simple/assurance/database/studio_api/comparison suites: 118 passed. Ruff lint+format, Prettier, JS syntax, navigation (11), docs checker clean. Full suite: 447 passed, 1 skipped (Windows symlink privilege).
+
+Compatibility/privacy: no migration, no rescoring, no cloud call on read. Cloud Judges need consent naming endpoint and frozen content hash, re-checked before each dispatch. Credentials never enter fingerprints, records or audit.
+
+Limitations: no representative human-labeled validation exists yet; returned provider model names are not immutable revisions; rubric-change detection compares protocol criteria for non-reference categories only; the UI was checked in headless Chromium on Windows only.
+
+## 2026-10-23 — Live smoke test and import-deadlock fix
+
+A live run (Gemini `gemini-3.5-flash-lite` bot and judge, 18 cases, repeat 1) completed; the Studio's automatic local fallback to Ollama `llama3.2:3b` handled free-tier rate limits for six cases. An earlier all-Ollama run exposed a real defect: concurrent first calls imported `litellm` from several threads and one hit "deadlock detected by \_ModuleLock". `metering._load_litellm()` now serializes the import (regression test in `tests/test_costs.py`). A calibration smoke on that live run (synthetic, non-human labels, set deleted afterwards) exercised selection, consent refusal, freeze, evaluation, metrics, warning and deletion end to end. One UI test race (reload after a stale-label 409) was fixed in the test. The legacy `scripts/check-*.cjs` browser scripts target the retired UI selectors and fail; they are not part of CI.
+
 The reported screenshot shows an older personal-repository Ubuntu failure at the immediate socket rebind assertion. Current code already waits up to five seconds for descendant socket/file release and still fails if resources remain occupied; no test was skipped or weakened. Later personal runs passed, as did shared run 39557776625 at c5e461f. README now explains this specific old failure and links to the latest shared-branch workflow instead of encouraging reruns of an obsolete commit.
 
 D: was available with four newer local commits through 740ae4c. Imported their 30 source/test/doc files into the C: publishing history after comparing each changed file with the common source baseline; preserved both handoff/progress histories and the earlier continuation prompt. That prompt now identifies its completed phases so another AI does not duplicate the new work. D:'s source, private configuration and runtime data were not overwritten.

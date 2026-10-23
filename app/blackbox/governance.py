@@ -160,6 +160,8 @@ def verify(run: dict) -> dict:
 
 
 def describe(run: dict) -> dict:
+    from .judge_calibration import alignment_for_run
+
     rows = [r for c in run.get("cases", []) for r in c["results"]]
     tested = sum(r.get("score") is not None and r["status"] in ("passed", "failed") for r in rows)
     pending = sum(r.get("reason") == "Pending execution." for r in rows)
@@ -217,6 +219,8 @@ def describe(run: dict) -> dict:
             for j in run.get("config", {}).get("judges", [])
         ],
         "warnings": run.get("studio", {}).get("warnings", []),
+        # Human-label alignment is separate from run_integrity.agreement_percent (model vs model).
+        "human_alignment": alignment_for_run(run),
         "mapping": mapping,
         "timings": progress(run),
         "retention_days": run.get("config", {}).get("retention_days", 0),
@@ -263,6 +267,9 @@ def expire_runs(active: set[str]) -> int:
         ).total_seconds() < days * 86400:
             continue
         purge_run(run["id"])
+        from .judge_calibration import purge_source
+
+        purge_source(run_id=run["id"])
         with db.connect() as conn:
             metering.init_db(conn)
             conn.execute("DELETE FROM usage_events WHERE run_id=?", (run["id"],))

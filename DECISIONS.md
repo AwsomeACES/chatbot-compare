@@ -298,3 +298,16 @@ Store ordinary judge credentials in Studio's own ignored .env. Resolve them by t
 ## 2026-10-21 — Model names in mapping literals
 
 A generic secret match on a dict-literal line is qualified as a model-name review item only when the line contains nothing but string literals and `: , { }`, at least one `*model` key holds a structured model identifier, no key looks secret-like, and every other value is a model identifier or plain words. Everything else keeps the credential alert. Qualified matches remain Not tested with review, never a pass.
+
+## 2026-10-23 — Human-aligned Judge calibration (T-035)
+
+- Ownership: C08 Judges owns calibration (it measures an evaluator against supplied labels); C11 integrates audit, status display, privacy and retention. It is not a fourth Engine or test category, and the existing `calibration` category (Acknowledging uncertainty) is untouched.
+- Human labels live only in `judge_calibration_set` records as ordered revisions with a required change reason; they are never Findings, overrides, credentials or Judge input. Human overrides are not imported as ground truth.
+- Evaluations bind to an immutable frozen version and its content hash; later label or membership edits need a new version.
+- Fingerprints are separate: evaluator template (builder output plus builder source), validation (source of evidence and verdict handling), generation settings, rubric/context, per-item request, transcript, version and policy hashes. Source hashing means forgotten version labels cannot hide prompt changes.
+- Requested and actual models are recorded separately. Metrics are kept per actual evaluator, so a fallback never inherits the requested Judge's status and partial fallback never completes the primary.
+- API-key rotation does not change evaluator identity; model, endpoint, template, validation, settings, policy or rubric changes make calibration stale. History stays readable.
+- Denominator policy: agreement is matches over valid comparable labeled items; failures stay Not tested and reduce coverage and block the aligned state; zero comparable is unavailable. Defaults (80% agreement, 100% coverage, 10 scenarios, 2 pass, 2 fail) are editable engineering choices.
+- Diagnostic only: no Finding, score, winner, override or model-to-model agreement is changed; no enforcement gate.
+- Retention: copied evidence follows its source. Run, assessment or expiry deletion tombstones copies, drops cached Judge output and invalidates dependents; audit chains keep hashes only. Explicit set deletion removes everything dependent.
+- Provider-returned model names are not immutable revisions, and a small labeled sample does not generalize across rubrics or categories.

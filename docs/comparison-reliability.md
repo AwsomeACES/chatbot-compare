@@ -35,9 +35,15 @@ Review, retention, canary-log attachment and judge changes check the existing as
 
 Open review items prevent the assurance combiner from displaying **Ready to launch**. Critical findings still block release. Local hashes detect changes against the stored anchor, not an attacker replacing the entire database and backups.
 
+## Judge calibration against human labels
+
+Results can now compare a selected judge with labels you enter yourself on saved conversations (see [bias-governance.md](bias-governance.md#judge-calibration-with-human-labels)). The workflow measures the judge's own pass/fail decision at the 80 boundary on the same retained evidence, reports agreement with denominators, a confusion matrix, false acceptance/rejection rates and each disagreement, and warns when calibration is missing, stale, incomplete, too small or below the configured agreement. Defaults (80% agreement, 100% comparable coverage, 10 distinct scenarios, 2 human-pass and 2 human-fail scenarios) are engineering choices in `settings.json`, not scientific sufficiency standards.
+
+This capability does not complete independent validation. A small owner-labeled sample is conditional on that sample and rubric; it is not certification, not universal judge accuracy, and gives no confidence interval. A changed model, endpoint, prompt template, rubric, policy or validation code makes earlier calibration inapplicable. If you edit the rubric after inspecting disagreements, validate on a new held-out sample.
+
 ## Remaining work before shared enterprise deployment
 
-- Independent human-labeled validation of judge quality and false-positive rates.
+- Independent human-labeled validation of judge quality and false-positive rates. The calibration workflow below exists, but representative, reviewed labels and recorded validation results do not.
 - Authentication, role-based access, tenant isolation and deployment-specific network controls for shared hosting.
 - Locked dependency sets and native macOS/Linux startup and scanner qualification.
 - More representative, reviewed scenario sets and wider accessibility testing.

@@ -200,5 +200,21 @@
     "request_pause_seconds": 0.25,
     "judge_pause_seconds": 0.25,
     "provider_limits": {}
+  },
+  "judge_calibration": {
+    "schema_version": 1,
+    "pass_threshold": 80,
+    "min_agreement_percent": 80,
+    "min_comparable_coverage_percent": 100,
+    "min_distinct_scenarios": 10,
+    "min_human_pass_scenarios": 2,
+    "min_human_fail_scenarios": 2,
+    "max_sets": 50,
+    "max_items_per_set": 200,
+    "max_sample_size": 100,
+    "max_rationale_chars": 2000,
+    "max_item_chars": 120000,
+    "concurrency": 2,
+    "note": "Engineering defaults for a diagnostic warning, not a scientific sufficiency standard."
   }
 }

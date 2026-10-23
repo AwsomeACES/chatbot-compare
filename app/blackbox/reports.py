@@ -314,3 +314,38 @@ def generate_pdf(run):
         bottomMargin=42,
     ).build(story, onFirstPage=footer, onLaterPages=footer)
     return path
+
+
+NL = chr(10)
+
+
+def calibration_markdown(export: dict) -> str:
+    """Readable calibration summary. Reads an already-redacted export; never mutates a report."""
+    evaluation = export["evaluation"]
+    summary = evaluation.get("summary")
+    lines = [
+        f"# Judge calibration {evaluation['id']}",
+        "",
+        f"- Judge requested: {export['evaluator']['requested_model']} at {export['evaluator']['endpoint']}",
+        f"- Evaluator fingerprint: {export['evaluator']['id']}",
+        f"- Status: {evaluation['status']} (set version {evaluation['set_version']}, "
+        f"hash {evaluation['set_version_hash']})",
+        f"- Pass threshold: {export['policy']['pass_threshold']}; minimum agreement "
+        f"{export['policy']['min_agreement_percent']}%",
+    ]
+    if summary:
+        counts = summary["counts"]
+        agreement = summary["agreement"]["percent"]
+        lines += [
+            f"- State: {summary['state']}",
+            "- Agreement: "
+            + ("unavailable" if agreement is None else f"{agreement}%")
+            + f" ({summary['agreement']['numerator']}/{summary['agreement']['denominator']})",
+            "- Counts: " + ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in counts.items()),
+            "",
+            *[f"> {w}" for w in summary["warnings"]],
+        ]
+    else:
+        lines.append("- Source evidence was deleted; this calibration is invalidated.")
+    lines += ["", "## Limitations", *[f"- {item}" for item in export["limitations"]]]
+    return NL.join(lines) + NL

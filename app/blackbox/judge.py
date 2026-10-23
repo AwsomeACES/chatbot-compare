@@ -62,7 +62,7 @@ async def judge_request(config, send, messages, max_output_tokens=1500):
                         .sha256(json.dumps(messages, sort_keys=True).encode())
                         .hexdigest()
                     }
-                    if context.get("mode") == "gray"
+                    if context.get("mode") in ("gray", "calibration")
                     else messages
                 ),
                 temperature=0,

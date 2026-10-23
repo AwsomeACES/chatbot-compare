@@ -145,6 +145,10 @@ Accounted for | Audit chain | Judge agreement | Human overrides
 
 Assessment Governance has a compact variant: assurance/release summary, audit state, collapsed “Bots and AI judges” metadata, review count, upload retention and actions. These variants share navigation but are not identical rich card layouts. Hashes are fingerprints of saved values; they detect specific changes, not legal authenticity.
 
+### Judge calibration — implemented across Evaluate, Results and Governance
+
+C01, C02, C08, C11. A persistent status line under the selected judge on Evaluate and a Human alignment section on Governance always state one of: not calibrated, calibration out of date, incomplete, sample too small, not aligned, or meets configured criteria, using words as well as color. Results has a collapsed **Calibrate a judge on saved conversations** panel: pick conversations or a seeded sample, label them (pass/fail or score, optional rationale, original judge output hidden), freeze a version, evaluate, then inspect counts, confusion matrix, error rates with denominators, sufficiency checks and every disagreement with the judge's reason and the retained conversation. It is diagnostic only and separate from judge agreement between models.
+
 ### Human review queue — implemented across Results and Governance
 
 C01, C07 review queue, C11 review routes. A dedicated queue page is Planned.

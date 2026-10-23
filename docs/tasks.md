@@ -2,7 +2,7 @@
 
 Purpose: connect product requirements to verified code and explicit remaining work.
 Owner: AI Agent Studio maintainers; named task owners: TODO: confirm.
-Last updated: 2026-10-21.
+Last updated: 2026-10-23.
 
 ## Contents
 
@@ -98,6 +98,8 @@ P0 means correctness/privacy blocker; P1 means important product work; P2 means 
 - [ ] **T-023 — Todo · P1 · M:** strengthen reproducibility beyond saved application settings. **Files:** `app/assurance/service.py`, `sandbox.py`, `routes.py`; `app/blackbox/governance.py`; `tests/test_assurance.py`, `test_governance_recovery.py`. **Requirements:** FR-14, FR-17. **Acceptance:** record and validate reproducible scanner rule/image/database fingerprints and returned model revisions; clearly distinguish same configuration from identical external behavior. **Dependencies:** T-014, T-021. **Current gap:** current reproduction does not freeze every external revision and may require deleted input re-upload.
 
 - [ ] **T-024 — Todo · P1 · M:** improve context-aware export redaction. **Files:** `app/assurance/privacy.py`; `app/blackbox/governance.py`; `tests/test_assurance.py`, `test_bias_governance.py`. **Requirements:** FR-16, NFR-03. **Acceptance:** regression fixtures retain public vulnerability IDs while masking real credentials/contact data; missing contextual coverage is disclosed; source/audit hashes remain meaningful. **Dependencies:** T-022. **Current gap:** broad phone matching can mask public advisory IDs and does not comprehensively identify names/addresses.
+
+- [ ] **T-035 — In progress · P1 · L:** calibrate Judge verdicts against independently entered human labels. **Files:** `app/blackbox/judge_calibration.py`, `calibration_models.py`, `calibration_routes.py`, `judge_prompts.py`, `judge.py`, `governance.py`, `governance_routes.py`, `studio_engine.py`; `app/database.py`; `app/studio/settings.json`; `app/blackbox_static/calibration.js`, `simple.html`, `simple.css`, `simple.js`, `governance.js`, `assurance-governance.js`; calibration tests and affected integration tests. **Requirements:** FR-08, FR-13, FR-14, FR-15, FR-16, FR-17, NFR-02, NFR-03, NFR-06, NFR-07. **Acceptance:** owner-created versioned Calibration sets preserve source evidence and separate human labels from Judge results; matching Judge/rubric evaluations report threshold-80 agreement, denominators and individual disagreements; incomplete, stale or below-threshold calibration displays explicit warnings; calibration never changes original scores or model-to-model agreement; privacy, metering, fallback identity, resume and deletion behavior pass isolated tests. **Dependencies:** T-001, T-003, T-005, T-021, T-022, T-025. **Current gap:** existing agreement compares models with models; no independent human-label workflow or version-bound alignment status existed. **Evidence so far:** workflow, API, persistence, warnings, export and deletion implemented with synthetic-fixture tests (`tests/test_judge_calibration.py`, `test_calibration_api.py`, `test_calibration_ui.py`); `studio_engine.py`, `studio_routes.py`, `governance_routes.py` needed no edit (compatibility is served by `calibration_routes.py`; Governance reads it through `governance.describe`). Not Done: changes are uncommitted pending owner review, and representative human-labeled validation data has not been collected, so the broader gap in [comparison-reliability.md](comparison-reliability.md) stays open.
 
 ## Phase 7 — Speed and cache
 

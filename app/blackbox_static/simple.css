@@ -799,3 +799,65 @@ pre {
     flex-direction: column;
   }
 }
+
+/* Judge calibration: human-label alignment. Status is always stated in words, not color alone. */
+.alignment {
+  padding: 12px 16px;
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-left-width: 6px;
+  border-radius: 9px;
+  background: #fff;
+}
+.alignment p {
+  margin: 6px 0 0;
+}
+.alignment-warning {
+  font-weight: 600;
+}
+.alignment-uncalibrated,
+.alignment-stale,
+.alignment-incomplete,
+.alignment-insufficient_sample,
+.alignment-unavailable,
+.alignment-pending {
+  border-left-color: #b7791f;
+  background: #fff8e8;
+}
+.alignment-not_aligned {
+  border-left-color: #b42318;
+  background: #fff1f0;
+}
+.alignment-meets {
+  border-left-color: #1a7f4b;
+  background: #f0faf4;
+}
+.cal-table {
+  border-collapse: collapse;
+  margin: 12px 0;
+}
+.cal-table th,
+.cal-table td {
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  text-align: left;
+}
+.cal-item,
+.cal-disagreement {
+  margin: 12px 0;
+}
+.cal-item pre,
+.cal-disagreement pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.cal-picks {
+  max-height: 260px;
+  overflow: auto;
+}
+.cal-disagreement blockquote {
+  margin: 4px 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--border);
+  overflow-wrap: anywhere;
+}

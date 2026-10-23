@@ -28,6 +28,14 @@ Retention is opt-in: zero keeps results until deletion; a positive number expire
 
 Mappings in `app/studio/governance.json` are informational engineering themes, not certification, legal advice or a compliance determination. Sources: [NIST](https://www.nist.gov/itl/ai-risk-management-framework/nist-ai-rmf-playbook), [ISO](https://www.iso.org/standard/42001), [EU legislation](https://eur-lex.europa.eu/eli/reg/2024/1689/oj).
 
+## Judge calibration with human labels
+
+Open **Calibrate a judge on saved conversations** in Results. Select saved conversations (an assessment resolves to its recorded Black Run), then label each one yourself; labels start blank and original judge scores and reasons are hidden, although you may have seen them earlier. Changing a label keeps the earlier revision and needs a written reason. Freeze a version, then evaluate it with a judge: only the saved conversation and rubric are sent, no bot is called and your labels are never sent. Cloud judges need explicit consent for that payload and destination; private data stays local by default.
+
+Agreement counts matching pass/fail decisions (80 and above passes) over validly judged labeled items. Provider failures, missing consent and malformed output remain Not tested and are counted, never dropped from the picture. A fallback model is evaluated separately and never inherits the requested judge's status. Warnings appear on Evaluate and Governance for uncalibrated, stale, incomplete, insufficient or not-aligned states. Calibration never changes a Finding, score, winner or the model-to-model Judge agreement shown above. Deleting the source run, or its retention expiry, removes the copied conversations and invalidates the calibration; deleting a set removes its evaluations, usage rows and audit chain.
+
+Exports are redacted JSON or Markdown with labels, evaluator identity, policy, results, disagreement evidence, costs and limitations. Provider-returned model names are not guaranteed immutable revisions, so silent upstream changes are not detected.
+
 ## Caches, speed and optional local classifiers
 
 Bot cache keys include run ID, bot configuration, case, repeat index and prompt hash. Different repeats and new runs always call the bot afresh. Rejudging/resuming the same observation reuses its durable evidence. Judge caches include model/endpoint, exact request/prompt hash and transcript hash; directional comparisons retain both presentation orders.

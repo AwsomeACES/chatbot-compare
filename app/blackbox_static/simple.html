@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/simple.css" />
     <script defer src="/shell.js"></script>
     <script defer src="/simple.js"></script>
+    <script defer src="/calibration.js"></script>
     <script defer src="/governance.js"></script>
     <script defer src="/assurance.js"></script>
     <script defer src="/assurance-governance.js"></script>
@@ -72,6 +73,7 @@
         <section id="judge-section" aria-labelledby="judges-heading">
           <h2 id="judges-heading"><span class="step">2</span>Choose an AI judge</h2>
           <p id="judge-summary" role="status">Loading your saved judge…</p>
+          <div id="calibration-status" aria-live="polite"></div>
           <details id="judge-options">
             <summary>Change model or API key</summary>
             <p class="helper">
@@ -276,6 +278,19 @@
             <div id="audit"></div>
           </details>
         </details>
+        <section id="calibration" aria-labelledby="calibration-heading">
+          <h2 id="calibration-heading">Judge calibration with human labels</h2>
+          <p>
+            Label saved conversations yourself, then compare a judge’s pass/fail decisions with your
+            labels. This is a diagnostic warning only: it never changes a score, verdict or winner,
+            and a small sample is not certification.
+          </p>
+          <div id="calibration-banner-results"></div>
+          <details id="calibration-panel" class="panel-details">
+            <summary>Calibrate a judge on saved conversations</summary>
+            <div id="calibration-body"></div>
+          </details>
+        </section>
         <details class="panel-details">
           <summary>All saved evaluations</summary>
           <div id="history"></div>
@@ -304,6 +319,14 @@
             <summary>API keys for repeating this run (only if requested)</summary>
             <div id="gov-credentials"></div>
           </details>
+        </section>
+        <section id="gov-human-alignment" aria-labelledby="gov-human-heading">
+          <h2 id="gov-human-heading">Human alignment</h2>
+          <p class="helper">
+            Compares each judge with labels you entered yourself. This is separate from judge
+            agreement, which compares models with each other.
+          </p>
+          <div id="gov-human"></div>
         </section>
         <details class="panel-details">
           <summary>Bots and judges used</summary>

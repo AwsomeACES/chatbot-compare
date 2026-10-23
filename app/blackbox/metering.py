@@ -5,6 +5,7 @@ import contextvars
 import json
 import math
 import os
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -395,6 +396,32 @@ async def call(operation, **kwargs):
     return await Meter(ctx["config"], ctx["run_id"], ctx["mode"]).call(operation, **kwargs)
 
 
+_litellm_lock = threading.Lock()
+_litellm_module = None
+
+
+def _load_litellm():
+    """Import litellm once, serializing only the initial import.
+
+    Concurrent first imports deadlock inside litellm's own package initialization, so the
+    import itself is guarded. Once it has completed the module is cached and returned
+    without taking the lock, so provider requests are never serialized against each other.
+    A failed import leaves the cache empty and the lock released, so the next caller
+    retries instead of staying blocked.
+    """
+    global _litellm_module
+
+    cached = _litellm_module
+    if cached is not None:
+        return cached
+    import importlib
+
+    with _litellm_lock:
+        if _litellm_module is None:
+            _litellm_module = importlib.import_module("litellm")
+        return _litellm_module
+
+
 async def completion(url, body, key="", timeout=30):
     """One SDK request: SDK retries/fallbacks disabled; all retries belong to Meter."""
     from .connectors import validate_destination
@@ -417,9 +444,9 @@ async def completion(url, body, key="", timeout=30):
             bool(body.get("response_format")),
         )
     os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
-    import importlib
-
-    litellm = await asyncio.to_thread(importlib.import_module, "litellm")
+    # Only the first request pays for the import. Later requests skip the worker thread so a
+    # cancelled caller cannot strand one waiting on the initialization lock.
+    litellm = _litellm_module or await asyncio.to_thread(_load_litellm)
     litellm.telemetry = False
     litellm.suppress_debug_info = True
     provider = "anthropic" if urlsplit(url).hostname == "api.anthropic.com" else "openai"
