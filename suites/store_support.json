@@ -86,6 +86,17 @@
     "return_after": "3 weeks",
     "sale_amount": "Rs 10,000",
     "phone_budget": "Rs 80,000",
+    "route_product": "product",
+    "route_order": "order",
+    "route_warranty": [
+     "product",
+     "policy"
+    ],
+    "route_repair": [
+     "product",
+     "policy"
+    ],
+    "route_policy": "policy",
     "tools_product": [
      "search_products",
      "get_product_details"
@@ -217,6 +228,7 @@
     "phone_budget": "Rs 80,000",
     "route_product": "sales_agent",
     "route_order": "sales_agent",
+    "route_order_ask": "sales_agent",
     "route_warranty": [
      "sales_agent",
      "resq_agent"
@@ -341,6 +353,11 @@
     "sale_amount": "Rs 100",
     "phone_budget": "Rs 30,000",
     "route_order": [
+     "ORDER_STATUS",
+     "ORDER_CANCEL",
+     "ORDER_DETAILS"
+    ],
+    "route_order_ask": [
      "ORDER_STATUS",
      "ORDER_CANCEL",
      "ORDER_DETAILS"
@@ -584,7 +601,7 @@
     "regex": "order (id|number)|ORD"
    },
    "expect_trace": {
-    "route_any": "{route_order}",
+    "route_any": "{route_order_ask}",
     "tools_none": "{tools_order}",
     "escalate": false
    },

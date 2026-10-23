@@ -112,7 +112,11 @@ Reliance Digital multi-agent bot** (`~/projects/hussain-bot/digital-multi-agent-
    - Skills that a selected bot only partly supports are listed under the scorecard.
 6. **Gray-box and white-box testing** (looking inside the bots, not only at their replies)
    - *Gray-box* uses what a bot's API already returns about itself: Hussain's chatbot's routed agent
-     (`sales_agent`, `resq_agent`, `rag_agent`) and Mouni's intent and human handoff. A case checks the right
+     (`sales_agent`, `resq_agent`, `rag_agent`), Mouni's intent and human handoff, and VoltKart's `route` (the kind
+     of lookup its reply started with: `product`, `order`, `policy`, or `chat`; a follow-up that looks nothing up keeps
+     the earlier route). VoltKart has no service tickets or human handoff, so those checks are skipped for it, and so
+     is the route of `order-ask-id` (asking for the missing order ID needs no lookup, so a tool-based bot shows no
+     route; its `tools_none` white-box check covers it). A case checks the right
      agent / intent handled it, and that the bot escalated only when it should (`human-handoff` case).
    - *White-box* uses a debug trace the bots return when asked (`"trace": true` in `bots.json` sends
      `"debug": true`): VoltKart's tool calls with their arguments and results, Hussain's chatbot's RAG context,

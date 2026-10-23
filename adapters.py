@@ -22,7 +22,8 @@ persists the case is an error (scored as a fail, since that's what a customer go
 
 Traces (gray-box / white-box testing): besides the reply, an adapter records what it can see of the bot's insides,
 as a dict with any of these keys (a missing key means the bot doesn't expose it):
-  route      which agent / intent handled the turn (gray-box: the API already returns it)
+  route      which agent / intent handled the turn (gray-box: the API already returns it; VoltKart's route is
+             the kind of lookup its reply started with: product, order, policy or chat)
   escalated  whether the turn was handed to a human (gray-box)
   tools      [{"name", "input"}] tool calls made for the reply (white-box)
   context    text the bot retrieved and answered from; "" = retrieved nothing (white-box)
@@ -210,11 +211,12 @@ class VoltKartConversation(Conversation):
         data = _post(f"{self.cfg['base_url'].rstrip('/')}/api/chat", body, timeout=self.cfg.get("timeout"))
         self.session_id = data["session_id"]
         self.usage = data.get("usage")
-        if self.debug:  # an old server without debug output sends no trace: then nothing is observable
-            calls = (data.get("trace") or {}).get("tools")
-            if calls is not None:
-                self.trace = make_trace(tools=[{"name": c["name"], "input": c.get("input")} for c in calls],
-                                        context=[{"tool": c["name"], "output": c.get("output")} for c in calls] if calls else "")
+        calls = (data.get("trace") or {}).get("tools") if self.debug else None
+        # route (gray-box) comes with every reply; tools need debug output (an old server sends neither)
+        self.trace = make_trace(route=data.get("route"),
+                                tools=None if calls is None else [{"name": c["name"], "input": c.get("input")} for c in calls],
+                                context=None if calls is None else
+                                [{"tool": c["name"], "output": c.get("output")} for c in calls] if calls else "")
         return data["reply"]
 
     def close(self):

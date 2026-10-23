@@ -88,6 +88,14 @@ def test_voltkart_white_box_trace(http):
     assert "47990" in reply.trace["context"]
 
 
+def test_voltkart_gray_box_route_without_debug(http):
+    calls, queue = http
+    queue.append(FakeResponse(data={"session_id": "s", "reply": "Out for delivery", "route": "order"}))
+    reply = open_conversation(VOLTKART).send("where is ORD10002?")
+    assert "debug" not in calls[0]["json"]
+    assert reply.trace == {"route": "order"}
+
+
 def test_voltkart_with_no_tool_calls_retrieved_nothing(http):
     _, queue = http
     queue.append(FakeResponse(data={"session_id": "s", "reply": "Hello!", "trace": {"tools": []}}))
