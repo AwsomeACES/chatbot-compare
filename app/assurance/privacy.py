@@ -130,5 +130,14 @@ def trace_rows(raw: bytes) -> tuple[list[dict], dict]:
                     ),
                 }
             )
-        rows.append(safe({k: v for k, v in row.items() if k in allow}))
+        cleaned = safe({k: v for k, v in row.items() if k in allow})
+        # Studio's canonical UUID is correlation metadata, not a phone number.
+        # Preserve only this typed field; arbitrary run_id text and all other
+        # fields still pass through the normal credential and PII redaction.
+        run_id = row.get("run_id")
+        if isinstance(run_id, str) and re.fullmatch(
+            r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}", run_id
+        ):
+            cleaned["run_id"] = run_id
+        rows.append(cleaned)
     return rows, {"canary_records": canaries, "ignored_fields": True}

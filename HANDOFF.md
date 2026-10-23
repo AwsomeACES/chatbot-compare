@@ -2,6 +2,8 @@
 
 Current request: resolve the pictured historical Ubuntu socket-cleanup failure and push the latest update to AwsomeACES/chatbot-compare/hussain-code. The current test already contains the bounded descendant-resource release fix. It passed on Windows and five consecutive isolated Ubuntu WSL checks. The screenshot predates successful personal-repository runs and the shared c5e461f run; do not rerun an obsolete failed commit expecting new code.
 
+The integrated update was published as c43261c. Its CI exposed a separate random UUID/phone-redaction collision in Gray runtime evidence on Ubuntu (Windows/macOS passed). The follow-up fix in app/assurance/privacy.py preserves only canonical top-level run_id UUIDs, leaving normal PII/secret redaction intact. tests/test_runtime_evidence.py now forces digit-heavy IDs and checks persisted correlation plus malicious non-UUID values. Reproduction failed before the fix; 67 focused tests passed after it. Check the newest GitHub run for the follow-up commit rather than run 39925951369.
+
 D: returned with newer local commits through 740ae4c. Integrated its 30 changed files on top of C:'s shared history, retaining both handoff/progress histories and the prior continuation prompt. All four evidence-readiness commits below are included. D:'s application source was not overwritten or reset. The previous prompt is historical, with a new warning not to rebuild already completed phases. Publication verification results are recorded in the latest PROGRESS entry and final response.
 
 ## 2026-10-21 — Evidence readiness and the eight unverified checks (completed implementation phases)

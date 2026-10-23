@@ -3,7 +3,6 @@
 import asyncio
 import json
 import time
-import uuid
 
 import httpx
 import pytest
@@ -18,13 +17,37 @@ from app.assurance.runtime_evidence import RUNTIME_CHECKS, correlated, evaluate
 from app.blackbox import governance
 from app.blackbox.schema import JudgeSelection, Settings, Target
 
-RUN = str(uuid.uuid4())
-OTHER = str(uuid.uuid4())
+# Digit-heavy UUIDs expose phone-redaction collisions deterministically.
+RUN = "11111111-1111-4111-8111-111111111111"
+OTHER = "22222222-2222-4222-8222-222222222222"
 
 
 def rows(records: list[dict]) -> list[dict]:
     """Pass fixture output through the same allowlist/redaction path as uploads."""
     return trace_rows(json.dumps(records).encode())[0]
+
+
+@pytest.mark.parametrize("run_id", [RUN, "abcdefab-cdef-4abc-8def-abcdefabcdef"])
+def test_log_intake_preserves_run_correlation_without_preserving_private_text(run_id):
+    record = {
+        "run_id": run_id,
+        "model": "fixture-model",
+        "arguments": {"email": "person@example.com", "phone": "+1 202-555-0199"},
+    }
+    stored = intake.store("logs", json.dumps([record]).encode(), "trace.json")
+    restored, _ = intake.load(stored["id"], "logs")
+    assert restored[0]["run_id"] == run_id
+    serialized = json.dumps(restored)
+    assert "person@example.com" not in serialized
+    assert "+1 202-555-0199" not in serialized
+    finding = evaluate("runtime_model", restored, run_id, 0, {"expected_model": "fixture-model"})
+    assert finding.verdict == "pass"
+    assert evaluate("runtime_model", restored, OTHER, 0).verdict == "not_tested"
+
+
+@pytest.mark.parametrize("value", ["person@example.com", "+1 202-555-0199", "sk-" + "x" * 32])
+def test_run_id_field_does_not_bypass_redaction_for_non_uuid_values(value):
+    assert value not in json.dumps(rows([{"run_id": value}]))
 
 
 class OrderTool:
