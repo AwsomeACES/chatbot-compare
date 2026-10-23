@@ -2,15 +2,15 @@
   "bots": [
     {
       "id": "mine-claude",
-      "label": "My bot · Claude Sonnet 5",
-      "description": "VoltKart support bot (tool calling over store data), Claude Sonnet 5 on Bedrock (paid)",
+      "label": "My bot · Claude Sonnet 5.5",
+      "description": "VoltKart support bot (tool calling over store data), Claude Sonnet 5.5 on Bedrock (paid)",
       "profile": "voltkart",
       "source": "~/projects/reliance-digital-chatbot",
-      "llm": "Claude Sonnet 5",
+      "llm": "Claude Sonnet 5.5",
       "type": "voltkart",
       "trace": true,
       "base_url": "http://localhost:8010",
-      "model": "claude-sonnet-5",
+      "model": "claude-sonnet-5-5",
       "pricing": {
         "input": 2.0,
         "output": 10.0,
@@ -21,20 +21,20 @@
     },
     {
       "id": "mine-haiku",
-      "label": "My bot · Claude Haiku 4.5",
-      "description": "VoltKart support bot on Claude Haiku 4.5, the fast tier closest to Gemini Flash",
+      "label": "My bot · Claude Haiku 5.5",
+      "description": "VoltKart support bot on Claude Haiku 5.5, the fast tier closest to Gemini Flash",
       "profile": "voltkart",
       "source": "~/projects/reliance-digital-chatbot",
-      "llm": "Claude Haiku 4.5",
+      "llm": "Claude Haiku 5.5",
       "type": "voltkart",
       "trace": true,
       "base_url": "http://localhost:8010",
-      "model": "claude-haiku-4-5",
+      "model": "claude-haiku-5-5",
       "pricing": {
-        "input": 1.0,
-        "output": 5.0,
-        "cache_read": 0.1,
-        "cache_write": 1.25,
+        "input": 0.1,
+        "output": 0.5,
+        "cache_read": 0.01,
+        "cache_write": 0.125,
         "source": "Anthropic list price, USD per million tokens (cache read 0.1x input, cache write 1.25x); Bedrock on-demand may differ"
       }
     },
@@ -147,11 +147,11 @@
     },
     {
       "id": "hussain-claude",
-      "label": "Hussain's chatbot · Claude Sonnet 5",
-      "description": "Reliance Digital multi-agent bot (digital-multi-agent-ai: LangGraph supervisor + sales/resQ/RAG/vision agents), Claude Sonnet 5 (needs ANTHROPIC_API_KEY in Hussain's backend .env)",
+      "label": "Hussain's chatbot · Claude Sonnet 5.5",
+      "description": "Reliance Digital multi-agent bot (digital-multi-agent-ai: LangGraph supervisor + sales/resQ/RAG/vision agents), Claude Sonnet 5.5 (its default model) (needs ANTHROPIC_API_KEY in Hussain's backend .env)",
       "profile": "hussain",
       "source": {"path": "~/projects/hussain-bot/digital-multi-agent-ai-main", "sha256": "4d32c5977d93e19da41e1d4ff1560485c86ddae23751298e37db5b3bde3d90fa", "note": "Hussain's zip (~/Downloads/digital-multi-agent-ai-main.zip) plus token-usage reporting only (measurement, no change to answers); our other changes are in ~/projects/hussain-bot/patches"},
-      "llm": "Claude Sonnet 5",
+      "llm": "Claude Sonnet 5.5",
       "type": "sse_chat",
       "trace": true,
       "url": "http://localhost:8001/chat/stream",
@@ -263,8 +263,8 @@
     },
     {
       "id": "same-model-sonnet",
-      "label": "Apps on Sonnet 5",
-      "description": "Same model, different apps: VoltKart vs Hussain's chatbot, both on Claude Sonnet 5",
+      "label": "Apps on Sonnet 5.5",
+      "description": "Same model, different apps: VoltKart vs Hussain's chatbot, both on Claude Sonnet 5.5",
       "bots": [
         "mine-claude",
         "hussain-claude"

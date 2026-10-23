@@ -168,7 +168,7 @@ cd ~/projects/reliance-digital-chatbot && .venv/bin/uvicorn app:app --port 8010
 #    below replace the Windows D:\ paths. Without GEMINI_MODEL it falls back to gemini-2.5-flash, not the 3.6 Flash
 #    bots.json grades it as. Without a Chroma index its RAG agent falls back to keyword search.
 cd ~/projects/hussain-bot/digital-multi-agent-ai-main/backend
-RAG_DATA_ROOT="$PWD/../data" CHROMA_PATH="$PWD/../data/chroma_db" GEMINI_MODEL=gemini-3.6-flash CLAUDE_MODEL=claude-sonnet-5 OPENAI_MODEL=gpt-5-mini \
+RAG_DATA_ROOT="$PWD/../data" CHROMA_PATH="$PWD/../data/chroma_db" GEMINI_MODEL=gemini-3.6-flash OPENAI_MODEL=gpt-5-mini \
   ~/projects/chatbot-compare/.bots/reliance222-venv/bin/uvicorn main:app --port 8001
 
 # Mounika's chatbot (port 5000): her GitHub main (github.com/Mounika6115/AI-customer-support-chatbot, 4f0c598 of
