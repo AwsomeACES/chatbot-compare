@@ -49,9 +49,12 @@ def expand(value):
 
 
 def is_up(port, host="localhost"):
-    with socket.socket() as s:
-        s.settimeout(2)
-        return s.connect_ex((host, int(port))) == 0
+    """Something listens on the port. Tries every address host resolves to, so a server bound to ::1 counts too."""
+    try:
+        socket.create_connection((host, int(port)), timeout=2).close()
+        return True
+    except OSError:
+        return False
 
 
 def is_ours(server, host="localhost"):
