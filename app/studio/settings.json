@@ -216,5 +216,20 @@
     "max_item_chars": 120000,
     "concurrency": 2,
     "note": "Engineering defaults for a diagnostic warning, not a scientific sufficiency standard."
-  }
+  },
+  "scenario_suites": {
+    "screening": {
+      "label": "Screening (default)",
+      "scenario_file": "",
+      "version": "screening-v1",
+      "note": "One authored scenario per Category. Fast, and deliberately too small for an inferential winner."
+    },
+    "extended": {
+      "label": "Extended reviewable suite",
+      "scenario_file": "scenarios-extended-v1.json",
+      "version": "extended-v1",
+      "note": "Ten distinct authored scenarios per Category for nine Categories; Bias keeps its nine subtypes from bias-v1.json. Authored, not independently reviewed."
+    }
+  },
+  "default_scenario_suite": "screening"
 }

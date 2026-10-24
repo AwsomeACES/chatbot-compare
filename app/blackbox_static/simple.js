@@ -149,6 +149,7 @@ function configuration() {
     ownership_confirmed: $("ownership").checked,
     judge_consent: $("consent").checked,
     simple_mode: true,
+    scenario_suite: $("scenario-suite")?.value || "",
     repeat_counts: Object.fromEntries(
       [...document.querySelectorAll("[data-repeat]")].map((e) => [
         e.dataset.repeat,
@@ -163,7 +164,7 @@ function configuration() {
   };
 }
 const money = (n, local = false) => {
-  if (n == null) return "Unknown";
+  if (n == null) return window.StudioStatus.QUALIFIER.unknown;
   if (n === 0 && local) return "$0 (local)";
   return n > 0 && n < 100 ? "<$0.0001" : "$" + (n / 1000000).toFixed(6);
 };
@@ -334,7 +335,7 @@ function render(run) {
           esc(caseName(item)),
           ...groups.map(
             (g) =>
-              `${g.low_confidence ? '<span class="pill">Low confidence</span> ' : ""}${g.score}% ${bar(g.score, 100)}<small>${g.tested}/${g.planned} scored; measured quality: ${g.quality == null ? "Not measured" : g.quality + "%"}; largest within-case repeat spread: ${g.repeat_spread ?? g.spread ?? "Unknown"} points</small>`,
+              `${g.low_confidence ? '<span class="pill">Low confidence</span> ' : ""}${g.score}% ${bar(g.score, 100)}<small>${g.tested}/${g.planned} scored; measured quality: ${g.quality == null ? window.StudioStatus.QUALIFIER.not_measured : g.quality + "%"}; largest within-case repeat spread: ${g.repeat_spread ?? g.spread ?? "Unknown"} points</small>`,
           ),
           esc(
             categoryResult && !categoryResult.leaders.length
@@ -490,7 +491,7 @@ function render(run) {
           `<div class="case-evidence"><h4>${esc(c.name)} · case ${c.scenario_index || 1}, repeat ${c.repeat}</h4><div class="grid">${c.results
             .map(
               (r, i) =>
-                `<article><strong>${esc(run.targets[i].name)} <span class="pill">${esc(r.status.replaceAll("_", " "))}</span></strong><p>Score: ${r.score == null ? "Not tested (index contribution 0)" : r.score + "/100"}</p><p>${r.human_review_note ? "<strong class=badge>Overridden — reason logged</strong> " : ""}${r.needs_review ? "<strong>Needs human review</strong> " : ""}${esc(r.reason)}</p>${(r.judges || []).map((j) => `<p class="judge-reason">Judge: ${esc(j.model)} — ${j.score}%<br>Evidence: ${j.evidence.map(esc).join(" | ")}${judgeProvenance(j)}</p>`).join("")}${nonJudgeEngine(r)}${r.transcript
+                `<article><strong>${esc(run.targets[i].name)} <span class="pill">${esc(window.StudioStatus.label(r.status))}</span></strong><p>Score: ${r.score == null ? `${window.StudioStatus.RESULT.not_tested} (index contribution 0)` : r.score + "/100"}</p><p>${r.human_review_note ? "<strong class=badge>Overridden — reason logged</strong> " : ""}${r.needs_review ? `<strong>${esc(window.StudioStatus.QUALIFIER.needs_review)}</strong> ` : ""}${esc(r.reason)}</p>${(r.judges || []).map((j) => `<p class="judge-reason">Judge: ${esc(j.model)} — ${j.score}%<br>Evidence: ${j.evidence.map(esc).join(" | ")}${judgeProvenance(j)}</p>`).join("")}${nonJudgeEngine(r)}${r.transcript
                   .map(
                     (t) => `<div class="transcript"><strong>User:</strong> ${esc(t.input)}
 <strong>Bot:</strong> ${esc(t.output || t.error || "No response")}
@@ -596,19 +597,64 @@ async function loadHistory() {
       }),
   );
 }
+/* ---- scenario suites: the default stays the light screening set ---- */
+
+function suiteSummary() {
+  const summaries = settings.scenario_suite_summaries || {};
+  return summaries[$("scenario-suite")?.value] || summaries[settings.default_scenario_suite] || {};
+}
+
+function renderSuites() {
+  const select = $("scenario-suite");
+  const summaries = settings.scenario_suite_summaries || {};
+  if (!select || !Object.keys(summaries).length) return;
+  const chosen = settings.default_scenario_suite || Object.keys(summaries)[0];
+  select.innerHTML = Object.entries(summaries)
+    .map(
+      ([name, row]) =>
+        `<option value="${esc(name)}"${name === chosen ? " selected" : ""}>${esc(row.label)} — ${esc(row.distinct_scenarios)} distinct scenarios</option>`,
+    )
+    .join("");
+  select.onchange = () => {
+    renderChecks();
+    renderSuiteNote();
+    planned();
+  };
+  renderSuiteNote();
+}
+
+function renderSuiteNote() {
+  const row = suiteSummary();
+  const review = row.review || {};
+  const note = $("scenario-suite-note");
+  if (!note) return;
+  const reviewed = review.independently_reviewed
+    ? "Independently reviewed."
+    : "Authored, not independently reviewed.";
+  note.textContent =
+    `${row.note || ""} ${reviewed} ${row.distinct_scenarios || 0} distinct scenarios; repeats of one scenario are not extra coverage. ` +
+    `Protocol version ${row.protocol_version || "unknown"}. More scenarios reduce the chance of missing a known failure mode; they do not show that a bot is safe.`;
+}
+
+function renderChecks() {
+  const counts = suiteSummary().scenarios_per_category || {};
+  $("checks").innerHTML = settings.cases
+    .map(
+      (c) =>
+        `<label class="check">${esc(c.name)}<br><small>${esc(settings.descriptions?.[c.category] || "")}</small><br><small>${esc(counts[c.category] || settings.scenario_sets?.[c.category]?.length || 1)} distinct cases × repeats per case</small><br>Repeats <input type="number" min="1" max="20" value="${settings.default_repeats}" data-repeat="${c.category}"></label>`,
+    )
+    .join("");
+  document.querySelectorAll("[data-repeat]").forEach((e) => (e.oninput = planned));
+}
+
 async function boot() {
   settings = await api("/api/studio/settings");
   $("suite-intro").textContent =
     `${settings.cases.length} categories cover accuracy, safety, fairness and helpfulness.`;
   addBot();
   $("test-preview").innerHTML = settings.cases.map((c) => `<span>${esc(c.name)}</span>`).join("");
-  $("checks").innerHTML = settings.cases
-    .map(
-      (c) =>
-        `<label class="check">${esc(c.name)}<br><small>${esc(settings.descriptions?.[c.category] || "")}</small><br><small>${settings.scenario_sets?.[c.category]?.length || 1} distinct cases × repeats per case</small><br>Repeats <input type="number" min="1" max="20" value="${settings.default_repeats}" data-repeat="${c.category}"></label>`,
-    )
-    .join("");
-  document.querySelectorAll("[data-repeat]").forEach((e) => (e.oninput = planned));
+  renderSuites();
+  renderChecks();
   $("repeat-all").onchange = () => {
     if (!$("repeat-all").checkValidity() || !$("repeat-all").value) {
       tell("Enter a whole number from 1 to 20 for repeats.");

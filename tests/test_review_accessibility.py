@@ -92,8 +92,10 @@ def seeded_assessment() -> dict:
     return run
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def studio_server():
+    """One loopback server for this file. Four servers and four browsers churned enough
+    resources to make the page load intermittently slow inside a full-suite run."""
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
@@ -113,6 +115,27 @@ def studio_server():
         thread.join(timeout=10)
 
 
+@pytest.fixture(scope="module")
+def browser():
+    playwright = pytest.importorskip("playwright.sync_api")
+    with playwright.sync_playwright() as play:
+        instance = play.chromium.launch(headless=True)
+        try:
+            yield instance
+        finally:
+            instance.close()
+
+
+@pytest.fixture
+def page(browser):
+    """A fresh page per test, so one test's dialog state cannot reach the next."""
+    context = browser.new_context()
+    try:
+        yield context.new_page()
+    finally:
+        context.close()
+
+
 def open_findings(page, base: str, run: dict, mode: str = "white"):
     """Open the seeded assessment and show one mode's findings.
 
@@ -120,99 +143,99 @@ def open_findings(page, base: str, run: dict, mode: str = "white"):
     saved assessments in the shared database and the status line could describe one of those.
     """
     page.goto(f"{base}/?assessment={run['id']}")
-    page.wait_for_function(
-        "expected => window.AssuranceUI?.current?.id === expected",
-        arg=run["id"],
-        timeout=30000,
-    )
+    try:
+        page.wait_for_function(
+            "expected => window.AssuranceUI?.current?.id === expected",
+            arg=run["id"],
+            timeout=30000,
+        )
+    except Exception:
+        # Report what the page actually shows, so a timeout names a cause.
+        raise AssertionError(
+            "the seeded assessment never loaded. "
+            f"url={page.url!r} "
+            f"status={page.locator('#assurance-status').inner_text()!r} "
+            f"notice={page.locator('#notice').inner_text()!r} "
+            f"booted={page.evaluate('() => Boolean(window.AssuranceUI)')} "
+            f"labels={page.evaluate('() => Boolean(window.StudioStatus)')} "
+            f"selected={page.evaluate('() => window.AssuranceUI?.id ?? null')!r}"
+        ) from None
     page.locator(f'[data-assurance-tab="{mode}"]').click()
     page.wait_for_selector("[data-finding]", timeout=30000)
 
 
-def test_a_gray_declaration_is_not_described_as_found_in_code(studio_server):
-    playwright = pytest.importorskip("playwright.sync_api")
+def test_a_gray_declaration_is_not_described_as_found_in_code(studio_server, page):
     run = seeded_assessment()
-    with playwright.sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        errors = []
-        page.on("pageerror", lambda error: errors.append(str(error)))
-        open_findings(page, studio_server, run, mode="gray")
-        gray = page.locator('[data-finding="0:gray:retention"]')
-        gray.locator("summary").click()
-        text = gray.inner_text()
-        assert "Found in code" not in text, "a Gray declaration must not claim source evidence"
-        assert "Declaration only" in text
-        page.locator('[data-assurance-tab="white"]').click()
-        page.wait_for_selector('[data-finding="0:white:endpoint_controls"]')
-        white = page.locator('[data-finding="0:white:endpoint_controls"]')
-        white.locator("summary").click()
-        white_text = white.inner_text()
-        assert "Declaration only" in white_text, (
-            "a declaration is labelled the same way in every mode"
-        )
-        assert "Found in code" not in white_text, (
-            "even a source declaration must not be presented as proven"
-        )
-        assert "not proof" in white_text or "not verified" in white_text, (
-            "the finding must say a declaration is not proof the control works"
-        )
-        assert not errors, errors
-        browser.close()
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    open_findings(page, studio_server, run, mode="gray")
+    gray = page.locator('[data-finding="0:gray:retention"]')
+    gray.locator("summary").click()
+    text = gray.inner_text()
+    assert "Found in code" not in text, "a Gray declaration must not claim source evidence"
+    assert "Declaration only" in text
+    page.locator('[data-assurance-tab="white"]').click()
+    page.wait_for_selector('[data-finding="0:white:endpoint_controls"]')
+    white = page.locator('[data-finding="0:white:endpoint_controls"]')
+    white.locator("summary").click()
+    white_text = white.inner_text()
+    assert "Declaration only" in white_text, "a declaration is labelled the same way in every mode"
+    assert "Found in code" not in white_text, (
+        "even a source declaration must not be presented as proven"
+    )
+    assert "not proof" in white_text or "not verified" in white_text, (
+        "the finding must say a declaration is not proof the control works"
+    )
+    assert not errors, errors
 
 
-def test_the_review_form_is_completable_with_the_keyboard_only(studio_server):
-    playwright = pytest.importorskip("playwright.sync_api")
+def test_the_review_form_is_completable_with_the_keyboard_only(studio_server, page):
     run = seeded_assessment()
-    with playwright.sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        errors = []
-        page.on("pageerror", lambda error: errors.append(str(error)))
-        # A browser dialog would block the test instead of being driven by it.
-        page.on("dialog", lambda dialog: errors.append(f"browser dialog used: {dialog.type}"))
-        open_findings(page, studio_server, run)
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    # A browser dialog would block the test instead of being driven by it.
+    page.on("dialog", lambda dialog: errors.append(f"browser dialog used: {dialog.type}"))
+    open_findings(page, studio_server, run)
 
-        finding = page.locator('[data-finding="0:white:hardcoded_secrets"]')
-        finding.locator("summary").click()
-        finding.locator("[data-review]").click()
-        page.wait_for_selector("#finding-review[open]")
+    finding = page.locator('[data-finding="0:white:hardcoded_secrets"]')
+    finding.locator("summary").click()
+    finding.locator("[data-review]").click()
+    page.wait_for_selector("#finding-review[open]")
 
-        reason = page.locator("#finding-review-reason")
-        assert reason.evaluate("node => node === document.activeElement"), (
-            "the reason field should receive focus when the form opens"
+    reason = page.locator("#finding-review-reason")
+    assert reason.evaluate("node => node === document.activeElement"), (
+        "the reason field should receive focus when the form opens"
+    )
+    # A labelled field, not an unlabelled browser prompt.
+    assert page.locator("label[for=finding-review-reason]").count() == 1
+
+    # Too short: the form must refuse and say why, rather than saving a useless reason.
+    page.keyboard.type("too short")
+    page.locator("#finding-review-save").click()
+    page.wait_for_selector("#finding-review-error:not([hidden])")
+    assert "at least 10 characters" in page.locator("#finding-review-error").inner_text()
+    assert page.locator("#finding-review[open]").count() == 1
+
+    reason.fill("")
+    page.keyboard.type("These are model identifiers rather than credentials.")
+    # Choose the false-positive option with the keyboard.
+    page.locator("input[name=decision][value=false_positive]").focus()
+    page.keyboard.press("Space")
+    assert page.locator("input[name=decision][value=false_positive]").is_checked()
+    page.locator("#finding-review-save").click()
+
+    try:
+        page.wait_for_function(
+            "() => !document.getElementById('finding-review').open", timeout=10000
         )
-        # A labelled field, not an unlabelled browser prompt.
-        assert page.locator("label[for=finding-review-reason]").count() == 1
-
-        # Too short: the form must refuse and say why, rather than saving a useless reason.
-        page.keyboard.type("too short")
-        page.locator("#finding-review-save").click()
-        page.wait_for_selector("#finding-review-error:not([hidden])")
-        assert "at least 10 characters" in page.locator("#finding-review-error").inner_text()
-        assert page.locator("#finding-review[open]").count() == 1
-
-        reason.fill("")
-        page.keyboard.type("These are model identifiers rather than credentials.")
-        # Choose the false-positive option with the keyboard.
-        page.locator("input[name=decision][value=false_positive]").focus()
-        page.keyboard.press("Space")
-        assert page.locator("input[name=decision][value=false_positive]").is_checked()
-        page.locator("#finding-review-save").click()
-
-        try:
-            page.wait_for_function(
-                "() => !document.getElementById('finding-review').open", timeout=10000
-            )
-        except Exception:
-            raise AssertionError(
-                "the review did not save: "
-                + page.locator("#finding-review-error").inner_text()
-                + " | notice: "
-                + page.locator("#notice").inner_text()
-            ) from None
-        assert not errors, errors
-        browser.close()
+    except Exception:
+        raise AssertionError(
+            "the review did not save: "
+            + page.locator("#finding-review-error").inner_text()
+            + " | notice: "
+            + page.locator("#notice").inner_text()
+        ) from None
+    assert not errors, errors
 
     saved = db.get("assurance", run["id"])
     reviewed = next(f for f in saved["findings"] if f["test_id"] == "hardcoded_secrets")
@@ -220,20 +243,15 @@ def test_the_review_form_is_completable_with_the_keyboard_only(studio_server):
     assert reviewed["original_finding"]["verdict"] == "fail", "the original Finding is preserved"
 
 
-def test_escape_closes_the_review_form_without_recording_anything(studio_server):
-    playwright = pytest.importorskip("playwright.sync_api")
+def test_escape_closes_the_review_form_without_recording_anything(studio_server, page):
     run = seeded_assessment()
-    with playwright.sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        open_findings(page, studio_server, run)
-        finding = page.locator('[data-finding="0:white:hardcoded_secrets"]')
-        finding.locator("summary").click()
-        finding.locator("[data-review]").click()
-        page.wait_for_selector("#finding-review[open]")
-        page.keyboard.press("Escape")
-        page.wait_for_function("() => !document.getElementById('finding-review').open")
-        browser.close()
+    open_findings(page, studio_server, run)
+    finding = page.locator('[data-finding="0:white:hardcoded_secrets"]')
+    finding.locator("summary").click()
+    finding.locator("[data-review]").click()
+    page.wait_for_selector("#finding-review[open]")
+    page.keyboard.press("Escape")
+    page.wait_for_function("() => !document.getElementById('finding-review').open")
 
     saved = db.get("assurance", run["id"])
     unchanged = next(f for f in saved["findings"] if f["test_id"] == "hardcoded_secrets")
@@ -242,22 +260,50 @@ def test_escape_closes_the_review_form_without_recording_anything(studio_server)
     assert not unchanged.get("review_reason")
 
 
-def test_the_matrix_reason_is_reachable_by_keyboard(studio_server):
+def test_the_matrix_reason_is_reachable_by_keyboard(studio_server, page):
     """A title tooltip alone is not readable without a pointer."""
-    playwright = pytest.importorskip("playwright.sync_api")
     run = seeded_assessment()
-    with playwright.sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        open_findings(page, studio_server, run)
-        page.locator('[data-assurance-tab="combined"]').click()
-        page.locator("#assurance-content details", has_text="Compare all categories").click()
-        page.wait_for_selector(".cell-label")
-        label = page.locator(".cell-label").first
-        assert label.get_attribute("tabindex") == "0"
-        described = label.get_attribute("aria-describedby")
-        assert described
-        assert page.locator(f"#{described}").inner_text().strip(), (
-            "the described reason must be real text, not only a tooltip"
-        )
-        browser.close()
+    open_findings(page, studio_server, run)
+    page.locator('[data-assurance-tab="combined"]').click()
+    page.locator("#assurance-content details", has_text="Compare all categories").click()
+    page.wait_for_selector(".cell-label")
+    label = page.locator(".cell-label").first
+    assert label.get_attribute("tabindex") == "0"
+    described = label.get_attribute("aria-describedby")
+    assert described
+    assert page.locator(f"#{described}").inner_text().strip(), (
+        "the described reason must be real text, not only a tooltip"
+    )
+
+
+def test_one_assessment_without_recorded_modes_does_not_break_the_history_picker(
+    studio_server, page
+):
+    """Found while debugging this file: `r.modes.map` threw on a record with no modes.
+
+    One malformed or legacy row emptied the history picker and left the whole Results screen
+    unusable, so every other saved assessment became unreachable.
+    """
+    broken = {
+        "id": str(uuid.uuid4()),
+        "status": "completed",
+        "config": {"targets": [{"name": "Legacy record"}], "judges": []},
+        "findings": [],
+        "audit": [],
+    }
+    broken.pop("modes", None)  # Explicit: this record has no recorded modes.
+    db.save("assurance", broken)
+    run = seeded_assessment()
+
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    open_findings(page, studio_server, run)
+
+    assert not errors, errors
+    options = page.locator("#test-history option").all_inner_texts()
+    assert any("Modes not recorded" in text for text in options), (
+        "the record with no modes should be listed as such, not crash the picker"
+    )
+    assert any(run["id"][:8] in text for text in options), (
+        "the healthy record must still be selectable"
+    )

@@ -23,12 +23,8 @@
     gray: "Gray-box testing",
     white: "White-box testing",
   };
-  const resultNames = {
-    pass: "Passed",
-    fail: "Needs attention",
-    not_tested: "Not tested",
-    exists: "Declaration only",
-  };
+  /* Shared wording, so this screen cannot drift from Results and Governance. */
+  const resultNames = window.StudioStatus.RESULT;
   /* A declared control is never presented as proven, in any mode. White-box reads source and
      Gray-box reads declarations, but neither shows that the control works, so both say
      "Declaration only" and the per-check guidance explains what that check could see. */
@@ -225,6 +221,7 @@
     const run = current,
       c = run.combined,
       costs = run.assurance_costs;
+    if (!Array.isArray(run.modes)) run.modes = [];
     const explanations = run.ai_explanations || [];
     const accepted = [...explanations].reverse().find((item) => item.status === "accepted");
     const aiReview =
@@ -486,6 +483,12 @@
       if (requestGeneration === generation) busy = false;
     }
   }
+  /* A record saved without its modes must not break the picker for every other record. */
+  function modeSummary(modes) {
+    const names = (modes || []).map((m) => modeNames[m] || m).filter(Boolean);
+    return names.length ? names.join(" + ") : "Modes not recorded";
+  }
+
   async function historyList() {
     const runs = await api("/api/assurance/runs");
     window.StudioUI.setAssessments(runs);
@@ -494,7 +497,7 @@
       runs
         .map(
           (r) =>
-            `<option value="${esc(r.id)}" ${r.id === id ? "selected" : ""}>${esc(r.modes.map((m) => modeNames[m]).join(" + "))} · ${esc(r.status)} · ${r.id.slice(0, 8)}</option>`,
+            `<option value="${esc(r.id)}" ${r.id === id ? "selected" : ""}>${esc(modeSummary(r.modes))} · ${esc(r.status)} · ${r.id.slice(0, 8)}</option>`,
         )
         .join("");
   }

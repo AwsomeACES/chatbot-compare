@@ -80,3 +80,21 @@ same indentation rules.
   keys hit the same daily limit; Kimi returned insufficient balance. Full
   chatbot coverage is not claimed. Known recorded subtotal is $0.018593, but
   final cost is unknown because failed attempts have incomplete billing data.
+
+## 2026-10-24 — Verification categories recorded separately (T-032)
+
+These five categories are deliberately kept apart. Passing one is not evidence for another: a Linux container or a WSL shell does not qualify native macOS, and a committed CI configuration file is not evidence that a remote job ran.
+
+| Category                             | What it covers                                                                                                | Exercised on                                                   | Result                                                                            | Not exercised                                                                     |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| **Unit and integration tests**       | `python -m pytest` with synthetic fixtures and mocked providers                                               | Windows 11, Python 3.12.3, project `.venv`                     | See the dated run in PROGRESS.md                                                  | Native Linux and macOS runs                                                       |
+| **Dependency locks**                 | Clean hash-verified install from `requirements-dev.lock`, then `pip check` and the full suite                 | Windows 11, a fresh virtual environment outside the repository | 78 packages, no broken requirements, suite passed                                 | Native Linux and macOS installs; the optional evaluation lock was never installed |
+| **Browser tests**                    | `scripts/check-studio-ui.py` (current shell) and `scripts/check-exact-compare.py` (retained legacy interface) | Headless Chromium on Windows 11                                | Both passed locally                                                               | Firefox and WebKit; any browser on Linux or macOS                                 |
+| **Launcher verification**            | `start.sh`, `run.ps1`, `Dockerfile`, `compose.yaml` creating an environment and serving Studio                | `run.ps1` on Windows 11 only                                   | Windows launcher used throughout this work                                        | `start.sh` on native Linux or macOS; a container build and run                    |
+| **Native scanner qualification**     | Docker or WSL scanner images, offline databases, read-only mounts, no-network sandbox                         | Not exercised in this task                                     | No scan was run                                                                   | Every target OS; image and database provisioning                                  |
+| **Local and cloud model validation** | A real local Judge (Ollama) or an authorised cloud provider answering real requests                           | Not exercised in this task                                     | No provider call was made; every test used mocked providers or synthetic fixtures | All providers; no paid call was authorised or made                                |
+
+Two further boundaries, so a reader does not over-read the table:
+
+- **Human-label calibration** is implemented and tested with synthetic fixtures, but no representative human labels exist, so every Judge reports **uncalibrated**. See [judge-validation.md](judge-validation.md).
+- **CI** is configured for Windows, Ubuntu and macOS, installs Linux browser system dependencies and keeps failure traces. That configuration has not been executed on a remote runner as part of this work, so CI behaviour on Linux and macOS is configured but not observed.

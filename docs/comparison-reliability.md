@@ -17,7 +17,13 @@ The Results screen and PDF show the same saved decision. Expand **Comparison evi
 
 New runs save the `comparison` section of [settings.json](../app/studio/settings.json). Defaults are 2,000 resamples, a 95% family-wise confidence target, at least ten distinct paired scenarios overall and at least two per selected category. The practical tie margin is two score points, and the review threshold is 80 per category.
 
-The short default suite has only one authored scenario in several categories. It is useful for screening and descriptive comparisons, but deliberately does **not** qualify for an inferential winner. Add reviewed, distinct scenarios through the existing `scenario_sets` / `scenario_file` protocol mechanism when a broader comparison is needed. Merely renaming or duplicating a prompt does not make it independent. The Studio does not automatically prove that authored scenarios are independent or representative.
+The short default suite has only one authored scenario in several categories. It is useful for screening and descriptive comparisons, but deliberately does **not** qualify for an inferential winner.
+
+The **Extended reviewable suite** is the selectable alternative: ten distinct authored scenarios for each of nine Categories, with Bias keeping its nine subtypes from `bias-v1.json`. Choose it under **Scenario suite** on the Evaluate screen. Selecting it appends `+extended-v1` to the saved `protocol_version`, so every Run records which suite produced it and older reports stay readable on their own terms. The default stays the light screening suite.
+
+The extended suite includes multi-turn, ambiguous, benign and adversarial scenarios, and supplies reference facts for the factual Category that state their own scope. Every scenario is marked `authored`: none has been reviewed by a second person, and the suite says so in its own limitations and in the Evaluate screen. A larger suite reduces the chance of missing a known failure mode; it does not establish that a bot is safe, and it does not make the Studio's coverage representative of real traffic.
+
+Merely renaming or duplicating a prompt does not make a scenario independent. Repeats of one scenario are a separate multiplier and are never counted as distinct scenarios anywhere — in planning, in the comparison's paired means, in calibration sufficiency or in the suite's own coverage block. The Studio does not automatically prove that authored scenarios are independent or representative.
 
 Intervals are approximate and conditional on the chosen suite and judges. They do not account for every source of model bias, shifting provider versions or untested real-world scenarios. Policy values and seed are recorded with the run. Older stored reports are not migrated in bulk; explicit resume/recalculation uses the current analysis implementation and reports its method.
 

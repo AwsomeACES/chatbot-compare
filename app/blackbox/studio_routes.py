@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, SecretStr
 
 from .judge_credentials import key_for_judge
 from .schema import JudgeSelection, Settings
-from .studio_engine import LIVE_CONFIGS, LIVE_RUNS, audit, settings_file
+from .studio_engine import LIVE_CONFIGS, LIVE_RUNS, audit, settings_file, suite_summaries
 
 router = APIRouter(prefix="/api/studio")
 
@@ -33,6 +33,7 @@ async def settings():
     from .easy_setup import public_defaults
 
     data = settings_file()
+    data["scenario_suite_summaries"] = suite_summaries()
     data["saved_judge"] = public_defaults()
     try:
         async with httpx.AsyncClient(timeout=2, trust_env=False) as client:
@@ -56,7 +57,8 @@ def prepare(config: Settings, protocol: dict | None = None) -> Settings:
     from .easy_setup import BASE_POLICY, judge_defaults
 
     is_new = protocol is None
-    protocol = protocol or settings_file()
+    # The selected suite must reach the override, or `cases()` would silently plan the default.
+    protocol = protocol or settings_file(config.scenario_suite)
     config._protocol_override = protocol
     if is_new:
         config.judge_batch_size = protocol.get("judge_batch_size", config.judge_batch_size)

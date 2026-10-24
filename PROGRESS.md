@@ -957,3 +957,124 @@ No cloud redaction service was added. The export now states the exemption, that 
 Commands: `python -m pytest tests/test_export_redaction.py tests/test_export_parity.py tests/test_review_accessibility.py -q` → 43 passed. `python -m pytest tests/test_assurance.py tests/test_bias_governance.py tests/test_governance_recovery.py tests/test_runtime_evidence.py tests/test_white_explanation.py tests/test_evidence_readiness.py tests/test_judge_calibration.py -q` → 150 passed.
 
 **Not done:** names, postal addresses and contextual personal information remain undetected by pattern matching; colour contrast has not been measured against an agreed standard; and `Estimated` / `Low confidence` wording outside the assurance screens is not yet centralised. All three are recorded in T-019 and T-024.
+
+## 2026-10-24 — Review response, Phase G: measure before optimising (T-027, T-028)
+
+**Nothing was optimised, because no measurement justified it.** This phase delivers the measurement and records that outcome rather than claiming a speedup.
+
+### The fixed benchmark (T-027)
+
+`benchmark.json` declared `tolerance: 0.2` while `tests/test_speed_cache.py` asserted against a literal `1.2`, so the configured field was decorative. The gate now reads `baseline_seconds × (1 + tolerance)`, which is the same 20% budget, and its failure message says to profile or record the regression rather than raise the baseline. `test_the_benchmark_budget_cannot_be_loosened_without_being_noticed` asserts the committed baseline 1.0 s, tolerance 0.2 and the fixed `simulated_bot_seconds` 0.12, so widening the budget by editing configuration fails a test.
+
+The benchmark prints its distribution, so `pytest -s` publishes measurements instead of only a verdict. Re-run with the unchanged workload (ten categories, eight live bias sub-tests, one repeat, four workers), an unmeasured warm-up and median of five:
+
+| Run | Median | Individual runs                   | Budget |
+| --- | ------ | --------------------------------- | ------ |
+| 1   | 0.828s | 0.797, 0.828, 0.875, 0.813, 0.844 | 1.200s |
+| 2   | 0.828s | 0.813, 0.828, 0.812, 0.828, 0.828 | 1.200s |
+| 3   | 0.813s | 0.813, 0.844, 0.813, 0.797, 0.828 | 1.200s |
+
+Environment: Windows 11 Home 10.0.26300, Python 3.12.3, project `.venv`, no other load. The measured median sits about 31% below the gate and below the 1.0 s baseline. The baseline was **neither raised nor lowered** and no Case was removed: lowering it would be a new, stricter claim about hosts this was never measured on.
+
+### Scanner phase timings (T-028)
+
+`app/assurance/sandbox.py` times five phases separately — `image_check`, `database_copy`, `version_check`, `scan`, `parse` — and `phase_summary()` reports `preparation_seconds` apart from `scan_seconds` and `parse_seconds`, with a note saying preparation is not scan time. A phase that raises still records its duration. The result reaches each Finding's `details["timings"]` via `white.parse()`, and a test asserts a timing never becomes a score. The per-scan private Trivy BoltDB copy is unchanged: a mutable database is never shared between Runs, which is exactly the cost the split now attributes.
+
+Five tests in `tests/test_scanner_runtime.py` cover the split, the failed-phase case, the preparation/scan separation arithmetic, a tool with no database having no copy phase, and the timings reaching a Finding without becoming a score.
+
+**Not done, and why:** no concurrency change. Attributing a real scan needs the provisioned scanner images and offline databases, which this task did not have, so there is no evidence that bounded Gray parallelism is safe or useful here. Serial scanner execution, bounded memory, read-only source mounts, the no-network sandbox, cancellation and complete planned-check accounting are untouched. Per-provider pacing, retries and metering are untouched.
+
+A related observation, recorded rather than fixed: `test_judge_limit_pacing_and_retry_are_shared` in `tests/test_concurrency.py` asserts at least 0.24 s between adjacent Judge call starts against a configured 0.25 s pause — about 4% headroom. It passed three times in isolation but failed once during a full-suite run on a loaded machine. The pacer uses absolute deadlines, so after an event-loop stall two due slots can start back to back while the average rate is still correct; the assertion models minimum spacing instead. The assertion was **not** weakened. It is recorded here as a known load-sensitive check.
+
+## 2026-10-24 — Review response, Phase H: selectable extended scenario coverage (T-037)
+
+The repository already contained `app/studio/scenarios.json` with ten authored scenarios per category, but `scenario_file` was `""`, so it had never been loaded. The extended coverage existed and was unreachable.
+
+- `app/studio/scenarios-extended-v1.json` (new) — 90 scenarios: ten distinct authored scenarios for each of nine Categories. Bias is deliberately excluded because it is governed by `bias-v1.json` and its nine subtypes. Each scenario carries `intent` and `review_status`, hallucination scenarios carry reference facts that state their own scope, and the document carries its version, review block, coverage counts and limitations.
+- `app/studio/settings.json` — `scenario_suites` declares `screening` (the unchanged default) and `extended`; `default_scenario_suite` is `screening`.
+- `app/blackbox/studio_engine.py` — `settings_file(suite)` loads the chosen suite, accepts a plain mapping or a wrapped document, and appends the suite version to `protocol_version`. `scenario_document()` keeps the inside-`app/studio` rule. `suite_summaries()` reports each suite's size, intent mix, review status, limitations and protocol version. `cases()` passes `config.scenario_suite` and carries `intent` and `review_status` onto each planned Case (they are popped before `ImportedCase`, which forbids extra fields).
+- `app/blackbox/schema.py` — `Settings.scenario_suite`, empty meaning the protocol default.
+- `app/blackbox/studio_routes.py` — `prepare()` now resolves the protocol with the selected suite. **This was the bug that would have made the feature silently useless:** `prepare()` sets `_protocol_override`, which `cases()` prefers, so without this the selection was discarded and the default was planned. The settings endpoint returns `scenario_suite_summaries`.
+- `app/blackbox/runner.py` — `make_run()` resolves the protocol with the suite in all three places, so a saved `protocol_snapshot` names the suite that actually produced its Cases even when `prepare()` did not run.
+- `app/blackbox_static/simple.html`, `simple.js` — a **Scenario suite** selector, with a note giving the distinct-scenario count, review status, protocol version and the statement that more scenarios do not show a bot is safe. Per-Category counts update with the selection.
+
+Measured result: screening plans 54 Cases / 18 distinct scenarios at `ten-categories-bias-nine-v5`; extended plans 297 Cases / 99 distinct scenarios at `ten-categories-bias-nine-v5+extended-v1`. Bias keeps all nine subtypes with `algorithmic` still marked derived. Intents present: `adversarial` (30), `adversarial_factual` (10), `adversarial_multi_turn` (10), `benign` (20), `benign_multi_turn` (10), `ambiguous` (10); 21 scenarios are multi-turn.
+
+`tests/test_scenario_suites.py` (new, 20 tests): the default is unchanged and lightweight; an unknown suite is refused; the extended suite is selectable and changes the protocol version; ten distinct scenarios per Category; repeats stay identifiable and never raise the distinct count; the nine Bias subtypes survive and the derived aggregate stays derived; no two scenarios share a prompt; every scenario has a distinct identifier and expected behaviour; multi-turn, ambiguous, benign and adversarial cases are all present; reference facts exist and state their scope and reach the planned Case; authored scenarios are distinguished from independently reviewed ones; limitations are stated; summaries report size, review status and version; coverage counts only distinct scenarios; the extended suite satisfies the comparison minimum-scenario rule that the screening suite cannot; per-Run snapshots are preserved; and a scenario file outside `app/studio` is refused.
+
+**Not done:** no scenario has been reviewed by a second person — every one is marked `authored` and the suite says so in the file, the API and the Evaluate screen. No Run has been executed with the extended suite against a real bot. Paid comparisons were not re-run.
+
+## 2026-10-24 — T-019 completed: measured contrast and one source of status wording
+
+### Contrast, measured rather than claimed
+
+`scripts/check_contrast.py` (new) parses `simple.css`, resolves custom properties and named colours, resolves each rule's background from its own declaration, a declared container mapping, or the page background, and computes the WCAG 2.2 AA ratio: 4.5:1 for normal text, 3:1 for declared large text. A colour it cannot resolve is reported as **skipped**, never as passing, and the declared container mapping is part of the measurement and must be kept truthful.
+
+First run: **43 measured, 3 failing, 0 skipped**. The three failures were real:
+
+| Selector                                      | Colour    | On        | Measured | Needed |
+| --------------------------------------------- | --------- | --------- | -------- | ------ |
+| `input::placeholder`, `textarea::placeholder` | `#8791a5` | `#ffffff` | 3.17:1   | 4.5:1  |
+| `th`                                          | `#747c90` | `#fafbfe` | 4.04:1   | 4.5:1  |
+| `.remove-bot`                                 | `#69738a` | `#f6f7fb` | 4.44:1   | 4.5:1  |
+
+Each was darkened along its own hue to about 4.8:1 rather than to the 4.5 boundary, so a rounding change cannot flip it: `#697181`, `#676e80` and `#646d83`. Re-run: **43 measured, 0 failing, 0 skipped.** Adding named-colour resolution also brought the three previously skipped white-on-accent pairs into the measurement, and they pass.
+
+### One source of status wording
+
+`app/blackbox_static/status-labels.js` (new) defines `window.StudioStatus` with the canonical result labels, the qualifications (`Estimated`, `Low confidence`, `Needs review`, `Unknown`, `Declaration only`, `Not measured`), a one-line explanation for each, a `label()` that humanises an unmapped state rather than inventing one, and a `cost()` helper where only a known no-call case may read as zero. It loads before every screen script. `assurance.js` now reads the shared map instead of keeping its own copy, and `simple.js` no longer prints a raw machine status through `replaceAll("_", " ")`.
+
+`tests/test_status_wording.py` (new, 15 tests): each required label is defined once in the shared map; the shared file loads before every screen that reads it; no screen keeps its own copy of the result wording (ignoring comments, so an explanation in a comment is not a second copy); no screen renders a raw machine status; "Found in code" is gone from every active screen; an unmapped state is humanised; unknown cost is never rendered as zero and the known-zero case is decided first; each qualification can explain itself; the stylesheet passes the measured check with zero failures and zero skips; the checker states the standard it measures against; and the checker itself detects a failing colour, because a check that cannot fail is not a check.
+
+**Not done:** no screen-reader pass, and no measurement of focus-visible indicator contrast against adjacent colours. The checker cannot lay the page out, so an unusual nesting could place text on a background its declared container mapping does not describe; that limitation is in the script's own docstring.
+
+## 2026-10-24 — A real defect found while chasing a "flaky" browser test
+
+Four browser tests in `tests/test_review_accessibility.py` passed alone and failed inside a full-suite run. Rather than raise a timeout, the wait was given diagnostics that report what the page actually shows. The next run named the cause immediately:
+
+```
+the seeded assessment never loaded.
+status='Start a test from Evaluate, or choose a previous test.'
+notice="Cannot read properties of null (reading 'map')"
+booted=True labels=True selected='6e753314-…'
+```
+
+Not a timing problem. **One saved assessment with no recorded `modes` crashed the history picker, and with it the whole Results screen.** `assurance.js` built each history option with `r.modes.map(...)` and `shell.js` did the same in `renderHistory`, so a single malformed or legacy row made every other saved assessment unreachable. The selected record was correct; the screen simply could not finish rendering.
+
+Fixes in `app/blackbox_static/assurance.js` and `shell.js`: a record without modes is listed as **Modes not recorded** instead of throwing, and `render()` treats a missing `modes` as an empty list so the mode tabs are absent rather than fatal. `tests/test_review_accessibility.py::test_one_assessment_without_recorded_modes_does_not_break_the_history_picker` saves exactly such a record beside a healthy one and asserts no page error, that the malformed row is listed as not recorded, and that the healthy record is still selectable.
+
+The record came from `tests/test_judge_calibration.py`, which saves `{"id": …, "blackbox_run_id": ""}` to exercise an assessment with no Black Run and whose cleanup fixture wiped only its own two record kinds. Its `clean_state` now also removes the `blackbox` and `assurance` records its fixtures create, with a comment saying why.
+
+Two further test-hygiene changes from the same investigation:
+
+- `tests/test_review_accessibility.py` now shares one module-scoped loopback server, one Chromium instance and a fresh page per test, instead of starting four servers and four browsers. The file runs in about 8 seconds instead of 16, and churns far fewer resources inside a full-suite run.
+- `tests/legacy_protocol.py` and one lambda in `tests/test_expanded_scenarios.py` accept the new optional `suite` argument, because `studio_engine.settings_file` gained one. Six pre-existing tests that monkeypatch that function had failed with `TypeError: takes 0 positional arguments but 1 was given` — a real consequence of the signature change, caught by the full suite.
+
+Recorded, not fixed: `tests/test_concurrency.py::test_stop_does_not_dispatch_queued_cases_or_leak_tasks` failed once in a loaded run and passes in isolation, like the pacing check noted under Phase G. Neither assertion was weakened. Running other pytest sessions alongside the full suite is what loaded the machine; do not do that.
+
+## 2026-10-24 — Final verification for the review response
+
+Windows 11 Home 10.0.26300, Python 3.12.3, project `.venv`, run with nothing else competing for the machine.
+
+| Check                      | Command                                                                                    | Result                                                                                                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Full suite                 | `python -m pytest -q`                                                                      | **591 passed, 1 skipped** in 256.80 s (the skip is the Windows symlink privilege case)                                                                                 |
+| Python lint                | `python -m ruff check app tests scripts sample_project`                                    | passed                                                                                                                                                                 |
+| Python format              | `python -m ruff format --check app tests scripts sample_project`                           | 122 files already formatted                                                                                                                                            |
+| Frontend and docs format   | `npm run format:check`                                                                     | passed                                                                                                                                                                 |
+| JavaScript syntax          | `npm run check:js`                                                                         | 15 files checked                                                                                                                                                       |
+| Studio navigation          | `npm run test:ui`                                                                          | 11 passed, 0 failed                                                                                                                                                    |
+| Current shell in a browser | `python scripts/check-studio-ui.py`                                                        | navigation, saved report, escaped model output, calibration panel (17 eligible conversations), Governance alignment, provenance, phone-width layout; no browser errors |
+| Legacy comparison UI       | `python scripts/check-exact-compare.py`                                                    | passed                                                                                                                                                                 |
+| Text contrast              | `python scripts/check_contrast.py`                                                         | 43 measured, 0 failing, 0 skipped                                                                                                                                      |
+| Benchmark                  | `python -m pytest tests/test_speed_cache.py -s -k regression_budget`                       | medians 0.828 s, 0.828 s, 0.813 s against a 1.200 s budget                                                                                                             |
+| Documents                  | `python scripts/check_docs.py`                                                             | 5 documents, requirement coverage and local links passed                                                                                                               |
+| Dependencies               | `python -m pip check`                                                                      | no broken requirements                                                                                                                                                 |
+| Diff hygiene               | `git diff --check`                                                                         | clean                                                                                                                                                                  |
+| Clean locked install       | fresh venv outside the repository, `pip install --require-hashes -r requirements-dev.lock` | 78 packages, `pip check` clean, runtime imports OK, full suite passed there (476 passed, 1 skipped at that point)                                                      |
+
+Test count grew from 448 at the start of this work to 592 collected. New test files: `test_dependency_locks.py` (17), `test_verification_wiring.py` (8), `test_judge_provenance.py` (22), `test_export_redaction.py` (30), `test_export_parity.py` (9), `test_review_accessibility.py` (5), `test_scenario_suites.py` (20), `test_status_wording.py` (15), plus additions to `test_costs.py`, `test_judge_calibration.py` and `test_scanner_runtime.py`.
+
+Two transient infrastructure hiccups were observed and are not product failures: an `npm` invocation and one `pytest` start failed immediately after the full suite finished (an `OSError: [Errno 22]` reading a `.pyc`), and both succeeded on an unchanged re-run.
+
+Not exercised, and therefore not claimed: native Linux or macOS, any container build, any scanner image, any real provider call, and any remote CI run. See the category table in [docs/verification.md](docs/verification.md).

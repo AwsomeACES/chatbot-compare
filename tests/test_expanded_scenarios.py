@@ -65,7 +65,8 @@ def test_original_single_scenario_protocol_retains_its_cases(monkeypatch):
     original.pop("scenario_sets")
     original.pop("scenario_file")
     original["default_repeats"] = 1
-    monkeypatch.setattr(studio_engine, "settings_file", lambda: original)
+    # Signature matches settings_file(suite=""); a frozen protocol ignores the suite name.
+    monkeypatch.setattr(studio_engine, "settings_file", lambda suite="": original)
     rows = studio_engine.cases(config())
     assert len(rows) == 16
     assert all(r["base_case_id"] == r["category"] for r in rows)

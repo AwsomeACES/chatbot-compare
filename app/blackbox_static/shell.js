@@ -23,7 +23,8 @@
     const choices = [
       ...assessments.map((run) => ({
         value: "assessment:" + run.id,
-        label: `${run.modes.map((m) => modeNames[m] || m).join(" + ")} · ${run.status} · ${run.id.slice(0, 8)}`,
+        /* Tolerate a record saved without its modes: one bad row must not empty the picker. */
+        label: `${(run.modes || []).map((m) => modeNames[m] || m).join(" + ") || "Modes not recorded"} · ${run.status} · ${run.id.slice(0, 8)}`,
       })),
       ...runs
         .filter((run) => !linked.has(run.id))

@@ -372,3 +372,37 @@ The initialization lock exists because concurrent first imports deadlock inside 
 - The block always states the returned model identifier with the caveat that a returned name is not a guaranteed immutable revision.
 - An unmetered explanation reports "No explanation calls", never `$0.00`. Unknown billing stays Unknown.
 - An explanation never changes a recorded verdict, severity or review. A test asserts a finding the explanation calls a false positive still carries `fail`.
+
+## 2026-10-24 — The benchmark's configured tolerance is authoritative, and the baseline moves for neither reason
+
+- The gate is `baseline_seconds × (1 + tolerance)` read from `benchmark.json`, not a literal in the test. A declared field that the test ignored was worse than no field.
+- A guard test asserts the committed baseline, tolerance and simulated workload, so widening the budget in configuration fails a test rather than passing quietly.
+- The baseline is not raised to hide a regression, and it is not lowered when a host happens to measure faster. The current median is about 31% below the gate on one Windows host; turning that into a stricter global claim would make the gate flake on hosts it was never measured on.
+- The benchmark prints its measured distribution, so a result can be published rather than only passing.
+
+## 2026-10-24 — Measure a scan before changing its concurrency
+
+- `sandbox.scan()` reports five phases and separates `preparation_seconds` from `scan_seconds`. The offline database copy is preparation; reading it as scan time would misattribute the dominant cost on modest hardware.
+- A phase that raises still records its duration, because the slow phase is often the failing one.
+- Timings travel on a Finding's details and never become a score or a verdict.
+- No concurrency change was made. Bounded Gray parallelism stays unimplemented until a real scan has been measured, because the images and offline databases needed to measure one were not available. Recording "no safe improvement demonstrated" is the honest outcome; a speedup claim without a measurement is not.
+- The per-scan private Trivy copy stays. A mutable BoltDB is never shared between Runs, even though copying it is the expensive step.
+
+## 2026-10-24 — Scenario coverage is selectable, versioned, and never self-certifying
+
+- The ten top-level Categories do not change. An extended suite is a _selection_, not a new default: `default_scenario_suite` stays `screening`, so the light screening path is untouched for anyone who does not choose otherwise.
+- Selecting a suite appends its version to the saved `protocol_version`. A Run therefore records which suite produced its Cases, older reports stay readable on their own terms, and two suites are never silently compared as the same protocol.
+- The suite selection must reach the protocol override. `prepare()` and `make_run()` both resolve the protocol with the selected suite; resolving it in only one place would have planned the default while the interface claimed otherwise.
+- Bias is excluded from the extended suite. It is governed by `bias-v1.json` with nine subtypes and a derived `algorithmic` aggregate, and a scenario set must not replace that or let the aggregate be counted as another independent observation.
+- Every scenario carries `intent` and `review_status`. Nothing in this repository is marked independently reviewed, because nothing has been: the file, the API and the Evaluate screen all say `authored`.
+- Reference facts state their own scope. "The supplied reference set contains no price for X" is a fact about the reference set; it is not proof that X does not exist, and the scenario says so.
+- Distinct scenarios are the only coverage counted. Repeats are a separate multiplier, duplicated prompts are rejected by a test, and a paraphrase is not independence. More scenarios reduce the chance of missing a known failure mode; the interface says plainly that they do not show a bot is safe.
+
+## 2026-10-24 — Contrast is measured, and status wording has one home
+
+- Contrast is computed by `scripts/check_contrast.py` against WCAG 2.2 AA, and a colour the script cannot resolve is reported as skipped rather than counted as passing. The test requires zero failures _and_ zero skips, so an unmeasured colour cannot hide in a green run.
+- The script cannot lay the page out, so its declared container-background mapping is part of the measurement and has to be kept truthful when the layout changes. That limitation is in the script, not only in a note.
+- The three colours it found failing were darkened to roughly 4.8:1 rather than to the 4.5 boundary, so a later rounding or hue change cannot silently drop them below the standard.
+- A checker that cannot fail is not a check: one test feeds it a known-failing grey and requires it to report a miss.
+- Status wording lives in `window.StudioStatus` and every screen reads it. A second copy of the wording is how a Gray declaration came to be labelled "Found in code", so a test fails if any screen hard-codes those words again or prints a raw machine status.
+- Only a known no-call case may render as zero cost; a missing figure stays Unknown. The helper decides the known-zero case before the unknown case, and a test asserts that order.

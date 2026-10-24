@@ -179,6 +179,8 @@ class Settings(BaseModel):
     _discovered_fallbacks: list = PrivateAttr(default_factory=list)
     _judge_health: dict = PrivateAttr(default_factory=dict)
     simple_mode: bool = False
+    # "" keeps the protocol's default screening suite; a declared name selects that suite.
+    scenario_suite: str = Field(default="", max_length=60)
     retention_days: int = Field(default=0, ge=0, le=3650)
     judge_batch_size: int = Field(default=1, ge=1, le=8)
     judge_batch_wait_ms: int = Field(default=40, ge=0, le=200)

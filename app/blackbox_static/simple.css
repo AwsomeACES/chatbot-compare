@@ -262,7 +262,7 @@ textarea {
 }
 input::placeholder,
 textarea::placeholder {
-  color: #8791a5;
+  color: #697181;
 }
 input[type="checkbox"] {
   width: 16px;
@@ -317,7 +317,7 @@ summary:focus-visible {
 .remove-bot {
   font-size: 0.78rem;
   padding: 6px 10px;
-  color: #69738a;
+  color: #646d83;
 }
 .judge {
   margin: 0;
@@ -388,7 +388,7 @@ td {
   vertical-align: top;
 }
 th {
-  color: #747c90;
+  color: #676e80;
   background: #fafbfe;
   font-size: 0.75rem;
   font-weight: 650;

@@ -49,7 +49,7 @@ Unknown usage/prices show **Unknown**, not $0. Hidden bot calls require that bot
 
 ZIPs imported through White are scanned as source inside a restricted, networkless Docker sandbox. They are never executed. Start trusted bots yourself and paste their running link for behavioral checks. Missing tools or inputs are recorded as **Not tested**. Docker is optional for normal Black/Gray use.
 
-Read [the detailed simple guide](docs/simple-guide.md) for configuration, recovery and optional Docker. [Previous documentation](docs/legacy-guide.md) and the older interface at `/index.html` remain available for historical runs.
+Read [the detailed simple guide](docs/simple-guide.md) for configuration, recovery and optional Docker. [Validating a Judge](docs/judge-validation.md) is the owner procedure for human-label calibration, and [shared-hosting readiness](docs/shared-hosting-readiness.md) records what multi-user hosting would require; this Studio is a local, single-user tool. [Previous documentation](docs/legacy-guide.md) and the older interface at `/index.html` remain available for historical runs.
 
 Need to change a key? [API keys and testing-file locations](docs/api-keys.md) explains independent Studio judge accounts and chatbot authentication. Studio does not need another chatbot's .env.
 

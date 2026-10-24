@@ -17,13 +17,42 @@ def audit(run: dict, event: str, **details) -> None:
     append(run, event, **details)
 
 
-def settings_file() -> dict:
+def scenario_document(name: str) -> dict:
+    """Read one scenario file from app/studio, accepting a plain mapping or a wrapped suite."""
+    path = ROOT / "app/studio" / name
+    if path.resolve().parent != (ROOT / "app/studio").resolve():
+        raise ValueError("Scenario files must stay inside app/studio.")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(data, dict) and "sets" in data:
+        return data
+    return {"sets": data}
+
+
+def settings_file(suite: str = "") -> dict:
+    """The versioned protocol. `suite` selects a declared scenario suite; "" keeps the default.
+
+    An extended suite changes `protocol_version`, so a saved Run records which suite produced
+    it and historical snapshots stay readable and comparable on their own terms.
+    """
     protocol = json.loads((ROOT / "app/studio/settings.json").read_text(encoding="utf-8"))
-    if protocol.get("scenario_file"):
-        path = ROOT / "app/studio" / protocol["scenario_file"]
-        if path.resolve().parent != (ROOT / "app/studio").resolve():
-            raise ValueError("Scenario files must stay inside app/studio.")
-        protocol["scenario_sets"] = json.loads(path.read_text(encoding="utf-8"))
+    suites = protocol.get("scenario_suites", {})
+    chosen = suite or protocol.get("default_scenario_suite", "")
+    if chosen and chosen not in suites:
+        raise ValueError(f"Unknown scenario suite: {chosen}")
+    selected = suites.get(chosen, {})
+    protocol["scenario_suite"] = chosen or "screening"
+    protocol["scenario_suite_version"] = selected.get("version", "screening-v1")
+    if selected.get("scenario_file"):
+        document = scenario_document(selected["scenario_file"])
+        protocol["scenario_sets"] = document["sets"]
+        protocol["scenario_suite_review"] = document.get("review", {})
+        protocol["scenario_suite_coverage"] = document.get("coverage", {})
+        protocol["scenario_suite_limitations"] = document.get("limitations", [])
+        protocol["protocol_version"] = (
+            f"{protocol['protocol_version']}+{protocol['scenario_suite_version']}"
+        )
+    elif protocol.get("scenario_file"):
+        protocol["scenario_sets"] = scenario_document(protocol["scenario_file"])["sets"]
     if protocol.get("bias_file"):
         path = (ROOT / "app/studio" / protocol["bias_file"]).resolve()
         if path.parent != (ROOT / "app/studio").resolve():
@@ -37,9 +66,43 @@ def settings_file() -> dict:
     return protocol
 
 
+def suite_summaries() -> dict[str, dict]:
+    """Every declared scenario suite with its size, intent mix and review status.
+
+    Distinct scenarios only: repeats are a separate multiplier and are never counted here.
+    """
+    protocol = json.loads((ROOT / "app/studio/settings.json").read_text(encoding="utf-8"))
+    summaries = {}
+    for name, entry in protocol.get("scenario_suites", {}).items():
+        loaded = settings_file(name)
+        sets = loaded.get("scenario_sets", {})
+        per_category = {
+            case["category"]: len(sets.get(case["category"], [])) or 1 for case in loaded["cases"]
+        }
+        summaries[name] = {
+            "label": entry.get("label", name),
+            "version": entry.get("version", ""),
+            "note": entry.get("note", ""),
+            "scenarios_per_category": per_category,
+            "distinct_scenarios": sum(per_category.values()),
+            "review": loaded.get(
+                "scenario_suite_review",
+                {
+                    "status": "authored",
+                    "independently_reviewed": False,
+                    "note": "Authored with the protocol; not independently reviewed.",
+                },
+            ),
+            "coverage": loaded.get("scenario_suite_coverage", {}),
+            "limitations": loaded.get("scenario_suite_limitations", []),
+            "protocol_version": loaded["protocol_version"],
+        }
+    return summaries
+
+
 def cases(config: Settings) -> list[dict]:
     """Expand distinct authored scenarios, keeping repetitions separately identifiable."""
-    protocol = config._protocol_override or settings_file()
+    protocol = config._protocol_override or settings_file(config.scenario_suite)
     result = []
     for item in protocol["cases"]:
         category = item["category"]
@@ -67,6 +130,8 @@ def cases(config: Settings) -> list[dict]:
                     )
             row.pop("pair_template", None)
             row.pop("attributes", None)
+            intent = row.pop("intent", "")
+            review_status = row.pop("review_status", "")
             valid = ImportedCase.model_validate(row).model_dump()
             for repeat in range(count):
                 result.append(
@@ -78,6 +143,8 @@ def cases(config: Settings) -> list[dict]:
                         "repeat": repeat + 1,
                         "prerequisite": "",
                         "source": protocol["protocol_version"],
+                        "intent": intent,
+                        "review_status": review_status,
                     }
                 )
     return result

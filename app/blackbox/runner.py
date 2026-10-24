@@ -236,9 +236,12 @@ def make_run(config):
         from .studio_engine import settings_file
 
         config.categories = [
-            c["category"] for c in (config._protocol_override or settings_file())["cases"]
+            c["category"]
+            for c in (config._protocol_override or settings_file(config.scenario_suite))["cases"]
         ]
-        config.category_weights = config.category_weights or settings_file()["weights"]
+        config.category_weights = (
+            config.category_weights or settings_file(config.scenario_suite)["weights"]
+        )
     pricing.pin(config)
     cases = build_cases(config)
     eligible = [c for c in cases if c["category"] != "performance" and not c["prerequisite"]]
@@ -298,7 +301,9 @@ def make_run(config):
     if config.simple_mode:
         from .studio_engine import settings_file
 
-        run["protocol_snapshot"] = config._protocol_override or settings_file()
+        # The snapshot must name the suite that actually produced these Cases, so a saved
+        # report is read on its own terms even when `prepare()` did not set an override.
+        run["protocol_snapshot"] = config._protocol_override or settings_file(config.scenario_suite)
         import importlib.metadata
         import sys
 

@@ -36,6 +36,11 @@ def clean_state():
             metering.init_db(conn)
             for kind in (KIND_SET, KIND_EVALUATION):
                 conn.execute("DELETE FROM records WHERE kind=?", (kind,))
+            # The fixtures here also save source Runs and assessments, including a deliberately
+            # minimal one. Leaving them behind made unrelated browser tests fail, because the
+            # history picker then had to render a record with no recorded modes.
+            for kind in ("blackbox", "assurance"):
+                conn.execute("DELETE FROM records WHERE kind=?", (kind,))
             conn.execute("DELETE FROM audit_chain")
             conn.execute("DELETE FROM usage_events WHERE mode='calibration'")
         cal.TASKS.clear()

@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>AI Agent Studio</title>
     <link rel="stylesheet" href="/simple.css" />
+    <!-- Shared status wording: must load before the screen scripts that read it. -->
+    <script defer src="/status-labels.js"></script>
     <script defer src="/shell.js"></script>
     <script defer src="/simple.js"></script>
     <script defer src="/calibration.js"></script>
@@ -94,6 +96,11 @@
             <p id="suite-intro">
               All ten categories are included. Repeat each test to check consistency.
             </p>
+            <label
+              >Scenario suite
+              <select id="scenario-suite"></select>
+            </label>
+            <p class="helper" id="scenario-suite-note"></p>
             <label class="repeat-control"
               >Repeat each test
               <input id="repeat-all" type="number" min="1" max="20" value="3" />
