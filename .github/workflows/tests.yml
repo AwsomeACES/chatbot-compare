@@ -1,0 +1,42 @@
+# Runs the test suite on every push and pull request. The tests fake every bot and judge call,
+# so no API keys, .env or running bots are needed here.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt pytest
+          # The optional extras, so the PDF-export and name-detection tests run instead of being skipped
+          python -m spacy download en_core_web_sm
+          python -m playwright install --with-deps chromium
+
+      - name: Check every file compiles
+        run: python -m compileall -q *.py tests
+
+      - name: Run tests
+        run: python -m pytest -q -rs
