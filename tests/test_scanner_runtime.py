@@ -160,3 +160,139 @@ def test_white_progress_persists_first_tool_before_next_starts(monkeypatch):
     results = asyncio.run(engine.run(engine.plan({"code": record["id"]})[:2]))
     assert [f.test_id for f in results] == ["hardcoded_secrets", "unsafe_patterns"]
     assert len(progress) == 2
+
+
+# --- phase timings (T-028 measurement, not optimisation) --------------------------------------
+
+
+def test_scan_reports_preparation_and_scan_time_separately(monkeypatch, tmp_path):
+    """A slow run must be attributable before any concurrency change is considered."""
+    import asyncio
+    import json as json_module
+
+    monkeypatch.setattr(sandbox, "RUNTIME", tmp_path)
+    (tmp_path / "work").mkdir(parents=True)
+    database = tmp_path / "scanner-databases/trivy/db"
+    database.mkdir(parents=True)
+    for name in ("trivy.db", "metadata.json"):
+        (database / name).write_bytes(b"public fixture")
+    monkeypatch.setattr(sandbox, "docker_prefix", lambda: ["docker"])
+    monkeypatch.setattr(
+        sandbox,
+        "specification",
+        lambda: {
+            "version": "fixture-rules",
+            "timeout_seconds": 60,
+            "output_bytes": 1 << 20,
+            "tools": {
+                "trivy": {
+                    "image": "fixture/trivy:1",
+                    "version": "1.0.0",
+                    "args": ["scan"],
+                    "database": "trivy",
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(sandbox, "command", lambda *a, **k: ["docker", "run", "scan"])
+
+    calls = []
+
+    async def fake_process(args, timeout, limit):
+        calls.append(args)
+        if "image" in args:
+            return 0, b"sha256:" + b"a" * 64
+        if "--version" in args:
+            return 0, b"Version: 1.0.0"
+        return 0, json_module.dumps({"Results": []}).encode()
+
+    monkeypatch.setattr(sandbox, "bounded_process", fake_process)
+    result = asyncio.run(sandbox.scan("trivy", tmp_path))
+
+    timings = result["timings"]
+    assert set(timings["phases"]) == {
+        "image_check",
+        "database_copy",
+        "version_check",
+        "scan",
+        "parse",
+    }
+    assert timings["preparation_seconds"] == pytest.approx(
+        timings["phases"]["image_check"]
+        + timings["phases"]["database_copy"]
+        + timings["phases"]["version_check"],
+        abs=0.01,
+    )
+    assert timings["scan_seconds"] == timings["phases"]["scan"]
+    # The database copy is preparation, so it must not be counted as scan time.
+    note = timings["note"].lower()
+    assert "preparation covers" in note and "not scan time" in note
+    assert timings["phases"]["database_copy"] not in (None,)
+
+
+def test_phase_timings_are_recorded_even_when_a_phase_fails():
+    timings = {}
+    with pytest.raises(ValueError):
+        with sandbox.phase(timings, "database_copy"):
+            raise ValueError("copy failed")
+    assert "database_copy" in timings, "a failed phase must still report how long it took"
+
+
+def test_phase_summary_never_counts_preparation_as_scan_time():
+    summary = sandbox.phase_summary(
+        {"image_check": 0.5, "database_copy": 9.0, "version_check": 0.5, "scan": 2.0, "parse": 0.1}
+    )
+    assert summary["preparation_seconds"] == 10.0
+    assert summary["scan_seconds"] == 2.0
+    assert summary["parse_seconds"] == 0.1
+
+
+def test_a_tool_without_a_database_reports_no_copy_phase(monkeypatch, tmp_path):
+    import asyncio
+    import json as json_module
+
+    monkeypatch.setattr(sandbox, "RUNTIME", tmp_path)
+    monkeypatch.setattr(sandbox, "docker_prefix", lambda: ["docker"])
+    monkeypatch.setattr(
+        sandbox,
+        "specification",
+        lambda: {
+            "version": "fixture-rules",
+            "timeout_seconds": 60,
+            "output_bytes": 1 << 20,
+            "tools": {
+                "gitleaks": {"image": "fixture/gitleaks:1", "version": "1.0.0", "args": ["d"]}
+            },
+        },
+    )
+    monkeypatch.setattr(sandbox, "command", lambda *a, **k: ["docker", "run", "d"])
+
+    async def fake_process(args, timeout, limit):
+        if "image" in args:
+            return 0, b"sha256:" + b"b" * 64
+        if "version" in args:
+            return 0, b"1.0.0"
+        return 0, json_module.dumps([]).encode()
+
+    monkeypatch.setattr(sandbox, "bounded_process", fake_process)
+    result = asyncio.run(sandbox.scan("gitleaks", tmp_path))
+    assert "database_copy" not in result["timings"]["phases"]
+    assert "scan" in result["timings"]["phases"]
+
+
+def test_findings_carry_the_timings_without_becoming_a_score(tmp_path):
+    finding = parse(
+        "guardrail_path",
+        {
+            "data": {"files": 1, "hits": {}},
+            "version": "fixture",
+            "image_id": "sha256:fixture",
+            "ruleset": "fixture",
+            "timings": {"preparation_seconds": 9.0, "scan_seconds": 2.0, "phases": {}},
+        },
+        tmp_path,
+        0,
+    )
+    assert finding.details["timings"]["preparation_seconds"] == 9.0
+    assert finding.verdict == "not_tested"
+    assert finding.score is None, "a timing must never become a measured score"

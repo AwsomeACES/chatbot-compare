@@ -22,12 +22,78 @@ PII_PATTERNS = {
 }
 
 
+#: Public, non-personal identifiers whose shape cannot be a contact detail. Only these exact
+#: tokens are exempt from the generic rules; the text around them is still redacted in full.
+#: The generic phone rule matches any run of 10-15 digits, which otherwise masked advisory
+#: numbers, UUIDs and timestamps.
+STRUCTURED_IDS = re.compile(
+    r"""(?ix)
+    \b(?:
+        [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}   # UUID
+      | CVE-\d{4}-\d{4,7}                                              # CVE
+      | GHSA(?:-[0-9a-z]{4,}){3}                                       # GitHub advisory
+      | (?:OSV|PYSEC|GHSA|GO|RUSTSEC|DSA|DLA|RHSA|RHBA|USN|ALAS|ALSA|ELSA|SUSE-SU)
+        -\d{4}-[0-9a-z]{1,8}                                           # distro / ecosystem
+      | CWE-\d{1,5}                                                    # weakness class
+      | \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?
+        (?:Z|[+-]\d{2}:?\d{2})?                                       # ISO 8601 instant
+    )\b
+    """
+)
+
+#: Why an identifier exemption is not a general redaction bypass, for export disclosure.
+ID_EXEMPTION_NOTE = (
+    "Recognised public identifiers (UUIDs, CVE/GHSA/OSV/CWE references and ISO 8601 "
+    "timestamps) are kept readable because the generic number rule would otherwise mask them. "
+    "Everything around them, including contact details on the same line, is still redacted. "
+    "A value deliberately formatted to look like one of these identifiers would be kept, so "
+    "this is a baseline for accidental disclosure, not an adversarial filter."
+)
+
+LIMITATION_NOTE = (
+    "Names, postal addresses, account handles, free-text personal details and identifiers "
+    "specific to your organisation are not detected by pattern matching. Review context before "
+    "sharing an export."
+)
+
+
+#: Rules specific enough to run over the whole string. They must go first: an identifier can be
+#: a substring of an email address, and exempting it there would let the address through.
+SPECIFIC_RULES = ("email", "ssn", "credential")
+#: The generic rule matches any run of 10-15 digits, so it is the only one the exemption covers.
+GENERIC_RULES = ("phone",)
+
+
+def _apply(text: str, kinds) -> str:
+    for kind in kinds:
+        text = re.sub(PII_PATTERNS[kind], f"[REDACTED {kind}]", text, flags=re.I)
+    return text
+
+
+def redact_text(text: str) -> str:
+    """Redact one string, leaving recognised public structured identifiers readable.
+
+    Specific rules run over the whole string first, so an identifier embedded in an email
+    address is redacted with it. Only the generic number rule skips identifier tokens.
+    """
+    text = _apply(text, SPECIFIC_RULES)
+    pieces, last = [], 0
+    for match in STRUCTURED_IDS.finditer(text):
+        pieces.append(_apply(text[last : match.start()], GENERIC_RULES))
+        pieces.append(match.group(0))
+        last = match.end()
+    pieces.append(_apply(text[last:], GENERIC_RULES))
+    return "".join(pieces)
+
+
 def redact(value: object) -> object:
-    """PII regex baseline; names/addresses need contextual review before sharing."""
+    """PII regex baseline; names/addresses need contextual review before sharing.
+
+    Public structured identifiers survive (see STRUCTURED_IDS); credentials, email addresses,
+    telephone numbers and national identifiers around them do not.
+    """
     if isinstance(value, str):
-        for kind, pattern in PII_PATTERNS.items():
-            value = re.sub(pattern, f"[REDACTED {kind}]", value, flags=re.I)
-        return value
+        return redact_text(value)
     if isinstance(value, list):
         return [redact(x) for x in value]
     if isinstance(value, dict):
@@ -160,6 +226,7 @@ def verify(run: dict) -> dict:
 
 
 def describe(run: dict) -> dict:
+    from . import judge_provenance
     from .judge_calibration import alignment_for_run
 
     rows = [r for c in run.get("cases", []) for r in c["results"]]
@@ -219,6 +286,10 @@ def describe(run: dict) -> dict:
             for j in run.get("config", {}).get("judges", [])
         ],
         "warnings": run.get("studio", {}).get("warnings", []),
+        # Shared bot/judge model families, kept apart from calibration and model agreement.
+        "family_warnings": judge_provenance.family_warnings(run),
+        # Who actually scored each Case; unavailable rather than guessed for older records.
+        "judge_provenance": judge_provenance.describe(run),
         # Human-label alignment is separate from run_integrity.agreement_percent (model vs model).
         "human_alignment": alignment_for_run(run),
         "mapping": mapping,
@@ -236,6 +307,14 @@ def export_run(run: dict) -> dict:
         "redacted": True,
         "source_integrity": integrity["audit_integrity"],
         "note": "PII regex baseline (emails/phones/SSNs/key patterns); names and addresses may remain. Audit payloads are redacted, so their original hashes verify only against retained source data.",
+        "identifier_exemptions": ID_EXEMPTION_NOTE,
+        "limitations": LIMITATION_NOTE,
+        "hash_verification": (
+            "The hashes inside this redacted export cannot be recomputed from it, because "
+            "redaction changed the bytes they were taken over. They remain comparable only "
+            "against the retained original record in this Studio, and they are integrity "
+            "checks rather than signatures."
+        ),
     }
     return clean
 

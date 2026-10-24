@@ -16,7 +16,7 @@ from .gray import GrayEngine
 from .intake import load, remove
 from .models import Assessment, Finding, missing
 from .privacy import safe
-from .readiness import evidence_status
+from .readiness import evidence_status, explanation_provenance
 from .white import WhiteEngine
 
 TASKS: dict[str, asyncio.Task] = {}
@@ -447,6 +447,8 @@ def export(run: dict, include_child: bool = True) -> dict:
     clean["privacy_note"] = (
         "Private input contents excluded; transcripts redacted. Source hashes describe local originals."
     )
+    # One shared block, so the JSON, PDF and teammate exports agree about the explanation.
+    clean["ai_explanation_provenance"] = safe(explanation_provenance(run))
     if include_child and run.get("blackbox_run_id"):
         child = db.get("blackbox", run["blackbox_run_id"])
         if child:

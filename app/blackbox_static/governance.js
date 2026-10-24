@@ -1,6 +1,33 @@
 /* Lazy governance view in the shared shell. Keys stay in password fields only. */
 (() => {
   const el = (id) => document.getElementById(`gov-${id}`);
+  function provenanceBlock(info) {
+    /* Which judge actually scored each case. Older runs say unavailable rather than guess. */
+    if (!info) return "";
+    const rows = (info.evaluators || [])
+      .map((e) => {
+        const requested = (e.requested_models || []).join(", ") || "Not recorded";
+        const local = e.local === true ? " (local)" : "";
+        const fallback = e.fallback_cases
+          ? `${escape(e.fallback_cases)} case(s)${(e.fallback_reasons || []).length ? ` — ${e.fallback_reasons.map(escape).join("; ")}` : ""}`
+          : "No";
+        const calibration = e.calibration
+          ? `${escape(e.calibration.state)}${e.calibration.agreement_percent == null ? "" : ` (${escape(e.calibration.agreement_percent)}%)`}`
+          : "unavailable";
+        return `<tr><td>${escape(e.actual_model)}</td><td>${escape(requested)}</td><td>${escape(e.provider)}${local}</td><td>${escape((e.returned_models || []).join(", "))}</td><td>${escape(e.family || "unclassified")}</td><td>${fallback}</td><td>${calibration}</td></tr>`;
+      })
+      .join("");
+    const engines = Object.entries(info.non_judge_engines || {})
+      .map(([label, count]) => `<li>${escape(label)}: ${escape(count)} result(s)</li>`)
+      .join("");
+    const notes =
+      (info.mixed_note ? `<p class="notice">${escape(info.mixed_note)}</p>` : "") +
+      (info.unavailable_note ? `<p class="notice">${escape(info.unavailable_note)}</p>` : "");
+    const table = rows
+      ? `<table class="cal-table"><caption>Actual evaluators</caption><thead><tr><th>Actual evaluator</th><th>Requested</th><th>Provider</th><th>Returned identifier</th><th>Family</th><th>Fallback</th><th>Human calibration</th></tr></thead><tbody>${rows}</tbody></table>`
+      : `<p class="helper">No LLM judge verdict is recorded for this run.</p>`;
+    return `<details data-provenance><summary>Which judge scored each case</summary>${notes}${table}${engines ? `<ul>${engines}</ul>` : ""}<p class="helper">${escape(info.revision_note)} ${escape(info.calibration_note)}</p></details>`;
+  }
   const escape = (value) =>
     String(value ?? "").replace(
       /[&<>"']/g,
@@ -68,11 +95,20 @@
         .join("");
       if (!g.human_alignment?.length)
         el("human").innerHTML = window.CalibrationUI.renderAlignment(null);
+      const familyWarnings = new Set(g.family_warnings || []);
       el("warnings").innerHTML =
-        g.warnings.map((warning) => `<p class="notice">${escape(warning)}</p>`).join("") +
+        g.warnings
+          // Same-family warnings get their own block below, so they are not repeated here.
+          .filter((warning) => !familyWarnings.has(warning))
+          .map((warning) => `<p class="notice">${escape(warning)}</p>`)
+          .join("") +
+        (familyWarnings.size
+          ? `<p class="notice" data-family-warning>${[...familyWarnings].map(escape).join(" ")} A shared model family is distinct from human calibration and from model-to-model judge agreement.</p>`
+          : "") +
         (i.low_agreement_cases.length
           ? `<details><summary>Items needing human review</summary><p>${escape(i.low_agreement_cases.join(", "))}</p></details>`
-          : "");
+          : "") +
+        provenanceBlock(g.judge_provenance);
       el("cards").innerHTML = [
         ...g.bot_cards.map(
           (b) =>

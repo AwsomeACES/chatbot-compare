@@ -54,6 +54,9 @@ def synthetic_run(runner, studio_engine, Settings, Target, JudgeSelection):
         case["completed"] = True
         passed = position % 3 != 0
         for result in case["results"]:
+            # Half the Cases record a fallback evaluator, so the Run is a mixed panel and the
+            # provenance view has both a requested and an actual evaluator to show.
+            fell_back = position % 2 == 1
             result.update(
                 status="passed" if passed else "failed",
                 score=91.0 if passed else 12.0,
@@ -67,6 +70,27 @@ def synthetic_run(runner, studio_engine, Settings, Target, JudgeSelection):
                         "seconds": 0.1,
                     }
                     for turn in (case.get("turns") or ["Fixture prompt"])
+                ],
+                judges=[
+                    {
+                        "provenance_version": 1,
+                        "model": "synthetic-ui-fallback" if fell_back else "synthetic-ui-judge",
+                        "requested_model": "synthetic-ui-judge",
+                        "score": 91.0 if passed else 12.0,
+                        "reason": "Synthetic UI assertion only",
+                        "evidence": ["compliant reply" if passed else "non-compliant reply"],
+                        "provider_model": "synthetic-ui-judge-rev-1",
+                        "endpoint": "http://127.0.0.1:11434/v1/chat/completions",
+                        "provider": "local",
+                        "local": True,
+                        "family": "unclassified",
+                        "fallback": fell_back,
+                        "fallback_reasons": (
+                            [{"model": "synthetic-ui-judge", "reason": "fixture quota stub"}]
+                            if fell_back
+                            else []
+                        ),
+                    }
                 ],
             )
     runner.aggregate(run)
@@ -199,6 +223,33 @@ def check_calibration(page, base: str, run: dict) -> dict:
     }
 
 
+def check_provenance(page, base: str, run: dict) -> dict:
+    """Results must name the actual evaluator, the fallback reason and the revision caveat."""
+    page.goto(f"{base}/?run={run['id']}", wait_until="networkidle")
+    page.wait_for_selector("#evaluator-provenance")
+    page.locator("#evaluator-provenance > summary").click()
+    table = page.locator("#evaluator-provenance").inner_text()
+    assert "synthetic-ui-judge" in table, "the requested evaluator is not listed"
+    assert "synthetic-ui-fallback" in table, "the fallback evaluator is not listed"
+    assert "synthetic-ui-judge-rev-1" in table, "the returned identifier is not shown"
+    assert "not guaranteed immutable revisions" in table, "the revision caveat is missing"
+    assert "uncalibrated" in table.lower(), "human calibration status is not shown per evaluator"
+    assert "not interchangeable" in table.lower(), "a mixed panel is not qualified"
+
+    rows = page.locator("#case-results details")
+    for index in range(rows.count()):
+        rows.nth(index).locator("summary").click()
+    page.wait_for_function(
+        "() => document.querySelectorAll('#case-results details[open]').length > 0"
+    )
+    body = page.locator("#case-results").inner_text()
+    assert "Actual evaluator:" in body, "no per-verdict provenance line"
+    assert "fixture quota stub" in body or "Fallback evaluator" in body, (
+        "a fallback verdict does not say why the requested Judge was not used"
+    )
+    return {"provenance": "passed"}
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--port", type=int, default=2711)
@@ -242,6 +293,7 @@ def main(argv=None) -> int:
                 report |= check_navigation(page, base)
                 report |= check_saved_report(page, base, run)
                 report |= check_calibration(page, base, run)
+                report |= check_provenance(page, base, run)
                 page.set_viewport_size({"width": 390, "height": 844})
                 page.goto(f"{base}/?run={run['id']}", wait_until="networkidle")
                 page.wait_for_selector("#case-results details")

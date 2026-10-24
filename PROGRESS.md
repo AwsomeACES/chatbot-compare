@@ -901,3 +901,59 @@ CI (`.github/workflows/quality.yml`): runs `check-studio-ui.py` before the legac
 `tests/test_verification_wiring.py` (new, 8 tests) guards the wiring: CI runs both browser checks, Linux gets `--with-deps`, artifacts upload only on failure, the matrix still covers three platforms, the new check is self-contained and exercises the three views plus calibration and the Governance alignment panel, the removed scripts stay gone and unreferenced, and no tracked script loads Playwright from the gitignored runtime directory.
 
 Commands: `python scripts/check-studio-ui.py` → passed (above). `python -m pytest tests/test_verification_wiring.py tests/test_dependency_locks.py -q` → 25 passed. `python -m ruff check app tests scripts sample_project` and `npm run format:check` clean. `python scripts/check_docs.py` passed.
+
+## 2026-10-23 — Review response, Phase E: make Judge provenance clear
+
+Every result now identifies the evaluator that actually produced it, and a saved Run from before this metadata existed says the provenance is unavailable rather than offering a reconstruction.
+
+- `app/blackbox/studio_engine.py` — `provenance()` records, on each verdict beside the existing `model` and `requested_model`: `provenance_version`, the requested and actual endpoint, provider (`local` for a local Judge, otherwise the metered provider), the local flag, the model family, whether a fallback answered, and the specific failures that caused the fallback. No credential is included. `family_warnings` is now a separate field on `run["studio"]` while remaining in `warnings` so saved reports keep rendering.
+- `app/blackbox/judge_provenance.py` (new) — read-only `describe(run)`: one row per actual evaluator with its requested models, provider, returned identifiers, family, case count, fallback count and reasons, and that evaluator's human-calibration state; a count of results produced by a deterministic rule, measured latency or a local classifier, each labelled "no Judge"; `mixed_judges` with a qualification note; the separated same-family warnings; and the revision caveat. It never calls a provider, rescores a Case or writes a record.
+- `app/blackbox_app.py` — `GET /api/blackbox/runs/{id}` attaches `judge_provenance` to the response only; it is not persisted.
+- `app/blackbox/governance.py` — `describe()` adds `judge_provenance` and `family_warnings`.
+- `app/blackbox_static/simple.js`, `simple.css` — each Judge line carries an "Actual evaluator" note (requested model when it differs, provider, local flag, returned identifier, family) plus the revision caveat, and a fallback line stating why the requested Judge was not used. A verdict without the metadata says "Evaluator provenance unavailable for this saved result." A result with no Judge says which engine produced it. A new "Which judge scored these cases" table lists every evaluator with its calibration state. Same-family warnings render in their own block and are filtered out of the general warning list.
+- `app/blackbox_static/governance.js` — the same table in Governance, with fallback reasons, and the same-family warning in its own block saying it is distinct from human calibration and from model-to-model agreement.
+- `app/blackbox/reports.py` — the PDF gains a "Which judge scored each case" section with the same content.
+
+Model choice was not changed: no larger or paid model is selected automatically, and the provenance view reports readiness, quota and calibration limitations instead.
+
+`tests/test_judge_provenance.py` (new, 22 tests): recording (actual evaluator, no credential keys, fallback reasons, requested endpoint preserved); describing (requested versus actual separated, returned identifier with its caveat, "Not supplied by provider" when absent, **unavailable provenance for an older record with `local` staying `None` rather than defaulting to `False`**, partial records marked partial, mixed panels qualified, a single-evaluator Run not qualified as mixed, deterministic/latency/classifier results never attributed to a Judge, family warnings separated and still surfaced for older records, per-evaluator calibration staying diagnostic); and presentation (the PDF names the actual evaluator and the fallback reason, discloses missing provenance, qualifies a mixed panel; Governance keeps the three concerns in separate fields). Two tests assert `describe` neither rewrites the saved Run nor persists its output.
+
+The browser check exercises the rendering: `scripts/check-studio-ui.py` builds a Run whose alternate Cases record a fallback evaluator and asserts the table shows both evaluators, the returned identifier, the revision caveat, the calibration state and the mixed-panel qualification, and that a per-verdict provenance line and a fallback reason appear in the Case evidence.
+
+Commands: `python -m pytest tests/test_judge_provenance.py -q` → 22 passed. `python scripts/check-studio-ui.py` → all checks passed including `provenance`. The assurance, comparison, bias/governance and scanner suites → 88 passed.
+
+## 2026-10-23 — Review response, Phase F: privacy, status wording and export parity
+
+### Context-aware redaction (T-024)
+
+`app/blackbox/governance.py` splits the rules by how specific they are. Email, national-identifier and credential rules run over the whole string first; only the generic rule, which matches any run of 10 to 15 digits, skips recognised public identifiers (UUID, CVE, GHSA, OSV/PYSEC/GO/RUSTSEC/distro advisories, CWE, ISO 8601 instants).
+
+That ordering came from a defect my own negative test caught: with the identifier exemption applied first, `cve-2024-1234567@example.com` had its CVE token preserved, which split the string so the email rule never saw the whole address and the address leaked. Specific rules now run first, so an identifier embedded in an email address is redacted with it.
+
+`app/assurance/privacy.py` adds `preserve_typed_identifiers()`: a typed numeric metadata field (`timestamp`, `observed_at`, `elapsed_ms`, token counts and similar) keeps a bare number, because a counter or epoch value is not a telephone number. The exemption checks the value shape as well as the field name, so a contact detail stored in one of those fields is still redacted. This generalises the earlier `run_id` UUID special case, which it keeps.
+
+`tests/test_export_redaction.py` (new, 30 tests) is mostly negative: contact details beside, between and inside identifiers; near-miss shapes (`CVE-`, `GHSA-`, `CWE-`, `OSV-` and `not-a-uuid-` followed by a telephone number); a malformed advisory number; an email address containing an advisory reference; a telephone number in a numeric metadata field; a credential in a metadata field; and non-canonical `run_id` text. One test fails if a new redaction rule is added without classifying it as specific or generic, so the exemption cannot silently widen.
+
+No cloud redaction service was added. The export now states the exemption, that names, postal addresses, account handles and organisation-specific identifiers are still undetected, and that a value deliberately shaped like a public identifier is kept — a baseline for accidental disclosure, not an adversarial filter.
+
+### Export disclosure
+
+`export_privacy` adds `hash_verification`: the hashes inside a redacted export cannot be recomputed from it, because redaction changed the bytes they were taken over; they remain comparable only against the retained original record, and they are integrity checks rather than signatures.
+
+### Status wording and keyboard access (T-019)
+
+- An `exists` Finding reads **Declaration only** in every mode. Previously the fallback label said "Found in code" for any `exists` Finding, including Gray declarations, which claimed source evidence the check never had. Neither a source declaration nor an operator declaration shows that a control works, so both read the same and the per-check guidance states what that check could see. `docs/Design.md` was corrected; it had documented the old label and the gap.
+- The finding review is an in-page `<dialog>`: a labelled reason field that receives focus on open, radio choices for accept versus false positive, a visible `role="alert"` validation message when the reason is too short, Escape to cancel, and native focus trapping. It replaces `prompt()` and `confirm()`, which cannot carry a label, an error message or a length rule. Validation is in the handler rather than native constraint attributes, because a native bubble is not reliably announced and disappears.
+- The category matrix renders each reason as focusable text with `aria-describedby`, not only as a hover tooltip.
+
+`tests/test_review_accessibility.py` (new, 4 browser tests): a Gray declaration never says "Found in code" and a White declaration is labelled the same way; the form is completed with the keyboard only, including selecting the radio with Space, and a too-short reason is refused with a readable message while the dialog stays open; Escape records nothing; and the matrix reason is reachable by keyboard. The test registers a `dialog` handler that fails the test if a browser dialog is used at all. The fixture is sealed through `service.checkpoint()`, because the review endpoint correctly refuses a record whose findings do not match their audit anchor — a hand-built fixture is rejected.
+
+### Export parity (T-020)
+
+`readiness.explanation_provenance()` is one block rendered by all three exports: source, model, returned identifier with its revision caveat, local flag, cloud consent, payload hash, checks reviewed, every provider attempt with its failure reason, and `explanation_cost()`, whose unknown billing stays Unknown and which reports "No explanation calls" rather than a zero. `service.export` attaches it to the JSON, `readiness.teammate_markdown` and the assurance PDF both render it, and the PDF's older ad-hoc "AI source review provenance" paragraph was replaced by it.
+
+`tests/test_export_parity.py` (new, 9 tests): the three exports name the same explanation and model, record the same provider failure, report the same cost status and never show `$0.00` for an unmetered explanation, and all say so when no explanation is attached. Separately: the JSON preserves every recorded Finding with its evidence excerpt, file and line; a `not_tested` Finding keeps `score: None` and its reason in every export; and an explanation that calls a finding a false positive leaves the recorded verdict `fail`.
+
+Commands: `python -m pytest tests/test_export_redaction.py tests/test_export_parity.py tests/test_review_accessibility.py -q` → 43 passed. `python -m pytest tests/test_assurance.py tests/test_bias_governance.py tests/test_governance_recovery.py tests/test_runtime_evidence.py tests/test_white_explanation.py tests/test_evidence_readiness.py tests/test_judge_calibration.py -q` → 150 passed.
+
+**Not done:** names, postal addresses and contextual personal information remain undetected by pattern matching; colour contrast has not been measured against an agreed standard; and `Estimated` / `Low confidence` wording outside the assurance screens is not yet centralised. All three are recorded in T-019 and T-024.

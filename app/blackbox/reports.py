@@ -10,6 +10,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
 
 from ..config import RUNTIME
+from . import judge_provenance
 
 
 def score_text(value):
@@ -86,6 +87,39 @@ def generate_pdf(run):
                 paragraph(
                     f"{category['name']}: index {category['score']}%; tested quality {category['quality']}; {category['tested']}/{category['planned']} scored; repeat spread {category['spread']} points; {'Low confidence' if category.get('low_confidence') else 'Limited-sample estimate'}"
                 )
+        provenance = run.get("judge_provenance") or judge_provenance.describe(run)
+        paragraph("Which judge scored each case", "Heading2")
+        if provenance["mixed_note"]:
+            paragraph(provenance["mixed_note"])
+        if provenance["unavailable_note"]:
+            paragraph(provenance["unavailable_note"])
+        for evaluator in provenance["evaluators"]:
+            requested = ", ".join(evaluator["requested_models"]) or "Not recorded"
+            calibration = evaluator.get("calibration") or {}
+            paragraph(
+                f"Actual evaluator {evaluator['actual_model']} "
+                f"(requested {requested}); provider {evaluator['provider']}"
+                + (" (local)" if evaluator["local"] is True else "")
+                + f"; returned identifier {', '.join(evaluator['returned_models'])}"
+                + f"; family {evaluator['family'] or 'unclassified'}"
+                + f"; {evaluator['cases']} case verdict(s)"
+                + (
+                    f"; fallback on {evaluator['fallback_cases']} case(s): "
+                    + "; ".join(evaluator["fallback_reasons"] or ["reason not recorded"])
+                    if evaluator["fallback_cases"]
+                    else "; no fallback"
+                )
+                + "; human calibration "
+                + (calibration.get("state", "unavailable") if calibration else "unavailable")
+                + "."
+            )
+        if not provenance["evaluators"]:
+            paragraph("No LLM judge verdict is recorded for this run.")
+        for label, count in provenance["non_judge_engines"].items():
+            paragraph(f"{label}: {count} result(s)")
+        for warning in provenance["family_warnings"]:
+            paragraph(warning)
+        paragraph(provenance["revision_note"] + " " + provenance["calibration_note"])
         paragraph("Audit log", "Heading2")
         paragraph(json.dumps(run.get("audit", []), ensure_ascii=False))
         paragraph(

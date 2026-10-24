@@ -52,6 +52,43 @@ def safe(value: object) -> object:
     return value
 
 
+#: Typed metadata fields whose value, when it is a bare number, is a counter or an epoch value
+#: rather than a telephone number. The exemption applies to the value shape as well as the field
+#: name, so a contact detail stored in one of these fields is still redacted.
+NUMERIC_METADATA_FIELDS = frozenset(
+    {
+        "timestamp",
+        "observed_at",
+        "session_created_at",
+        "elapsed_ms",
+        "injected_delay_ms",
+        "status_code",
+        "attempt",
+        "cost_usd",
+        "gen_ai.usage.input_tokens",
+        "gen_ai.usage.output_tokens",
+    }
+)
+PLAIN_NUMBER = re.compile(r"\A\d{1,20}(?:\.\d{1,9})?\Z")
+RUN_UUID = re.compile(r"\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\Z")
+
+
+def preserve_typed_identifiers(row: dict, cleaned: dict) -> dict:
+    """Restore typed identifier fields that the generic number rule would have masked.
+
+    Only exact shapes are restored: a canonical UUID for `run_id`, and a bare number for the
+    numeric metadata fields. Every other value, and every other field, keeps the redacted form.
+    """
+    run_id = row.get("run_id")
+    if isinstance(run_id, str) and RUN_UUID.fullmatch(run_id):
+        cleaned["run_id"] = run_id
+    for field in NUMERIC_METADATA_FIELDS & set(cleaned):
+        value = row.get(field)
+        if isinstance(value, str) and PLAIN_NUMBER.fullmatch(value):
+            cleaned[field] = value
+    return cleaned
+
+
 def trace_rows(raw: bytes) -> tuple[list[dict], dict]:
     """Ignore free-form bodies and unknown fields, including OTel resource content."""
     text = raw.decode("utf-8-sig")
@@ -131,13 +168,5 @@ def trace_rows(raw: bytes) -> tuple[list[dict], dict]:
                 }
             )
         cleaned = safe({k: v for k, v in row.items() if k in allow})
-        # Studio's canonical UUID is correlation metadata, not a phone number.
-        # Preserve only this typed field; arbitrary run_id text and all other
-        # fields still pass through the normal credential and PII redaction.
-        run_id = row.get("run_id")
-        if isinstance(run_id, str) and re.fullmatch(
-            r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}", run_id
-        ):
-            cleaned["run_id"] = run_id
-        rows.append(cleaned)
+        rows.append(preserve_typed_identifiers(row, cleaned))
     return rows, {"canary_records": canaries, "ignored_fields": True}

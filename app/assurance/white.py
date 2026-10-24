@@ -169,6 +169,8 @@ def parse(test: str, output: dict, source: Path, bot: int) -> Finding:
         **{k: output[k] for k in ("image_id", "ruleset")},
         "scanner_completed": True,
         "interpretation_version": "source-evidence-v1",
+        # Preparation is reported apart from scan time; neither is a pass or a score.
+        **({"timings": output["timings"]} if "timings" in output else {}),
         **(
             {"database_snapshot": output["database_snapshot"]}
             if "database_snapshot" in output

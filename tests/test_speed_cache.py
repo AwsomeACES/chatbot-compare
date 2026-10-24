@@ -229,4 +229,28 @@ def test_standard_suite_runtime_regression_budget(monkeypatch):
         timings.append(time.monotonic() - before)
         assert run["status"] == "completed"
         assert all(c["completed"] for c in run["cases"])
-    assert statistics.median(timings) <= limits["baseline_seconds"] * 1.2
+    # The configured tolerance is authoritative; it was a literal 1.2 here, which meant the
+    # declared `tolerance` field was decorative. Both describe the same 20% budget.
+    budget = limits["baseline_seconds"] * (1 + limits["tolerance"])
+    median = statistics.median(timings)
+    # Printed so `pytest -s` publishes the distribution, not just a pass or fail.
+    print(
+        f"benchmark median {median:.3f}s, budget {budget:.3f}s, "
+        f"runs {[round(t, 3) for t in timings]}"
+    )
+    assert median <= budget, (
+        f"median {median:.3f}s exceeds the {budget:.3f}s budget "
+        f"(baseline {limits['baseline_seconds']}s + {limits['tolerance']:.0%}). "
+        "Profile and fix, or record the regression; do not raise the baseline."
+    )
+
+
+def test_the_benchmark_budget_cannot_be_loosened_without_being_noticed():
+    """The gate is configuration, so its committed values are themselves asserted."""
+    from app.config import ROOT
+
+    limits = json.loads((ROOT / "app/studio/benchmark.json").read_text())
+    assert limits["baseline_seconds"] == 1.0, "the checked baseline is 1.0 seconds"
+    assert limits["tolerance"] == 0.2, "the agreed regression budget is 20%"
+    assert limits["simulated_bot_seconds"] == 0.12, "the simulated workload is fixed"
+    assert "median of five" in limits["workload"]

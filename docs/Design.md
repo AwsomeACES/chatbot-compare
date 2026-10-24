@@ -232,7 +232,7 @@ Use short sentences, state the evidence, and distinguish source observation from
 
 | State                    | Exact current text                                                                                                                         |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Finding verdicts         | `Passed`, `Needs attention`, `Not tested`, `Found in code`                                                                                 |
+| Finding verdicts         | `Passed`, `Needs attention`, `Not tested`, `Declaration only`                                                                              |
 | Combined mode cells      | `Pass`, `Fail`, `Not tested`                                                                                                               |
 | Combined interpretations | `Defended`, `Confirmed risk`, `Control exists but isn't working`, `Passed, code not checked`, `Not tested`                                 |
 | Release summary          | `Ready to launch`, `Fix before launch`, `Do not launch`                                                                                    |
@@ -258,7 +258,7 @@ Use short sentences, state the evidence, and distinguish source observation from
 | Resume notice            | `Resuming missing cases. Completed scores and costs remain recorded.`                                                                      |
 | Completed Governance     | `Evidence loaded. Review any missing tests or warnings before using the result.`                                                           |
 
-Run statuses are stored as machine strings (such as `queued`, `running`, `completed`, `stopped`, `interrupted`, `timed_out`); some views display them directly or replace underscores with spaces. Centralizing their presentation is Planned. These labels are not interchangeable with Finding verdicts. `Found in code` currently labels any `exists` Finding, including Gray declarations, so a mode-neutral replacement needs implementation and regression tests.
+Run statuses are stored as machine strings (such as `queued`, `running`, `completed`, `stopped`, `interrupted`, `timed_out`); some views display them directly or replace underscores with spaces. Centralizing their presentation is Planned. These labels are not interchangeable with Finding verdicts. An `exists` Finding is labelled `Declaration only` in every mode, because neither a source declaration nor an operator declaration shows that the control works; the per-check guidance states what that check could see. The finding review is an in-page `dialog` with a labelled reason field, radio choices, a visible validation message and Escape to cancel, rather than browser `prompt`/`confirm` dialogs, and the category matrix shows each reason as focusable text instead of a hover-only tooltip ([tests/test_review_accessibility.py](../tests/test_review_accessibility.py)).
 
 Example Finding copy, proposed editorial wording rather than a fabricated executed result:
 

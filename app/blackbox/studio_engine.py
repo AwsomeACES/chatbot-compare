@@ -100,6 +100,30 @@ def judge_config(config: Settings, entry: JudgeSelection) -> Settings:
     return selected
 
 
+def provenance(candidate: JudgeSelection, requested: JudgeSelection, earlier: list) -> dict:
+    """Identity of the evaluator that produced a verdict, plus why a fallback was used.
+
+    `earlier` holds the failures recorded before this candidate answered; it is empty when the
+    requested Judge answered. No credential is included.
+    """
+    from .bias import model_family
+    from .metering import provider_from
+
+    rules = settings_file().get("model_families", {})
+    return {
+        "provenance_version": 1,
+        "requested_endpoint": requested.url,
+        "endpoint": candidate.url,
+        "provider": "local" if candidate.local else provider_from(candidate.url),
+        "local": bool(candidate.local),
+        "family": model_family(candidate.model, rules) or "unclassified",
+        "fallback": bool(earlier),
+        "fallback_reasons": [
+            {"model": failure["model"], "reason": failure["reason"]} for failure in earlier
+        ],
+    }
+
+
 async def panel(config: Settings, case: dict, observation: dict) -> dict:
     from .bias import ordered_observation, signals
     from .connectors import safe_error
@@ -173,7 +197,15 @@ async def panel(config: Settings, case: dict, observation: dict) -> dict:
                 }
                 verdict = await evaluate(judge_config(config, candidate), case, presented)
                 verdicts.append(
-                    {**verdict, "model": candidate.model, "requested_model": entry.model}
+                    {
+                        **verdict,
+                        "model": candidate.model,
+                        "requested_model": entry.model,
+                        # Provenance: who actually scored this Case, and why it was not the
+                        # requested Judge. Older saved records lack these keys and must be
+                        # reported as unavailable rather than reconstructed.
+                        **provenance(candidate, entry, failures if index else []),
+                    }
                 )
                 audit(
                     run,
@@ -382,10 +414,15 @@ def summarize(run: dict) -> None:
         ]
         shared = {model_family(m, rules) for m in models} & judge_families
         if shared:
-            run["studio"]["warnings"].append(
+            warning = (
                 "Same model family: "
                 + bot["name"]
                 + " and judge ("
                 + ", ".join(sorted(shared))
                 + "). Shared model bias may affect scores."
             )
+            # Kept in `warnings` so saved reports keep rendering, and listed separately so the
+            # UI can show it apart from human calibration and model-to-model agreement.
+            run["studio"]["warnings"].append(warning)
+            run["studio"].setdefault("family_warnings", []).append(warning)
+    run["studio"].setdefault("family_warnings", [])

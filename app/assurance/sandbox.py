@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 import uuid
 from pathlib import Path, PureWindowsPath
 
@@ -181,63 +182,101 @@ def trivy_cache(destination: Path) -> None:
         copied.chmod(0o666)
 
 
+#: Phases reported separately, so a slow run can be attributed before anything is optimised.
+#: `database_copy` is the Trivy BoltDB copy, which dominates preparation on modest hardware.
+PREPARATION_PHASES = ("image_check", "database_copy", "version_check")
+
+
+@contextlib.contextmanager
+def phase(timings: dict, name: str):
+    """Record one phase's wall-clock duration, including when it raises."""
+    start = time.monotonic()
+    try:
+        yield
+    finally:
+        timings[name] = round(time.monotonic() - start, 3)
+
+
+def phase_summary(timings: dict) -> dict:
+    """Preparation versus scan, so provisioning cost is never read as scan cost."""
+    preparation = sum(timings.get(name, 0.0) for name in PREPARATION_PHASES)
+    return {
+        "phases": dict(timings),
+        "preparation_seconds": round(preparation, 3),
+        "scan_seconds": timings.get("scan", 0.0),
+        "parse_seconds": timings.get("parse", 0.0),
+        "note": (
+            "Wall-clock measurement on this host. Preparation covers image verification, the "
+            "offline database copy and the version check; it is not scan time."
+        ),
+    }
+
+
 async def scan(tool: str, source: Path) -> dict:
     docker_prefix()
     config = specification()
     spec = config["tools"][tool]
     name = "studio-scan-" + uuid.uuid4().hex
     resources = contextlib.ExitStack()
+    timings: dict[str, float] = {}
     try:
-        rc, metadata = await bounded_process(
-            ["docker", "image", "inspect", spec["image"], "--format={{.Id}}"], 30, 4096
-        )
-        if rc != 0 or not metadata.strip().startswith(b"sha256:"):
-            raise ToolUnavailable(
-                f"Pinned {tool} {spec['version']} image is not installed; automatic pulls are disabled."
+        with phase(timings, "image_check"):
+            rc, metadata = await bounded_process(
+                ["docker", "image", "inspect", spec["image"], "--format={{.Id}}"], 30, 4096
             )
-        image_id = metadata.decode().strip()
+            if rc != 0 or not metadata.strip().startswith(b"sha256:"):
+                raise ToolUnavailable(
+                    f"Pinned {tool} {spec['version']} image is not installed; automatic pulls are disabled."
+                )
+            image_id = metadata.decode().strip()
         cache = None
         if tool == "trivy":
-            cache = Path(
-                resources.enter_context(
-                    tempfile.TemporaryDirectory(prefix="trivy-db-", dir=RUNTIME / "work")
+            with phase(timings, "database_copy"):
+                cache = Path(
+                    resources.enter_context(
+                        tempfile.TemporaryDirectory(prefix="trivy-db-", dir=RUNTIME / "work")
+                    )
                 )
-            )
-            if not cache.resolve().is_relative_to((RUNTIME / "work").resolve()):
-                raise ToolUnavailable("Invalid private scanner cache directory.")
-            await asyncio.to_thread(trivy_cache, cache)
+                if not cache.resolve().is_relative_to((RUNTIME / "work").resolve()):
+                    raise ToolUnavailable("Invalid private scanner cache directory.")
+                # A per-scan private copy: a mutable BoltDB is never shared between Runs.
+                await asyncio.to_thread(trivy_cache, cache)
         base = command(tool, source, name, image_id, cache)
         if tool != "controls":
-            version_args = {
-                "gitleaks": ["version"],
-                "semgrep": ["semgrep", "--version"],
-                "bandit": ["bandit", "--version"],
-                "osv": ["--version"],
-                "trivy": ["--version"],
-            }[tool]
-            rc, actual_version = await bounded_process(
-                base[: -len(spec["args"])] + version_args, 45, 8192
-            )
-            if rc != 0 or spec["version"] not in actual_version.decode(errors="replace"):
-                raise ToolUnavailable(
-                    f"{tool} runtime does not match pinned version {spec['version']}."
+            with phase(timings, "version_check"):
+                version_args = {
+                    "gitleaks": ["version"],
+                    "semgrep": ["semgrep", "--version"],
+                    "bandit": ["bandit", "--version"],
+                    "osv": ["--version"],
+                    "trivy": ["--version"],
+                }[tool]
+                rc, actual_version = await bounded_process(
+                    base[: -len(spec["args"])] + version_args, 45, 8192
                 )
-        # Execute the inspected content ID, preventing a mutable tag race.
-        rc, output = await bounded_process(
-            base,
-            spec.get("timeout_seconds", config["timeout_seconds"]),
-            spec.get("output_bytes", config["output_bytes"]),
-        )
-        if rc not in (0, 1):
-            raise ToolUnavailable(f"{tool} could not finish (exit {rc}); no pass was inferred.")
-        result = json.loads(output)
-        snapshot = osv_scope(result) if tool == "osv" else None
+                if rc != 0 or spec["version"] not in actual_version.decode(errors="replace"):
+                    raise ToolUnavailable(
+                        f"{tool} runtime does not match pinned version {spec['version']}."
+                    )
+        with phase(timings, "scan"):
+            # Execute the inspected content ID, preventing a mutable tag race.
+            rc, output = await bounded_process(
+                base,
+                spec.get("timeout_seconds", config["timeout_seconds"]),
+                spec.get("output_bytes", config["output_bytes"]),
+            )
+            if rc not in (0, 1):
+                raise ToolUnavailable(f"{tool} could not finish (exit {rc}); no pass was inferred.")
+        with phase(timings, "parse"):
+            result = json.loads(output)
+            snapshot = osv_scope(result) if tool == "osv" else None
         return {
             "data": result,
             "tool": tool,
             "version": spec["version"],
             "image_id": image_id,
             "ruleset": config["version"],
+            "timings": phase_summary(timings),
             **({"database_snapshot": snapshot} if snapshot else {}),
         }
     except asyncio.CancelledError:

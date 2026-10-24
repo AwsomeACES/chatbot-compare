@@ -27,8 +27,14 @@
     pass: "Passed",
     fail: "Needs attention",
     not_tested: "Not tested",
-    exists: "Found in code",
+    exists: "Declaration only",
   };
+  /* A declared control is never presented as proven, in any mode. White-box reads source and
+     Gray-box reads declarations, but neither shows that the control works, so both say
+     "Declaration only" and the per-check guidance explains what that check could see. */
+  function verdictLabel(verdict) {
+    return resultNames[verdict] || friendly(verdict);
+  }
   const friendly = (value) => String(value).replaceAll("_", " ");
   const genericFix = "Supply the missing input or install the named tool, then rerun this check.";
   const readinessClass = {
@@ -256,7 +262,8 @@
         String(r.bot + 1),
         esc(friendly(r.category)),
         ...run.modes.map((m) => esc(r.cells[m])),
-        `<span title="${esc(r.reason)}">${esc(r.label)}</span>`,
+        // The reason is readable on keyboard focus, not only on hover.
+        `<span class="cell-label" tabindex="0" title="${esc(r.reason)}" aria-describedby="reason-${esc(r.bot)}-${esc(r.category)}">${esc(r.label)}</span><small class="cell-reason" id="reason-${esc(r.bot)}-${esc(r.category)}">${esc(r.reason)}</small>`,
         r.confidence,
       ]),
     );
@@ -307,7 +314,7 @@
             const label =
               g && ["not_tested", "exists"].includes(f.verdict)
                 ? g.outcome_label
-                : resultNames[f.verdict] || f.verdict;
+                : verdictLabel(f.verdict);
             const texts = [f.checked, f.explanation, f.consequence, f.fix];
             const replaced = g && g.unresolved && f.fix === genericFix && g.owner_action;
             if (replaced) texts[3] = g.owner_action;
@@ -316,7 +323,7 @@
               : "";
             return `<details data-finding="${esc(key)}" ${opened.has(key) ? "open" : ""}>
             <summary>${esc(g?.title || friendly(f.test_id))} <span class="summary-meta">${esc(label)}${f.verdict === "fail" ? ` · ${esc(f.severity)}` : ""}${f.overridden ? " · Overridden" : ""}</span></summary>
-            <p class="helper">${esc(name)} · ${modeNames[f.mode]} · ${esc(f.confidence)} confidence${f.overridden && f.original_finding ? ` · Original result: ${esc(resultNames[f.original_finding.verdict] || f.original_finding.verdict)}` : ""}</p>
+            <p class="helper">${esc(name)} · ${modeNames[f.mode]} · ${esc(f.confidence)} confidence${f.overridden && f.original_finding ? ` · Original result: ${esc(verdictLabel(f.original_finding.verdict))}` : ""}</p>
             ${texts.map((text, i) => `<p><strong>${headings[i]}:</strong> ${esc(text)}</p>`).join("")}
             ${help}
             ${ai ? `<p><strong>AI explanation (${esc(aiReview.model)}):</strong> ${esc(ai.explanation)}</p><p><strong>AI review:</strong> ${esc(friendly(ai.assessment))}</p><p><strong>Suggested next step:</strong> ${esc(ai.fix)}</p>` : ""}
@@ -351,32 +358,78 @@
           explainButton.disabled = false;
         }
       };
-    root.querySelectorAll("[data-review]").forEach(
-      (button) =>
-        (button.onclick = async () => {
-          const reason = prompt(
-            "Write why this is a false positive, or why you accept the finding:",
-          );
-          if (!reason) return;
-          const false_positive = confirm(
-              "Mark as false positive? Cancel keeps its score and records the review.",
-            ),
-            [bot, mode, ...test] = button.dataset.review.split(":");
-          try {
-            await api(`/api/assurance/runs/${id}/review`, {
-              bot: Number(bot),
-              mode,
-              test_id: test.join(":"),
-              false_positive,
-              reason,
-            });
-            await refresh();
-          } catch (error) {
-            tell(error.message);
-          }
-        }),
-    );
+    root
+      .querySelectorAll("[data-review]")
+      .forEach((button) => (button.onclick = () => openReview(button.dataset.review)));
   }
+  /* ---- review form: an in-page dialog, so every control is reachable by keyboard ---- */
+
+  function reviewDialog() {
+    let dialog = document.getElementById("finding-review");
+    if (dialog) return dialog;
+    dialog = document.createElement("dialog");
+    dialog.id = "finding-review";
+    dialog.innerHTML = `<form method="dialog" id="finding-review-form">
+      <h2 id="finding-review-title">Review this finding</h2>
+      <p class="helper" id="finding-review-check"></p>
+      <fieldset>
+        <legend>What is your decision?</legend>
+        <label><input type="radio" name="decision" value="accept" checked> Accept the finding. Its score and evidence are kept.</label>
+        <label><input type="radio" name="decision" value="false_positive"> Mark it a false positive. The original finding and your reason are both kept.</label>
+      </fieldset>
+      <label for="finding-review-reason">Why? A written reason is required and is recorded in the audit.</label>
+      <textarea id="finding-review-reason" name="reason" rows="4" aria-required="true" aria-describedby="finding-review-error" maxlength="2000"></textarea>
+      <p class="notice" id="finding-review-error" role="alert" hidden></p>
+      <div class="actions">
+        <button type="submit" value="save" id="finding-review-save">Save review</button>
+        <button type="button" value="cancel" id="finding-review-cancel">Cancel</button>
+      </div>
+    </form>`;
+    document.body.append(dialog);
+    dialog.querySelector("#finding-review-cancel").onclick = () => dialog.close("cancel");
+    return dialog;
+  }
+
+  function openReview(key) {
+    const dialog = reviewDialog();
+    const form = dialog.querySelector("#finding-review-form");
+    const error = dialog.querySelector("#finding-review-error");
+    const reason = dialog.querySelector("#finding-review-reason");
+    const [bot, mode, ...test] = key.split(":");
+    dialog.querySelector("#finding-review-check").textContent =
+      `${modeNames[mode] || mode} · ${friendly(test.join(":"))} · bot ${Number(bot) + 1}`;
+    form.reset();
+    error.hidden = true;
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const text = reason.value.trim();
+      if (text.length < 10) {
+        error.textContent = "Write at least 10 characters so the review is reviewable later.";
+        error.hidden = false;
+        reason.focus();
+        return;
+      }
+      const decision = form.querySelector("input[name=decision]:checked").value;
+      try {
+        await api(`/api/assurance/runs/${id}/review`, {
+          bot: Number(bot),
+          mode,
+          test_id: test.join(":"),
+          false_positive: decision === "false_positive",
+          reason: text,
+        });
+        dialog.close("saved");
+        await refresh();
+      } catch (failure) {
+        error.textContent = failure.message;
+        error.hidden = false;
+      }
+    };
+    // showModal traps focus and closes on Escape, so the form is keyboard-complete.
+    dialog.showModal();
+    reason.focus();
+  }
+
   async function refresh() {
     if (!id || (busy && requestId === id)) return;
     requestController?.abort();

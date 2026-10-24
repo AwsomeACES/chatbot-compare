@@ -270,7 +270,7 @@ function render(run) {
     return;
   }
   $("verdict").innerHTML =
-    `<div class="verdict-card"><h3>${studio.winner == null ? (studio.bots.length === 1 ? "Evaluation summary" : "Comparison summary") : "Winner: " + esc(run.targets[studio.winner].name)}</h3><p>${esc(studio.confidence_note)}</p>${studio.warnings.length ? `<p class="unknown">${studio.warnings.map(esc).join(" ")}</p>` : ""}</div><details class="subtle-details"><summary>How to read these scores</summary><p>${esc(studio.formula)}</p><p>Not tested is missing evidence, not a failed answer. It contributes zero to this evaluation index. Measured quality and coverage are shown separately.</p></details>`;
+    `<div class="verdict-card"><h3>${studio.winner == null ? (studio.bots.length === 1 ? "Evaluation summary" : "Comparison summary") : "Winner: " + esc(run.targets[studio.winner].name)}</h3><p>${esc(studio.confidence_note)}</p>${generalWarnings(studio).length ? `<p class="unknown">${generalWarnings(studio).map(esc).join(" ")}</p>` : ""}${familyWarnings(studio)}</div>${evaluatorProvenance()}<details class="subtle-details"><summary>How to read these scores</summary><p>${esc(studio.formula)}</p><p>Not tested is missing evidence, not a failed answer. It contributes zero to this evaluation index. Measured quality and coverage are shown separately.</p></details>`;
   if (studio.comparison) {
     const comparison = studio.comparison;
     $("verdict").innerHTML +=
@@ -414,6 +414,74 @@ function render(run) {
     [...document.querySelectorAll("#case-results details[open]")].map((e) => e.dataset.case),
   );
 
+  /* ---- evaluator provenance: who actually scored each Case ---- */
+
+  function judgeProvenance(verdict) {
+    // A verdict saved before provenance recording says so; nothing is reconstructed.
+    if (!verdict || verdict.provenance_version == null)
+      return `<br><small class="provenance">Evaluator provenance unavailable for this saved result.</small>`;
+    const parts = [];
+    if (verdict.requested_model && verdict.requested_model !== verdict.model)
+      parts.push(`requested ${esc(verdict.requested_model)}`);
+    parts.push(`${esc(verdict.provider || "unknown provider")}${verdict.local ? ", local" : ""}`);
+    parts.push(`returned ${esc(verdict.provider_model || "Not supplied by provider")}`);
+    if (verdict.family) parts.push(`family ${esc(verdict.family)}`);
+    const why = (verdict.fallback_reasons || [])
+      .map((row) => `${esc(row.model)}: ${esc(row.reason)}`)
+      .join("; ");
+    const fallback = verdict.fallback
+      ? `<br><small class="provenance">Fallback evaluator. ${why ? `Requested judge unavailable — ${why}` : "Reason not recorded."}</small>`
+      : "";
+    return `<br><small class="provenance">Actual evaluator: ${parts.join(" · ")}. Returned names are not guaranteed immutable revisions.</small>${fallback}`;
+  }
+
+  function nonJudgeEngine(result) {
+    if (!result || (result.judges || []).length) return "";
+    const engine = result.engine || "";
+    if (!engine) return "";
+    const label = result.local_classifier
+      ? "Local classifier, no LLM judge"
+      : engine === "deterministic-text"
+        ? "Deterministic rule, no LLM judge"
+        : engine === "measured-latency"
+          ? "Measured latency, no LLM judge"
+          : `${engine}, no LLM judge`;
+    return `<p class="judge-reason"><small class="provenance">${esc(label)}.</small></p>`;
+  }
+
+  function familyWarnings(studio) {
+    const rows = studio.family_warnings || [];
+    if (!rows.length) return "";
+    return `<p class="unknown" data-family-warning>${rows.map(esc).join(" ")} This is separate from human calibration and from model-to-model judge agreement.</p>`;
+  }
+
+  function generalWarnings(studio) {
+    // Same-family warnings render in their own block, so they are not repeated here.
+    const family = new Set(studio.family_warnings || []);
+    return (studio.warnings || []).filter((warning) => !family.has(warning));
+  }
+
+  function evaluatorProvenance() {
+    const info = run.judge_provenance;
+    if (!info) return "";
+    const rows = (info.evaluators || [])
+      .map((e) => {
+        const calibration = e.calibration
+          ? `${esc(e.calibration.state)}${e.calibration.agreement_percent == null ? "" : ` (${esc(e.calibration.agreement_percent)}%)`}`
+          : "unavailable";
+        return `<tr><td>${esc(e.actual_model)}</td><td>${esc((e.requested_models || []).join(", ") || "Not recorded")}</td><td>${esc(e.provider)}${e.local === true ? " (local)" : e.local === null ? "" : ""}</td><td>${esc((e.returned_models || []).join(", "))}</td><td>${e.fallback_cases ? `${esc(e.fallback_cases)} case(s)` : "No"}</td><td>${calibration}</td></tr>`;
+      })
+      .join("");
+    const engines = Object.entries(info.non_judge_engines || {})
+      .map(([label, count]) => `<li>${esc(label)}: ${esc(count)} result(s)</li>`)
+      .join("");
+    const unavailable = info.unavailable_note
+      ? `<p class="unknown">${esc(info.unavailable_note)}</p>`
+      : "";
+    const mixed = info.mixed_note ? `<p class="unknown">${esc(info.mixed_note)}</p>` : "";
+    return `<details class="subtle-details" id="evaluator-provenance"><summary>Which judge scored these cases</summary>${mixed}${unavailable}${rows ? `<table class="cal-table"><thead><tr><th>Actual evaluator</th><th>Requested</th><th>Provider</th><th>Returned identifier</th><th>Fallback</th><th>Human calibration</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="helper">No LLM judge verdict is recorded for this test.</p>`}${engines ? `<ul>${engines}</ul>` : ""}<p class="helper">${esc(info.revision_note)} ${esc(info.calibration_note)}</p></details>`;
+  }
+
   function caseEvidence(category) {
     return run.cases
       .filter((c) => c.category === category)
@@ -422,7 +490,7 @@ function render(run) {
           `<div class="case-evidence"><h4>${esc(c.name)} · case ${c.scenario_index || 1}, repeat ${c.repeat}</h4><div class="grid">${c.results
             .map(
               (r, i) =>
-                `<article><strong>${esc(run.targets[i].name)} <span class="pill">${esc(r.status.replaceAll("_", " "))}</span></strong><p>Score: ${r.score == null ? "Not tested (index contribution 0)" : r.score + "/100"}</p><p>${r.human_review_note ? "<strong class=badge>Overridden — reason logged</strong> " : ""}${r.needs_review ? "<strong>Needs human review</strong> " : ""}${esc(r.reason)}</p>${(r.judges || []).map((j) => `<p class="judge-reason">Judge: ${esc(j.model)} — ${j.score}%<br>Evidence: ${j.evidence.map(esc).join(" | ")}</p>`).join("")}${r.transcript
+                `<article><strong>${esc(run.targets[i].name)} <span class="pill">${esc(r.status.replaceAll("_", " "))}</span></strong><p>Score: ${r.score == null ? "Not tested (index contribution 0)" : r.score + "/100"}</p><p>${r.human_review_note ? "<strong class=badge>Overridden — reason logged</strong> " : ""}${r.needs_review ? "<strong>Needs human review</strong> " : ""}${esc(r.reason)}</p>${(r.judges || []).map((j) => `<p class="judge-reason">Judge: ${esc(j.model)} — ${j.score}%<br>Evidence: ${j.evidence.map(esc).join(" | ")}${judgeProvenance(j)}</p>`).join("")}${nonJudgeEngine(r)}${r.transcript
                   .map(
                     (t) => `<div class="transcript"><strong>User:</strong> ${esc(t.input)}
 <strong>Bot:</strong> ${esc(t.output || t.error || "No response")}

@@ -339,3 +339,36 @@ The initialization lock exists because concurrent first imports deadlock inside 
 - The legacy `index.html` interface stays served and keeps its browser check, because saved reports and documented links still point at it. Retiring it is a separate, explicit decision.
 - The current shell gets its own check covering navigation, opening a saved report, escaped provider output, Judge calibration and Governance alignment. Failure artifacts are a trace and a screenshot of synthetic fixtures only, never user data.
 - CI wiring is guarded by tests (`tests/test_verification_wiring.py`), because the regression found here was configuration drifting away from the current UI while still reporting green.
+
+## 2026-10-23 — Evaluator provenance is recorded, never reconstructed
+
+- A verdict records the evaluator that actually produced it: requested and actual model, requested and actual endpoint, provider, local flag, family, whether a fallback answered and the specific failures that caused it. Credentials are never part of it.
+- A saved Run from before this metadata existed reports provenance as unavailable. An unrecorded local flag stays `None` rather than defaulting to `False`, because a plausible default is indistinguishable from a recorded fact once displayed. Nothing is inferred from the configuration to fill a gap in a verdict.
+- Provenance is derived on read and attached to the API response only. It is never written into a saved Run, so reading a report cannot change it.
+- Results produced by a deterministic rule, measured latency or a local classifier are labelled "no Judge" and are never attributed to an evaluator.
+- A Run with more than one actual evaluator stays qualified wherever it is shown: scores from different evaluators are not interchangeable and such a panel does not yield a confident winner.
+- Three separate concerns keep three separate places: the same-family warning (shared bot and Judge model family), human-label calibration (agreement with the owner's labels), and model-to-model agreement (Judges agreeing with each other). Merging any two of them would let one be read as evidence for another.
+- Readiness information is improved instead of changing model selection. No larger or paid model is ever chosen automatically, and model size is not treated as evidence of quality.
+
+## 2026-10-23 — Redaction exempts public identifiers by shape, after the specific rules run
+
+- Only the generic rule — any run of 10 to 15 digits — skips recognised public identifiers (UUID, CVE, GHSA, OSV-family, CWE, ISO 8601 instants). The email, national-identifier and credential rules run over the whole string first.
+- That order is required, not cosmetic. Applying the exemption first preserved the CVE token inside `cve-2024-1234567@example.com`, which split the string so the email rule never matched the whole address and the address survived redaction. A negative test in `tests/test_export_redaction.py` reproduces it.
+- A new redaction rule must be classified as specific or generic; a test fails if it is not, so the exemption cannot silently widen to cover it.
+- A typed numeric metadata field keeps a bare number, because a counter or an epoch value is not a telephone number. The exemption checks the value shape as well as the field name, so a contact detail stored in such a field is still redacted. Free-text fields are never exempt.
+- The exemption is disclosed in the export along with its limits: names, postal addresses, account handles and organisation-specific identifiers are not detected, and a value deliberately shaped like a public identifier is kept. This is a baseline against accidental disclosure, not an adversarial filter. No cloud redaction service was introduced.
+- A redacted export states that its hashes cannot be recomputed from it, because redaction changed the bytes they covered. They remain comparable only against the retained original record, and they are integrity checks rather than signatures.
+
+## 2026-10-23 — A declaration is labelled the same way in every mode
+
+- An `exists` Finding reads **Declaration only** in Black-box, Gray-box and White-box alike. White-box reads source and Gray-box reads operator declarations, but neither shows that the control works, so a mode-specific label like "Found in code" invited the stronger reading. What each check could see is stated by its own guidance instead.
+- The finding review is an in-page `dialog`, not `prompt()` and `confirm()`. A browser prompt cannot carry a field label, a written error or a minimum-length rule, and a confirm dialog gives a yes/no where the decision deserves named options. Validation lives in the handler so the message is visible, announced text; a native constraint bubble is not reliably announced and disappears.
+- A reason shown only in a `title` tooltip is unreadable without a pointer, so the category matrix renders it as focusable text as well.
+- Colour contrast has not been measured against an agreed standard, and status wording outside the assurance screens is not yet centralised. Both remain open in T-019 rather than being claimed.
+
+## 2026-10-23 — One explanation provenance block for every export
+
+- The JSON, PDF and teammate Markdown exports render the same `explanation_provenance()` block, so they cannot disagree about whether an optional AI explanation exists, which model produced it, which provider attempts failed, or what it cost. Each export previously described the explanation in its own way, and the teammate export omitted it for resolved checks.
+- The block always states the returned model identifier with the caveat that a returned name is not a guaranteed immutable revision.
+- An unmetered explanation reports "No explanation calls", never `$0.00`. Unknown billing stays Unknown.
+- An explanation never changes a recorded verdict, severity or review. A test asserts a finding the explanation calls a false positive still carries `fail`.

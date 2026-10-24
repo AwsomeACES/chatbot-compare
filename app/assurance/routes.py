@@ -587,19 +587,41 @@ def download(ident: uuid.UUID, format: str = "json"):
         ),
         Paragraph(escape(status["notice"] + " " + status["historical_note"]), styles["Normal"]),
     ]
-    review = readiness.supplemental(run)
-    if review:
-        blocks += [
-            Paragraph("AI source review provenance", styles["Heading2"]),
+    # The same block the JSON and teammate exports use, so the three cannot disagree.
+    explanation = run.get("ai_explanation_provenance") or readiness.explanation_provenance(run)
+    blocks.append(Paragraph("Optional AI explanation", styles["Heading2"]))
+    if explanation["present"]:
+        blocks.append(
             Paragraph(
                 escape(
-                    f"Source: {review.get('model', '')}. {review.get('provider_model', '')} "
-                    f"{review.get('purpose', '')} Automation status: "
-                    f"{review.get('automation_status', 'not recorded')}"
+                    f"Source: {explanation['source']}. Model: {explanation['model']} "
+                    f"(returned {explanation['returned_model']}; a returned name is not a "
+                    f"guaranteed immutable revision). Local judge: {explanation['local']}; "
+                    f"cloud consent: {explanation['cloud_consent']}. "
+                    f"Checks reviewed: {explanation['checks_reviewed']}. {explanation['note']}"
                 ),
                 styles["Normal"],
-            ),
-        ]
+            )
+        )
+    else:
+        blocks.append(Paragraph(escape(explanation["note"]), styles["Normal"]))
+    for failure in explanation["provider_failures"]:
+        blocks.append(
+            Paragraph(
+                escape(
+                    f"Provider attempt {failure['model']}: {failure['status']}"
+                    + (f" — {failure['reason']}" if failure["reason"] else "")
+                ),
+                styles["Normal"],
+            )
+        )
+    cost = explanation["cost"]
+    blocks.append(
+        Paragraph(
+            escape(f"Explanation cost: {cost['status']} ({cost['calls']} call(s))"),
+            styles["Normal"],
+        )
+    )
     guidance = {row["key"]: row for row in status["checks"]}
     for f in sorted(
         run["findings"],

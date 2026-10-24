@@ -590,7 +590,12 @@ def get_run(ident):
 
 @app.get("/api/blackbox/runs/{ident}")
 def result(ident: uuid.UUID):
-    return get_run(ident)
+    """The saved Run plus read-only evaluator provenance; neither is rescored or re-saved."""
+    from .blackbox.judge_provenance import describe
+
+    run = get_run(ident)
+    run["judge_provenance"] = describe(run)
+    return run
 
 
 @app.post("/api/blackbox/runs/{ident}/baseline")

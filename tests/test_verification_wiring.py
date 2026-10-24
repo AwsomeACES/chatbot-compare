@@ -86,25 +86,25 @@ def test_the_current_browser_check_is_self_contained():
         assert view in text, f"the {view} view is not exercised"
     assert "#calibration-panel" in text, "Judge calibration is not exercised"
     assert "#gov-human" in text, "Governance human alignment is not exercised"
+    assert "#evaluator-provenance" in text, "evaluator provenance is not exercised"
 
 
-def test_removed_browser_checks_are_gone_and_unreferenced():
+def test_removed_browser_checks_are_gone_and_not_invoked():
+    """No runnable entry point may invoke them. Documents may record that they were removed."""
     for name in REMOVED:
         assert not (ROOT / "scripts" / name).exists(), f"{name} came back"
-    searched = [
-        *ROOT.glob("*.md"),
-        *ROOT.glob("*.json"),
-        *(ROOT / "docs").glob("*.md"),
+    invokers = [
+        ROOT / "package.json",
         *(ROOT / ".github/workflows").glob("*.yml"),
         *(ROOT / "scripts").iterdir(),
+        *(ROOT / "app").rglob("*.py"),
     ]
-    allowed = {"PROGRESS.md", "legacy-guide.md", "test_verification_wiring.py"}
-    for path in searched:
-        if not path.is_file() or path.name in allowed:
+    for path in invokers:
+        if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         for name in REMOVED:
-            assert name not in text, f"{path.name} still references the removed {name}"
+            assert name not in text, f"{path.name} still invokes the removed {name}"
 
 
 def test_no_tracked_script_loads_playwright_from_the_runtime_directory():

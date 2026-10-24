@@ -511,6 +511,17 @@ td .bar-track {
   background: #f7f6fd;
   border-left: 3px solid #b3a6ef;
 }
+/* Evaluator provenance sits beside a verdict without competing with it for attention. */
+.provenance {
+  display: inline-block;
+  margin-top: 4px;
+  color: #4a4668;
+  line-height: 1.5;
+}
+[data-family-warning] {
+  border-left: 3px solid #d9a521;
+  padding-left: 10px;
+}
 .transcript {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -860,4 +871,43 @@ pre {
   padding-left: 10px;
   border-left: 3px solid var(--border);
   overflow-wrap: anywhere;
+}
+
+/* In-page finding review. A dialog keeps focus inside the form and closes on Escape. */
+#finding-review {
+  max-width: 560px;
+  width: calc(100% - 32px);
+  border: 1px solid #b3a6ef;
+  border-radius: 10px;
+  padding: 20px;
+  background: #ffffff;
+  color: #211f33;
+}
+#finding-review::backdrop {
+  background: rgba(33, 31, 51, 0.45);
+}
+#finding-review h2 {
+  margin-top: 0;
+}
+#finding-review fieldset {
+  border: 1px solid #ddd8f3;
+  border-radius: 8px;
+  margin: 12px 0;
+}
+#finding-review label {
+  display: block;
+  margin: 6px 0;
+}
+#finding-review textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+/* The matrix reason is visible text as well as a tooltip, so keyboard users can read it. */
+.cell-label:focus-visible {
+  outline: 2px solid #5b4ad1;
+  outline-offset: 2px;
+}
+.cell-reason {
+  display: block;
+  color: #4a4668;
 }

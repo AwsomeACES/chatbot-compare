@@ -416,6 +416,71 @@ def supplemental(run: dict) -> dict:
     return {}
 
 
+def explanation_provenance(run: dict) -> dict:
+    """Where an optional AI explanation came from, which attempts failed and what it cost.
+
+    One block, rendered identically by the JSON, PDF and teammate exports, so the three never
+    disagree about whether an explanation exists or who produced it. Recorded Findings, verdicts
+    and reviews are never changed by an explanation.
+    """
+    review = supplemental(run)
+    attempts = []
+    for item in run.get("ai_explanations", []):
+        for attempt in item.get("attempts", []):
+            attempts.append(
+                {
+                    "model": attempt.get("model", "Not recorded"),
+                    "local": attempt.get("local"),
+                    "returned_model": attempt.get("provider_model", "Not supplied"),
+                    "status": attempt.get("status", "Not recorded"),
+                    "reason": attempt.get("reason", ""),
+                }
+            )
+    failures = [a for a in attempts if a["status"] != "accepted"]
+    if not review:
+        return {
+            "present": False,
+            "note": "No optional AI explanation is attached. Recorded Findings are unchanged.",
+            "attempts": attempts,
+            "provider_failures": failures,
+            "cost": explanation_cost(run),
+        }
+    return {
+        "present": True,
+        "source": review.get("source", "Not recorded"),
+        "model": review.get("model", "Not recorded"),
+        "returned_model": review.get("provider_model", "Not supplied"),
+        "local": review.get("local"),
+        "cloud_consent": review.get("cloud_consent"),
+        "payload_hash": review.get("payload_hash", ""),
+        "checks_reviewed": len(review.get("checks", [])),
+        "automation_status": review.get("automation_status", ""),
+        "attempts": attempts,
+        "provider_failures": failures,
+        "cost": explanation_cost(run),
+        "note": (
+            review.get("purpose")
+            or "Supplemental explanation. Original verdicts, severity and reviews are unchanged."
+        ),
+    }
+
+
+def explanation_cost(run: dict) -> dict:
+    """Metered cost of explanation calls. Unknown billing stays Unknown, never zero."""
+    from ..blackbox import metering
+    from ..blackbox.cost_summary import totals
+
+    rows = [
+        row
+        for row in metering.events(run["id"])
+        if (row.get("test_case_id") or "") == "white-ai-explanation"
+    ]
+    if not rows:
+        return {"status": "No explanation calls", "calls": 0}
+    summary = totals(rows)
+    return {"status": summary.get("status", "Unknown"), "calls": len(rows), "totals": summary}
+
+
 def evidence_status(run: dict) -> dict:
     """Counts and per-check guidance for a saved run, derived without mutating it."""
     catalogue = guidance()
@@ -535,6 +600,31 @@ def teammate_markdown(run: dict) -> str:
         "## Checks to resolve",
         "",
     ]
+    explanation = run.get("ai_explanation_provenance") or explanation_provenance(run)
+    provenance_lines = ["## Optional AI explanation", ""]
+    if explanation["present"]:
+        provenance_lines += [
+            f"- Source: {text(explanation['source'])}",
+            f"- Model: {text(explanation['model'])} "
+            f"(returned {text(explanation['returned_model'])}; a returned name is not a "
+            "guaranteed immutable revision)",
+            f"- Local judge: {text(explanation['local'])}; cloud consent: "
+            f"{text(explanation['cloud_consent'])}",
+            f"- Checks reviewed: {text(explanation['checks_reviewed'])}",
+            f"- {text(explanation['note'])}",
+        ]
+    else:
+        provenance_lines.append(f"- {text(explanation['note'])}")
+    for failure in explanation["provider_failures"]:
+        provenance_lines.append(
+            f"- Provider attempt {text(failure['model'])}: {text(failure['status'])}"
+            + (f" — {text(failure['reason'])}" if failure["reason"] else "")
+        )
+    cost = explanation["cost"]
+    provenance_lines += [
+        f"- Explanation cost: {text(cost['status'])} ({text(cost['calls'])} call(s))",
+        "",
+    ]
     unresolved = [row for row in status["checks"] if row["unresolved"]]
     if not unresolved:
         lines.append("No unresolved checks.")
@@ -564,4 +654,4 @@ def teammate_markdown(run: dict) -> str:
         if row["next_test"]:
             lines.append(f"- Next test: {text(row['next_test'])}")
         lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
+    return "\n".join(lines + provenance_lines).rstrip() + "\n"
