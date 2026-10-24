@@ -185,7 +185,7 @@ DATABASE_URL=sqlite:///compare-test.db GEMINI_API_KEY=... AI_PROVIDER=gemini GEM
 cd ~/projects/chatbot-compare && .venv/bin/uvicorn app:app --port 8080
 ```
 
-Open http://localhost:8080. Run the app's own tests with `.venv/bin/python -m pytest tests`.
+Open http://localhost:8080. Run the app's own tests with `.venv/bin/python -m pytest tests`; GitHub Actions runs them on every push to `main` and every pull request (`.github/workflows/tests.yml`).
 A run started from the dashboard lives in the server process, so restarting the server cuts it off ("interrupted";
 the start screen lists these). Resume one from its page, or from the terminal with `.venv/bin/python regress.py resume
 <run_id>`; a long run started from the terminal (`regress.py run --bots a,b --no-confirm`) survives server restarts,
