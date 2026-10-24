@@ -112,7 +112,11 @@ Reliance Digital multi-agent bot** (`~/projects/hussain-bot/digital-multi-agent-
    - Skills that a selected bot only partly supports are listed under the scorecard.
 6. **Gray-box and white-box testing** (looking inside the bots, not only at their replies)
    - *Gray-box* uses what a bot's API already returns about itself: Hussain's chatbot's routed agent
-     (`sales_agent`, `resq_agent`, `rag_agent`) and Mouni's intent and human handoff. A case checks the right
+     (`sales_agent`, `resq_agent`, `rag_agent`), Mouni's intent and human handoff, and VoltKart's `route` (the kind
+     of lookup its reply started with: `product`, `order`, `policy`, or `chat`; a follow-up that looks nothing up keeps
+     the earlier route). VoltKart has no service tickets or human handoff, so those checks are skipped for it, and so
+     is the route of `order-ask-id` (asking for the missing order ID needs no lookup, so a tool-based bot shows no
+     route; its `tools_none` white-box check covers it). A case checks the right
      agent / intent handled it, and that the bot escalated only when it should (`human-handoff` case).
    - *White-box* uses a debug trace the bots return when asked (`"trace": true` in `bots.json` sends
      `"debug": true`): VoltKart's tool calls with their arguments and results, Hussain's chatbot's RAG context,
@@ -168,18 +172,19 @@ cd ~/projects/reliance-digital-chatbot && .venv/bin/uvicorn app:app --port 8010
 #    below replace the Windows D:\ paths. Without GEMINI_MODEL it falls back to gemini-2.5-flash, not the 3.6 Flash
 #    bots.json grades it as. Without a Chroma index its RAG agent falls back to keyword search.
 cd ~/projects/hussain-bot/digital-multi-agent-ai-main/backend
-RAG_DATA_ROOT="$PWD/../data" CHROMA_PATH="$PWD/../data/chroma_db" GEMINI_MODEL=gemini-3.6-flash CLAUDE_MODEL=claude-sonnet-5 OPENAI_MODEL=gpt-5-mini \
+RAG_DATA_ROOT="$PWD/../data" CHROMA_PATH="$PWD/../data/chroma_db" GEMINI_MODEL=gemini-3.6-flash OPENAI_MODEL=gpt-5-mini \
   ~/projects/chatbot-compare/.bots/reliance222-venv/bin/uvicorn main:app --port 8001
 
-# Mounika's chatbot (port 5000): her GitHub main (github.com/Mounika6115/AI-customer-support-chatbot, be890ac of
-#    2026-10-09; `git pull` for her latest), cloned into ~/projects/mouni-bot/github-latest, packages in
-#    backend/.venv-local (the repo's own venv/ is broken). It
-#    runs on a test database, compare-test.db, where the adapter closes each finished test chat of the test login
-#    (the app itself has no way to end one; the adapter refuses a database whose file name lacks "test"). The test
-#    login's password is BOT_MOUNI_PASSWORD in .env.
+# Mounika's chatbot (port 5000): her GitHub main (github.com/Mounika6115/AI-customer-support-chatbot, 4f0c598 of
+#    2026-10-23; `git pull` for her latest), cloned into ~/projects/mouni-bot/github-latest, packages in
+#    backend/.venv-local (the repo's own venv/ is broken). It runs on a test database, compare-test.db (delete it to
+#    re-seed). The adapter closes each finished test chat with her close endpoint, and puts back the order tables after
+#    every chat, since her bot really cancels orders and opens returns (it only writes to a file named *test*). Since
+#    4f0c598 `python app.py` won't start without debug mode, so it's started with `flask run`. The test login's
+#    password is BOT_MOUNI_PASSWORD in .env.
 cd ~/projects/mouni-bot/github-latest/backend
 DATABASE_URL=sqlite:///compare-test.db GEMINI_API_KEY=... AI_PROVIDER=gemini GEMINI_MODEL=gemini-3.6-flash \
-  .venv-local/bin/python app.py
+  .venv-local/bin/flask --app app run --port 5000 --no-reload
 
 # 3. This app (port 8080)
 cd ~/projects/chatbot-compare && .venv/bin/uvicorn app:app --port 8080

@@ -2,15 +2,15 @@
   "bots": [
     {
       "id": "mine-claude",
-      "label": "My bot · Claude Sonnet 5",
-      "description": "VoltKart support bot (tool calling over store data), Claude Sonnet 5 on Bedrock (paid)",
+      "label": "My bot · Claude Sonnet 5.5",
+      "description": "VoltKart support bot (tool calling over store data), Claude Sonnet 5.5 on Bedrock (paid)",
       "profile": "voltkart",
       "source": "~/projects/reliance-digital-chatbot",
-      "llm": "Claude Sonnet 5",
+      "llm": "Claude Sonnet 5.5",
       "type": "voltkart",
       "trace": true,
       "base_url": "http://localhost:8010",
-      "model": "claude-sonnet-5",
+      "model": "claude-sonnet-5-5",
       "pricing": {
         "input": 2.0,
         "output": 10.0,
@@ -21,20 +21,20 @@
     },
     {
       "id": "mine-haiku",
-      "label": "My bot · Claude Haiku 4.5",
-      "description": "VoltKart support bot on Claude Haiku 4.5, the fast tier closest to Gemini Flash",
+      "label": "My bot · Claude Haiku 5.5",
+      "description": "VoltKart support bot on Claude Haiku 5.5, the fast tier closest to Gemini Flash",
       "profile": "voltkart",
       "source": "~/projects/reliance-digital-chatbot",
-      "llm": "Claude Haiku 4.5",
+      "llm": "Claude Haiku 5.5",
       "type": "voltkart",
       "trace": true,
       "base_url": "http://localhost:8010",
-      "model": "claude-haiku-4-5",
+      "model": "claude-haiku-5-5",
       "pricing": {
-        "input": 1.0,
-        "output": 5.0,
-        "cache_read": 0.1,
-        "cache_write": 1.25,
+        "input": 0.1,
+        "output": 0.5,
+        "cache_read": 0.01,
+        "cache_write": 0.125,
         "source": "Anthropic list price, USD per million tokens (cache read 0.1x input, cache write 1.25x); Bedrock on-demand may differ"
       }
     },
@@ -104,7 +104,7 @@
     {
       "id": "mouni-gemini",
       "label": "Mouni's chatbot · Gemini 3.6 Flash",
-      "description": "SupportFlow AI (Flask, Mouni's GitHub main, be890ac of 2026-10-09): database lookups (products, orders, refunds, warranties, offers) then Gemini 3.6 Flash (free tier); pure-AI mode, no human hand-off",
+      "description": "SupportFlow AI (Flask, Mouni's GitHub main, 4f0c598 of 2026-10-23): database lookups (products, orders, refunds, warranties, offers) then Gemini 3.6 Flash (free tier); hands the chat to a human agent when the customer asks for one",
       "profile": "mouni",
       "source": "~/projects/mouni-bot/github-latest",
       "llm": "Gemini 3.6 Flash",
@@ -115,8 +115,9 @@
       "email": "customer@example.com",
       "password_env": "BOT_MOUNI_PASSWORD",
       "max_concurrency": 1,
+      "close_path": "/api/conversations/{id}/close",
       "db_path": "~/projects/mouni-bot/github-latest/backend/compare-test.db",
-      "handoff": false,
+      "restore_tables": ["orders", "order_items", "payments", "returns", "refunds", "warranties", "service_requests", "support_tickets"],
       "pricing": {
         "input": 0,
         "output": 0,
@@ -146,11 +147,11 @@
     },
     {
       "id": "hussain-claude",
-      "label": "Hussain's chatbot · Claude Sonnet 5",
-      "description": "Reliance Digital multi-agent bot (digital-multi-agent-ai: LangGraph supervisor + sales/resQ/RAG/vision agents), Claude Sonnet 5 (needs ANTHROPIC_API_KEY in Hussain's backend .env)",
+      "label": "Hussain's chatbot · Claude Sonnet 5.5",
+      "description": "Reliance Digital multi-agent bot (digital-multi-agent-ai: LangGraph supervisor + sales/resQ/RAG/vision agents), Claude Sonnet 5.5 (its default model) (needs ANTHROPIC_API_KEY in Hussain's backend .env)",
       "profile": "hussain",
       "source": {"path": "~/projects/hussain-bot/digital-multi-agent-ai-main", "sha256": "4d32c5977d93e19da41e1d4ff1560485c86ddae23751298e37db5b3bde3d90fa", "note": "Hussain's zip (~/Downloads/digital-multi-agent-ai-main.zip) plus token-usage reporting only (measurement, no change to answers); our other changes are in ~/projects/hussain-bot/patches"},
-      "llm": "Claude Sonnet 5",
+      "llm": "Claude Sonnet 5.5",
       "type": "sse_chat",
       "trace": true,
       "url": "http://localhost:8001/chat/stream",
@@ -215,8 +216,8 @@
      "env": {"GEMINI_API_KEY": "$GOOGLE_API_KEY", "DATABASE_URL": "sqlite:///compare-test.db", "AI_PROVIDER": "gemini",
              "GEMINI_MODEL": "gemini-3.6-flash"},
      "health": {"path": "/api/health", "expect": "\"ok\""},
-     "cmd": [".venv-local/bin/python", "app.py"],
-     "note": "Mouni's GitHub version, on its own test database (the adapter closes finished test chats there)"}
+     "cmd": [".venv-local/bin/flask", "--app", "app", "run", "--port", "5000", "--no-reload"],
+     "note": "Mouni's GitHub version, on its own test database (the adapter closes finished test chats with its close endpoint). Started with flask run: since 4f0c598 `python app.py` refuses to start unless debug mode is on"}
   ],
   "judge_pricing": [
     {
@@ -262,8 +263,8 @@
     },
     {
       "id": "same-model-sonnet",
-      "label": "Apps on Sonnet 5",
-      "description": "Same model, different apps: VoltKart vs Hussain's chatbot, both on Claude Sonnet 5",
+      "label": "Apps on Sonnet 5.5",
+      "description": "Same model, different apps: VoltKart vs Hussain's chatbot, both on Claude Sonnet 5.5",
       "bots": [
         "mine-claude",
         "hussain-claude"
