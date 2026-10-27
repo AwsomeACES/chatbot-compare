@@ -525,9 +525,27 @@ async def resume_run(ident: uuid.UUID, config: Settings):
         audit(run, "resume", models=[j.model for j in config.judges])
     run.pop("budget_reason", None)
     run.pop("provider_reason", None)
+    if config.collect_only:
+        from .blackbox.studio_engine import audit
+
+        audit(
+            run, "transcript_collection_resumed", previous=run["config"].get("collect_only", False)
+        )
+        run["config"]["collect_only"] = True
+        for case in run["cases"]:
+            if (
+                case.get("prerequisite")
+                == "AI judge is off; this case has no explicit exact checks."
+            ):
+                case["prerequisite"] = ""
+    elif run["config"].get("collect_only"):
+        raise HTTPException(422, "Keep transcript-only collection enabled when resuming this run.")
     pending = 0
     for case in run["cases"]:
-        if any(r["status"] == "not_tested" for r in case["results"]):
+        if any(
+            r["status"] == "not_tested" and not (config.collect_only and r.get("transcript"))
+            for r in case["results"]
+        ):
             case.setdefault("previous_attempts", []).append(
                 copy.deepcopy({"results": case["results"], "pair": case["pair"]})
             )

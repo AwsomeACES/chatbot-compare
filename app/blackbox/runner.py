@@ -436,6 +436,8 @@ class EvaluationExecutor:
                     "transcript": prefix.get("transcript", []),
                     "error": "Conversation timeout; successful turns are checkpointed.",
                 }
+            if self.config.collect_only:
+                return observation  # Collection never replays a failed conversation automatically.
             reason = str(observation.get("error") or "").lower()
             if (blocked := quota_reason(reason)) and not self.config.simple_mode:
                 error = ProviderQuotaUnavailable("Chatbot: " + blocked)
@@ -471,8 +473,10 @@ class EvaluationExecutor:
 
     async def target_result(self, case, i):
         """Collect and judge one conversation, retaining evidence on interruption."""
-        if scored(case["results"][i]):
-            return
+        if scored(case["results"][i]) or (
+            self.config.collect_only and case["results"][i].get("transcript")
+        ):
+            return  # Collection retains failed/partial attempts too; never resend them.
         from .execution_cache import observation_key, read, write
         from .studio_engine import audit
 
@@ -542,6 +546,18 @@ class EvaluationExecutor:
                 self.runtime.check()
                 if observation.get("error"):
                     raise ValueError(observation["error"])
+                if self.config.collect_only:
+                    case["results"][i] = {
+                        **missing(
+                            "Transcript collected; awaiting human labels and separate calibration."
+                        ),
+                        "transcript": observation["transcript"],
+                        "usage": observation.get("usage", []),
+                        "seconds": sum(t.get("seconds", 0) for t in observation["transcript"]),
+                        "collection_only": True,
+                    }
+                    audit(self.run, "transcript_collected", case=case["id"], bot=i)
+                    return
                 if self.config.simple_mode:
                     from .studio_engine import panel
 

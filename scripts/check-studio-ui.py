@@ -31,7 +31,9 @@ REPO = Path(__file__).resolve().parents[1]
 HOSTILE = '<img src=x onerror="window.__studioXss=1"><script>window.__studioXss=1</script>'
 
 
-def synthetic_run(runner, studio_engine, Settings, Target, JudgeSelection):
+def synthetic_run(
+    runner, studio_engine, Settings, Target, JudgeSelection, *, custom=False, missing=False
+):
     """A completed simple-protocol Run with transcripts, so the Studio Results panel renders.
 
     Uses `simple_mode`, because the current Results panel reads `run["studio"]`, which only the
@@ -41,7 +43,9 @@ def synthetic_run(runner, studio_engine, Settings, Target, JudgeSelection):
     categories = [case["category"] for case in protocol["cases"]]
     cfg = Settings(
         targets=[Target(name="Synthetic UI bot", url="http://localhost:8800/chat")],
-        simple_mode=True,
+        simple_mode=not custom,
+        categories=["injection"] if custom else categories,
+        cases_per_category=1,
         judges=[JudgeSelection(model="synthetic-ui-judge", local=True)],
         consent=True,
         judge_consent=True,
@@ -93,6 +97,16 @@ def synthetic_run(runner, studio_engine, Settings, Target, JudgeSelection):
                     }
                 ],
             )
+    if missing:
+        for case in run["cases"]:
+            for result in case["results"]:
+                result.update(
+                    status="not_tested",
+                    score=None,
+                    reason="Fixture provider HTTP 404",
+                    judges=[],
+                    transcript=[],
+                )
     runner.aggregate(run)
     runner.save(run, cfg)
     return run
@@ -278,6 +292,10 @@ def main(argv=None) -> int:
         artifacts.mkdir(parents=True, exist_ok=True)
 
         run = synthetic_run(runner, studio_engine, Settings, Target, JudgeSelection)
+        custom = synthetic_run(runner, studio_engine, Settings, Target, JudgeSelection, custom=True)
+        missing = synthetic_run(
+            runner, studio_engine, Settings, Target, JudgeSelection, custom=True, missing=True
+        )
         process = serve(args.port)
         cleanup.callback(stop_process_tree, process)
 
@@ -294,6 +312,39 @@ def main(argv=None) -> int:
                 report |= check_saved_report(page, base, run)
                 report |= check_calibration(page, base, run)
                 report |= check_provenance(page, base, run)
+                check_saved_report(page, base, custom)
+                page.locator("#cost-analysis > summary").click()
+                page.get_by_text("Bot unit economics", exact=True).wait_for(state="visible")
+                assert page.locator('#cost-panel [data-cost-group="category"]').count() == 1
+                page.locator("#analysis-details > summary").click()
+                page.get_by_text("Request reliability and speed", exact=True).wait_for(
+                    state="visible"
+                )
+                assert page.locator("#charts svg").count() > 0
+                page.locator("#comparison-details > summary").click()
+                page.get_by_text("Regression checks", exact=True).wait_for(state="visible")
+                assert "Expected:" in page.locator("#case-results").inner_text()
+                assert page.locator("#case-results .evidence-details img").count() == 0
+                report["full_analysis_sections"] = "passed"
+                assert "Saved evaluation results" in page.locator("#verdict").inner_text()
+                assert "Measured quality" in page.locator("#scores").inner_text()
+                page.goto(f"{base}/?run={missing['id']}#evaluate", wait_until="networkidle")
+                page.wait_for_function(
+                    "() => document.querySelector('#run-label').textContent.includes('scored')"
+                )
+                assert page.locator("#test-history").is_visible()
+                page.get_by_text("View selected run results", exact=True).click()
+                page.wait_for_selector("#case-results details")
+                assert "Not measured" in page.locator("#scores").inner_text()
+                page.locator("#case-results details").first.locator("summary").click()
+                page.get_by_text("Fixture provider HTTP 404", exact=True).wait_for(state="visible")
+                page.locator("#test-history").select_option("run:" + custom["id"])
+                page.wait_for_function(
+                    "id => document.querySelector('#verdict').textContent.includes(id)",
+                    arg=custom["id"],
+                )
+                assert "Fixture provider HTTP 404" not in page.locator("#case-results").inner_text()
+                report["custom_and_unscored_history"] = "passed"
                 page.set_viewport_size({"width": 390, "height": 844})
                 page.goto(f"{base}/?run={run['id']}", wait_until="networkidle")
                 page.wait_for_selector("#case-results details")

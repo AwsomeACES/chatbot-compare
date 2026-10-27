@@ -406,3 +406,7 @@ The initialization lock exists because concurrent first imports deadlock inside 
 - A checker that cannot fail is not a check: one test feeds it a known-failing grey and requires it to report a miss.
 - Status wording lives in `window.StudioStatus` and every screen reads it. A second copy of the wording is how a Gray declaration came to be labelled "Found in code", so a test fails if any screen hard-codes those words again or prints a raw machine status.
 - Only a known no-call case may render as zero cost; a missing figure stays Unknown. The helper decides the known-zero case before the unknown case, and a test asserts that order.
+
+## 2026-10-24 — Transcript-only intake for human calibration
+
+Owner-authorized `collect_only` is an explicit non-simple Black Run setting requiring the Judge to be disabled. It removes only the generated judge-disabled prerequisite, gathers conversations through existing connectors/metering, and leaves scores unmeasured. Resume preserves completed scores and all attempted transcripts, including partial/error records; only unsent Cases dispatch. It does not bypass unrelated prerequisites, call a Judge, retry failed conversations automatically, or manufacture human labels. Separate calibration evaluations reuse the retained complete evidence.

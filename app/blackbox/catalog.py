@@ -324,7 +324,7 @@ def apply_judge_prerequisites(config, cases):
     """Keep semantic-only cases unscored when no AI judge is enabled."""
     from .deterministic import available
 
-    if config.judge_enabled:
+    if config.judge_enabled or config.collect_only:
         return
     for case in cases:
         if case["category"] != "performance" and not available(case):

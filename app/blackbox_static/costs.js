@@ -34,12 +34,14 @@
     by("cost-tab").setAttribute("aria-selected", String(cost));
     by("evaluation-tab").setAttribute("aria-selected", String(!cost));
   }
-  by("cost-tab").onclick = () => setTab(true);
-  by("evaluation-tab").onclick = () => setTab(false);
+  if (by("cost-tab")) by("cost-tab").onclick = () => setTab(true);
+  if (by("evaluation-tab")) by("evaluation-tab").onclick = () => setTab(false);
   window.renderCost = (run) => {
     const c = run.costs;
     const panel = by("cost-panel");
     if (!c?.available) {
+      panel._costHtml = null;
+      panel._costRun = run.id;
       panel.innerHTML =
         '<article class="card"><h2>Cost tracking unavailable for this run</h2><p>' +
         escape(
@@ -64,15 +66,28 @@
           `<details data-cost-group="${escape(key)}"><summary>Breakdown by ${escape(key.replaceAll("_", " "))}</summary>${table(rows)}</details>`,
       )
       .join("")}`;
+    if (panel._costRun !== run.id) {
+      panel._costHtml = null;
+      panel._costRun = run.id;
+      panel.innerHTML = "";
+    }
     if (panel._costHtml !== html) {
       const open = [...panel.querySelectorAll("details[open]")].map((x) => x.dataset.costGroup);
+      const firstRender = panel._costHtml == null;
       panel.innerHTML = html;
       panel._costHtml = html;
       panel
         .querySelectorAll("details")
-        .forEach((x) => (x.open = open.includes(x.dataset.costGroup)));
+        .forEach(
+          (x) =>
+            (x.open =
+              open.includes(x.dataset.costGroup) ||
+              (firstRender && x.dataset.costGroup === "category")),
+        );
     }
   };
+  // The unified Results screen reuses the read-only report, without legacy setup controls.
+  if (!by("cost-tab")) return;
   window.confirmCost = async (config) => {
     const e = await request("/api/cost/estimate", { method: "POST", body: JSON.stringify(config) });
     const source = e.price_source + " | " + e.snapshot_date;

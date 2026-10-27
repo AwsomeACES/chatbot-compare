@@ -99,7 +99,7 @@
     document.title = `${titles[view]} — AI Agent Studio`;
     const assessmentSelected = new URLSearchParams(location.search).has("assessment");
     document.getElementById("run-toolbar").hidden = assessmentSelected || !selected;
-    document.getElementById("history-toolbar").hidden = view === "evaluate";
+    document.getElementById("history-toolbar").hidden = false;
     renderHistory();
     emit("studio:view", { view, id: selected });
     if (focus) {
@@ -184,7 +184,12 @@
     },
     updateRun(run) {
       if (run.id !== selected) return;
-      document.getElementById("run-label").textContent = run.status.replaceAll("_", " ");
+      const results = (run.cases || []).flatMap((c) => c.results || []);
+      const scored = results.filter(
+        (r) => r.score != null && ["passed", "failed"].includes(r.status),
+      ).length;
+      document.getElementById("run-label").textContent =
+        `${run.targets?.map((b) => b.name).join(" vs ") || "Evaluation"} · ${run.status.replaceAll("_", " ")} · ${scored}/${results.length} scored · ${run.id.slice(0, 8)}`;
     },
   };
   show(readView());

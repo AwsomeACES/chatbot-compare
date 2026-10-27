@@ -248,129 +248,146 @@ function render(run) {
     `${run.status}: ${run.stage} • ${done}/${run.cases.length} cases processed. Scored coverage is shown below.`;
   $("progress").value = run.progress;
   const studio = run.studio;
-  const resultCases =
-    run.protocol_snapshot?.cases ||
-    settings.cases.filter((c) => run.categories.includes(c.category));
+  const resultCases = studio
+    ? run.protocol_snapshot?.cases ||
+      settings.cases.filter((c) => run.categories.includes(c.category))
+    : [...new Set(run.cases.map((c) => c.category))].map((category) => ({
+        category,
+        name: run.summary?.[0]?.categories?.find((c) => c.id === category)?.name || category,
+      }));
   const caseName = (item) =>
-    settings.cases.find((c) => c.category === item.category)?.name || item.name;
+    studio
+      ? settings.cases.find((c) => c.category === item.category)?.name || item.name
+      : item.name;
   if (!studio) {
-    [
-      "scores",
-      "relevance-charts",
-      "costs",
-      "case-results",
-      "audit",
-      "downloads",
-      "bias-details",
-      "integrity",
-      "live-progress",
-    ].forEach((id) => ($(id).innerHTML = ""));
-    $("resume").disabled = true;
+    // Display the saved summary without converting it to the newer scoring protocol.
     $("verdict").innerHTML =
-      `<p>This is an older protocol. <a href="/index.html?run=${esc(run.id)}#results">Open its complete historical results</a>.</p>`;
-    return;
-  }
-  $("verdict").innerHTML =
-    `<div class="verdict-card"><h3>${studio.winner == null ? (studio.bots.length === 1 ? "Evaluation summary" : "Comparison summary") : "Winner: " + esc(run.targets[studio.winner].name)}</h3><p>${esc(studio.confidence_note)}</p>${generalWarnings(studio).length ? `<p class="unknown">${generalWarnings(studio).map(esc).join(" ")}</p>` : ""}${familyWarnings(studio)}</div>${evaluatorProvenance()}<details class="subtle-details"><summary>How to read these scores</summary><p>${esc(studio.formula)}</p><p>Not tested is missing evidence, not a failed answer. It contributes zero to this evaluation index. Measured quality and coverage are shown separately.</p></details>`;
-  if (studio.comparison) {
-    const comparison = studio.comparison;
-    $("verdict").innerHTML +=
-      `<details class="subtle-details"><summary>Comparison evidence and review checks</summary><p>${esc(comparison.method_note)}</p><p>Confidence target across all bot pairs: ${esc(Math.round(100 * comparison.policy.confidence))}%. Saved tie margin: ${esc(comparison.tie_margin)} points. Minimum distinct scenarios: ${esc(comparison.policy.min_scenarios)}, including ${esc(comparison.policy.min_scenarios_per_category)} per category. More repeats cannot replace additional scenarios.</p>` +
-      (comparison.pairs.length
-        ? table(
-            ["Bots", "Paired scenarios", "Score difference", "Adjusted interval", "Decision"],
-            comparison.pairs.map((p) => [
-              `${esc(studio.bots[p.a].name)} vs ${esc(studio.bots[p.b].name)}`,
-              esc(p.scenarios),
-              p.difference == null ? "Not measured" : esc(p.difference),
-              p.low == null ? "Insufficient evidence" : `${esc(p.low)} to ${esc(p.high)}`,
-              esc(p.reason),
-            ]),
-          )
-        : "") +
-      table(
-        ["Bot", "Review checks", "Reason"],
-        comparison.readiness.map((r) => [
-          esc(studio.bots[r.bot].name),
-          r.meets_checks ? "Meets configured checks" : "Review required",
-          esc(r.reasons.join(" ") || "No open review items; all category thresholds met."),
-        ]),
-      ) +
-      "<p>These checks support a human release decision. They do not certify production readiness.</p></details>";
-  }
-  if (resultCases.length < settings.cases.length) {
-    $("verdict").innerHTML +=
-      `<p>This saved run contains ${resultCases.length} checks. New checks are available in <a href="#evaluate" data-view="evaluate">Evaluate</a>. Historical scores are unchanged.</p>`;
-  }
-  $("scores").innerHTML =
-    `<div class="grid">${studio.bots
-      .map(
-        (b) =>
-          `<article class="metric"><h3>${esc(b.name)}</h3><span class="pill">${b.tested === b.planned ? "Fully scored" : "Partial coverage"}</span><p class="muted">Overall score</p><div class="score">${b.score}<small>/100</small></div><p><strong>${b.tested}/${b.planned}</strong> outcomes scored · ${b.planned ? Math.round((100 * b.tested) / b.planned) : 0}% coverage</p><p>Strongest measured check: ${esc([...b.categories].filter((c) => c.tested).sort((a, z) => z.quality - a.quality)[0]?.name || "Not established")}<br>Lowest category scores: ${esc(
-            [...b.categories]
-              .sort((a, z) => a.score - z.score)
-              .slice(0, 3)
-              .map((c) => c.name)
-              .join(", "),
-          )}</p>${bar(b.score, 100)}</article>`,
-      )
-      .join("")}</div>` +
-    '<h3 class="chart-heading">Scores by category</h3>' +
-    table(
-      ["Category", ...studio.bots.map((b) => b.name), "Result"],
-      resultCases.map((item) => {
-        const groups = studio.bots.map((b) => b.categories.find((c) => c.id === item.category));
-        const categoryResult = studio.comparison?.category_results?.[item.category];
-        const complete = groups.every((g) => g.planned > 0 && g.tested === g.planned);
-        const savedMargin = run.protocol_snapshot?.tie_margin;
-        const high = Math.max(...groups.map((g) => g.score));
-        const win = categoryResult
-          ? categoryResult.leaders.map((i) => studio.bots[i].name)
-          : groups
-              .map((g, i) =>
-                savedMargin != null && high - g.score <= savedMargin ? studio.bots[i].name : null,
-              )
-              .filter(Boolean);
-        return [
-          esc(caseName(item)),
-          ...groups.map(
-            (g) =>
-              `${g.low_confidence ? '<span class="pill">Low confidence</span> ' : ""}${g.score}% ${bar(g.score, 100)}<small>${g.tested}/${g.planned} scored; measured quality: ${g.quality == null ? window.StudioStatus.QUALIFIER.not_measured : g.quality + "%"}; largest within-case repeat spread: ${g.repeat_spread ?? g.spread ?? "Unknown"} points</small>`,
-          ),
-          esc(
-            categoryResult && !categoryResult.leaders.length
-              ? categoryResult.reason
-              : !complete
-                ? "Incomplete evidence"
-                : studio.bots.length === 1
-                  ? "Scored"
-                  : win.length > 1
-                    ? "Tie"
-                    : win[0] || "Saved comparison policy unavailable",
-          ),
-        ];
-      }),
-    );
-  const relevanceKeys = ["hallucination_relevant", "hallucination_irrelevant"].filter((key) =>
-    studio.bots.some((b) => b.categories.some((c) => c.id === key)),
-  );
-  $("relevance-charts").hidden = !relevanceKeys.length;
-  $("relevance-charts").innerHTML =
-    '<h3>Relevance and irrelevance — separate scores</h3><div class="grid">' +
-    relevanceKeys
-      .map((key) => {
-        const label = settings.cases.find((c) => c.category === key)?.name || key;
-        return `<article class="metric"><h4>${esc(label)}</h4>${studio.bots
-          .map((bot) => {
-            const group = bot.categories.find((c) => c.id === key);
-            return group
-              ? `<p><strong>${esc(bot.name)}: ${group.tested ? group.quality + "% measured quality" : "Not tested yet"}</strong></p>${bar(group.quality ?? 0, 100)}<small>${group.tested}/${group.planned} scored; configured index: ${group.score}%. Missing evidence contributes zero to the index.</small>`
-              : `<p>${esc(bot.name)}: Not tested in this saved run</p>`;
-          })
-          .join("")}</article>`;
+      `<details class="subtle-details"><summary>Saved evaluation results — scoring details</summary><p>Run ${esc(run.id)} · ${esc(run.status)}. Original scoring rules are preserved. Not tested means missing evidence, not a failed answer.</p><p>${esc(run.score_formula || "Quality and coverage are reported separately.")}</p></details>${evaluatorProvenance()}`;
+    $("scores").innerHTML = (run.targets || [])
+      .map((target, index) => {
+        const summary = run.summary?.[index];
+        if (!summary)
+          return `<article class="metric"><h3>${esc(target.name)}</h3><p>Summary unavailable. See the saved case evidence below.</p></article>`;
+        const outcomes = run.cases.map((c) => c.results[index]).filter(Boolean);
+        const passed = outcomes.filter((r) => r.status === "passed").length;
+        const failed = outcomes.filter((r) => r.status === "failed").length;
+        const missing = outcomes.filter((r) => r.status === "not_tested").length;
+        return `<article class="metric"><h3>${esc(target.name)}</h3><p>Measured quality</p><div class="score">${summary.score == null ? "Not measured" : esc(summary.score) + "/100"}</div><p>${esc(summary.tested)}/${esc(summary.total)} outcomes scored · ${esc(summary.coverage)}% coverage</p><p>${passed} passed · ${failed} failed · ${missing} Not tested</p><p>${esc(summary.verdict)}</p>${table(
+          ["Category", "Measured quality", "Scored / planned", "Coverage"],
+          (summary.categories || []).map((c) => [
+            esc(c.name || c.id),
+            c.score == null ? "Not measured" : `${esc(c.score)}% ${bar(c.score, 100)}`,
+            `${esc(c.tested)}/${esc(c.total)}`,
+            `${esc(c.coverage)}%`,
+          ]),
+        )}</article>`;
       })
-      .join("") +
-    "</div>";
+      .join("");
+    $("relevance-charts").hidden = true;
+    $("relevance-charts").innerHTML = "";
+  } else {
+    $("verdict").innerHTML =
+      `<div class="verdict-card"><h3>${studio.winner == null ? (studio.bots.length === 1 ? "Evaluation summary" : "Comparison summary") : "Winner: " + esc(run.targets[studio.winner].name)}</h3><p>${esc(studio.confidence_note)}</p>${generalWarnings(studio).length ? `<p class="unknown">${generalWarnings(studio).map(esc).join(" ")}</p>` : ""}${familyWarnings(studio)}</div>${evaluatorProvenance()}<details class="subtle-details"><summary>How to read these scores</summary><p>${esc(studio.formula)}</p><p>Not tested is missing evidence, not a failed answer. It contributes zero to this evaluation index. Measured quality and coverage are shown separately.</p></details>`;
+    if (studio.comparison) {
+      const comparison = studio.comparison;
+      $("verdict").innerHTML +=
+        `<details class="subtle-details"><summary>Comparison evidence and review checks</summary><p>${esc(comparison.method_note)}</p><p>Confidence target across all bot pairs: ${esc(Math.round(100 * comparison.policy.confidence))}%. Saved tie margin: ${esc(comparison.tie_margin)} points. Minimum distinct scenarios: ${esc(comparison.policy.min_scenarios)}, including ${esc(comparison.policy.min_scenarios_per_category)} per category. More repeats cannot replace additional scenarios.</p>` +
+        (comparison.pairs.length
+          ? table(
+              ["Bots", "Paired scenarios", "Score difference", "Adjusted interval", "Decision"],
+              comparison.pairs.map((p) => [
+                `${esc(studio.bots[p.a].name)} vs ${esc(studio.bots[p.b].name)}`,
+                esc(p.scenarios),
+                p.difference == null ? "Not measured" : esc(p.difference),
+                p.low == null ? "Insufficient evidence" : `${esc(p.low)} to ${esc(p.high)}`,
+                esc(p.reason),
+              ]),
+            )
+          : "") +
+        table(
+          ["Bot", "Review checks", "Reason"],
+          comparison.readiness.map((r) => [
+            esc(studio.bots[r.bot].name),
+            r.meets_checks ? "Meets configured checks" : "Review required",
+            esc(r.reasons.join(" ") || "No open review items; all category thresholds met."),
+          ]),
+        ) +
+        "<p>These checks support a human release decision. They do not certify production readiness.</p></details>";
+    }
+    if (resultCases.length < settings.cases.length) {
+      $("verdict").innerHTML +=
+        `<p>This saved run contains ${resultCases.length} checks. New checks are available in <a href="#evaluate" data-view="evaluate">Evaluate</a>. Historical scores are unchanged.</p>`;
+    }
+    $("scores").innerHTML =
+      `<div class="grid">${studio.bots
+        .map(
+          (b) =>
+            `<article class="metric"><h3>${esc(b.name)}</h3><span class="pill">${b.tested === b.planned ? "Fully scored" : "Partial coverage"}</span><p class="muted">Overall score</p><div class="score">${b.score}<small>/100</small></div><p><strong>${b.tested}/${b.planned}</strong> outcomes scored · ${b.planned ? Math.round((100 * b.tested) / b.planned) : 0}% coverage</p><p>Strongest measured check: ${esc([...b.categories].filter((c) => c.tested).sort((a, z) => z.quality - a.quality)[0]?.name || "Not established")}<br>Lowest category scores: ${esc(
+              [...b.categories]
+                .sort((a, z) => a.score - z.score)
+                .slice(0, 3)
+                .map((c) => c.name)
+                .join(", "),
+            )}</p>${bar(b.score, 100)}</article>`,
+        )
+        .join("")}</div>` +
+      '<h3 class="chart-heading">Scores by category</h3>' +
+      table(
+        ["Category", ...studio.bots.map((b) => b.name), "Result"],
+        resultCases.map((item) => {
+          const groups = studio.bots.map((b) => b.categories.find((c) => c.id === item.category));
+          const categoryResult = studio.comparison?.category_results?.[item.category];
+          const complete = groups.every((g) => g.planned > 0 && g.tested === g.planned);
+          const savedMargin = run.protocol_snapshot?.tie_margin;
+          const high = Math.max(...groups.map((g) => g.score));
+          const win = categoryResult
+            ? categoryResult.leaders.map((i) => studio.bots[i].name)
+            : groups
+                .map((g, i) =>
+                  savedMargin != null && high - g.score <= savedMargin ? studio.bots[i].name : null,
+                )
+                .filter(Boolean);
+          return [
+            esc(caseName(item)),
+            ...groups.map(
+              (g) =>
+                `${g.low_confidence ? '<span class="pill">Low confidence</span> ' : ""}${g.score}% ${bar(g.score, 100)}<small>${g.tested}/${g.planned} scored; measured quality: ${g.quality == null ? window.StudioStatus.QUALIFIER.not_measured : g.quality + "%"}; largest within-case repeat spread: ${g.repeat_spread ?? g.spread ?? "Unknown"} points</small>`,
+            ),
+            esc(
+              categoryResult && !categoryResult.leaders.length
+                ? categoryResult.reason
+                : !complete
+                  ? "Incomplete evidence"
+                  : studio.bots.length === 1
+                    ? "Scored"
+                    : win.length > 1
+                      ? "Tie"
+                      : win[0] || "Saved comparison policy unavailable",
+            ),
+          ];
+        }),
+      );
+    const relevanceKeys = ["hallucination_relevant", "hallucination_irrelevant"].filter((key) =>
+      studio.bots.some((b) => b.categories.some((c) => c.id === key)),
+    );
+    $("relevance-charts").hidden = !relevanceKeys.length;
+    $("relevance-charts").innerHTML =
+      '<h3>Relevance and irrelevance — separate scores</h3><div class="grid">' +
+      relevanceKeys
+        .map((key) => {
+          const label = settings.cases.find((c) => c.category === key)?.name || key;
+          return `<article class="metric"><h4>${esc(label)}</h4>${studio.bots
+            .map((bot) => {
+              const group = bot.categories.find((c) => c.id === key);
+              return group
+                ? `<p><strong>${esc(bot.name)}: ${group.tested ? group.quality + "% measured quality" : "Not tested yet"}</strong></p>${bar(group.quality ?? 0, 100)}<small>${group.tested}/${group.planned} scored; configured index: ${group.score}%. Missing evidence contributes zero to the index.</small>`
+                : `<p>${esc(bot.name)}: Not tested in this saved run</p>`;
+            })
+            .join("")}</article>`;
+        })
+        .join("") +
+      "</div>";
+  }
   const costs = run.costs;
   if (costs?.available) {
     const rows = [
@@ -387,6 +404,7 @@ function render(run) {
       "</strong></span><span>Judge cost <strong>" +
       costMoney(costs.evaluation) +
       "</strong></span></div>" +
+      '<details class="subtle-details"><summary>View token counts and cost charts</summary>' +
       table(
         [
           "Bot / judge",
@@ -407,7 +425,7 @@ function render(run) {
           r.cost_micro_usd == null ? "Unknown" : bar(r.cost_micro_usd, maxCost),
         ]),
       ) +
-      `<p>Bot total: ${costMoney(costs.bot)}. Evaluation total: ${costMoney(costs.evaluation)}. Hidden bot calls require its own telemetry. Token totals can include estimates for failed or opaque calls; JSON records each source.</p>`;
+      `<p>Bot total: ${costMoney(costs.bot)}. Evaluation total: ${costMoney(costs.evaluation)}. Hidden bot calls require its own telemetry. Token totals can include estimates for failed or opaque calls; JSON records each source.</p></details>`;
   } else
     $("costs").innerHTML =
       '<p class="empty-state">Cost is unavailable for this run. Missing usage is never treated as free.</p>';
@@ -488,10 +506,10 @@ function render(run) {
       .filter((c) => c.category === category)
       .map(
         (c) =>
-          `<div class="case-evidence"><h4>${esc(c.name)} · case ${c.scenario_index || 1}, repeat ${c.repeat}</h4><div class="grid">${c.results
+          `<div class="case-evidence"><h4>${esc(c.name)} · case ${c.scenario_index || 1}, repeat ${c.repeat ?? 1}</h4><div class="grid">${c.results
             .map(
               (r, i) =>
-                `<article><strong>${esc(run.targets[i].name)} <span class="pill">${esc(window.StudioStatus.label(r.status))}</span></strong><p>Score: ${r.score == null ? `${window.StudioStatus.RESULT.not_tested} (index contribution 0)` : r.score + "/100"}</p><p>${r.human_review_note ? "<strong class=badge>Overridden — reason logged</strong> " : ""}${r.needs_review ? `<strong>${esc(window.StudioStatus.QUALIFIER.needs_review)}</strong> ` : ""}${esc(r.reason)}</p>${(r.judges || []).map((j) => `<p class="judge-reason">Judge: ${esc(j.model)} — ${j.score}%<br>Evidence: ${j.evidence.map(esc).join(" | ")}${judgeProvenance(j)}</p>`).join("")}${nonJudgeEngine(r)}${r.transcript
+                `<article><strong>${esc(run.targets[i].name)} <span class="pill">${esc(window.StudioStatus.label(r.status))}</span></strong><p>Score: ${r.score == null ? `${window.StudioStatus.RESULT.not_tested}${studio ? " (index contribution 0)" : " (excluded from measured quality)"}` : r.score + "/100"}</p><p>${r.human_review_note ? "<strong class=badge>Overridden — reason logged</strong> " : ""}${r.needs_review ? `<strong>${esc(window.StudioStatus.QUALIFIER.needs_review)}</strong> ` : ""}${esc(r.reason)}</p>${(r.judges || []).map((j) => `<p class="judge-reason">Judge: ${esc(j.model)} — ${j.score}%<br>Evidence: ${j.evidence.map(esc).join(" | ")}${judgeProvenance(j)}</p>`).join("")}${nonJudgeEngine(r)}${window.renderEvidenceDetails(c, r)}${r.transcript
                   .map(
                     (t) => `<div class="transcript"><strong>User:</strong> ${esc(t.input)}
 <strong>Bot:</strong> ${esc(t.output || t.error || "No response")}
@@ -544,10 +562,22 @@ Time: ${t.seconds ?? "Unknown"} seconds</div>`,
       tell(error.message);
     }
   };
+  const savedAgreement = !studio
+    ? table(
+        ["Bot", "Model-to-model agreement", "Judged sample"],
+        (run.judge_agreement || []).map((a) => [
+          esc(a.target),
+          a.agreement_percent == null ? "Not measured" : esc(a.agreement_percent) + "%",
+          esc(a.judged),
+        ]),
+      )
+    : "";
   $("audit").innerHTML =
-    `<p>Run ID: ${esc(run.id)}. Agreement measured on ${studio.agreement_cases || 0} conversations with distinct valid judge models. Agreement: ${studio.agreement_percent == null ? "Not measured" : studio.agreement_percent + "%"}. ${esc(studio.agreement_definition || "")}</p><pre>${esc(JSON.stringify(run.audit || [], null, 2))}</pre>`;
-  $("bias-panel").hidden = !studio.bots.some((b) => b.bias_subtests?.length);
+    savedAgreement +
+    `<p>Run ID: ${esc(run.id)}. Agreement measured on ${studio?.agreement_cases || 0} conversations with distinct valid judge models. Agreement: ${studio?.agreement_percent == null ? "Not measured" : studio.agreement_percent + "%"}. ${esc(studio?.agreement_definition || "")}</p><pre>${esc(JSON.stringify(run.audit || [], null, 2))}</pre>`;
+  $("bias-panel").hidden = !studio?.bots.some((b) => b.bias_subtests?.length);
   renderGovernanceExtras(run);
+  window.renderResultAnalysis(run);
   $("downloads").innerHTML =
     `<a class="button" href="/api/blackbox/runs/${run.id}/download?format=pdf">Download PDF</a><a class="button" href="/api/blackbox/runs/${run.id}/download?format=json">Export JSON</a><a class="button" href="#governance" data-view="governance">Governance →</a>`;
 }
@@ -818,6 +848,12 @@ window.addEventListener("studio:run-selected", async (event) => {
   liveRun = "";
   liveEvents = null;
   [
+    "analysis-summary",
+    "charts",
+    "cost-panel",
+    "comparison",
+    "judge-agreement",
+    "regressions",
     "verdict",
     "scores",
     "bias-details",

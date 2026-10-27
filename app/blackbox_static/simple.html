@@ -8,6 +8,10 @@
     <!-- Shared status wording: must load before the screen scripts that read it. -->
     <script defer src="/status-labels.js"></script>
     <script defer src="/shell.js"></script>
+    <script defer src="/costs.js"></script>
+    <script defer src="/dashboard.js"></script>
+    <script defer src="/comparison.js"></script>
+    <script defer src="/result-analysis.js"></script>
     <script defer src="/simple.js"></script>
     <script defer src="/calibration.js"></script>
     <script defer src="/governance.js"></script>
@@ -46,6 +50,7 @@
         </div>
         <span id="run-label" class="pill">No run selected</span>
         <div class="actions">
+          <a class="button" href="#results" data-view="results">View selected run results</a>
           <button id="refresh-run" type="button">Refresh</button>
           <button id="resume" type="button" disabled>Resume missing cases</button>
           <button id="stop" class="danger-quiet" type="button" disabled>Stop run</button>
@@ -198,7 +203,7 @@
         <div class="page-heading">
           <p class="eyebrow">RESULTS</p>
           <h1 tabindex="-1">Your evaluation results</h1>
-          <p>See what worked, what needs attention, and how to improve.</p>
+          <p>Check the score, review any failures, then download your report.</p>
         </div>
         <section id="results-empty" class="empty-state">
           <h2>Choose a test to see its results</h2>
@@ -246,15 +251,37 @@
           </div>
           <p id="stage" role="status">Choose a saved evaluation above, or start a new test.</p>
           <progress id="progress" aria-label="Evaluation progress" max="100" value="0"></progress>
+          <div id="scores"></div>
           <div id="verdict"></div>
           <div class="actions" id="downloads"></div>
-          <div id="scores"></div>
           <p class="helper">
             Scores are estimates for these tests. Coverage shows how much was scored. Open the
             evidence before making a release decision.
           </p>
           <div id="integrity"></div>
         </section>
+        <section id="usage-section" aria-labelledby="usage-heading">
+          <h2 id="usage-heading">Tokens and cost</h2>
+          <p>Bot usage and judge usage are tracked separately.</p>
+          <div id="costs">
+            <p class="empty-state">Usage will appear after an evaluation.</p>
+          </div>
+        </section>
+        <details class="panel-details" id="cost-analysis">
+          <summary>Full cost analysis — categories, cases and models</summary>
+          <div id="cost-panel"></div>
+        </details>
+        <details class="panel-details" id="analysis-details">
+          <summary>Detailed analysis — strengths, risks and response times</summary>
+          <div id="analysis-summary"></div>
+          <div id="charts"></div>
+        </details>
+        <details class="panel-details" id="comparison-details">
+          <summary>Comparison, judge agreement and regression checks</summary>
+          <div id="comparison"></div>
+          <div id="judge-agreement"></div>
+          <div id="regressions"></div>
+        </details>
         <section aria-labelledby="evidence-heading">
           <h2 id="evidence-heading">Test evidence</h2>
           <p>Open a category for the judge’s reason and exact conversation.</p>
@@ -266,15 +293,8 @@
             <div id="bias-details"></div>
           </details>
         </section>
-        <section id="usage-section" aria-labelledby="usage-heading">
-          <h2 id="usage-heading">Tokens and cost</h2>
-          <p>Bot usage and judge usage are tracked separately.</p>
-          <div id="costs">
-            <p class="empty-state">Usage will appear after an evaluation.</p>
-          </div>
-        </section>
         <details class="panel-details">
-          <summary>More result details</summary>
+          <summary>Advanced result details — optional</summary>
           <div id="relevance-charts"></div>
           <details>
             <summary>Progress and timings by category</summary>

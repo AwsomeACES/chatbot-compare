@@ -1078,3 +1078,43 @@ Test count grew from 448 at the start of this work to 592 collected. New test fi
 Two transient infrastructure hiccups were observed and are not product failures: an `npm` invocation and one `pytest` start failed immediately after the full suite finished (an `OSError: [Errno 22]` reading a `.pyc`), and both succeeded on an unchanged re-run.
 
 Not exercised, and therefore not claimed: native Linux or macOS, any container build, any scanner image, any real provider call, and any remote CI run. See the category table in [docs/verification.md](docs/verification.md).
+
+## 2026-10-24 — AIRM-143 Reliance functional verification (in progress)
+
+Located the implemented T-035 calibration API at `/api/studio/judge-calibration` and confirmed its policy. Studio history needed an idle restart; automatic resume was disabled. Reliance initially failed importing `pydantic_settings.sources`; reinstalled the same pydantic-settings 2.15.0 in its existing venv and started its documented backend. Target provider/model settings were not changed. No credentials were read or saved.
+
+One sample Run only: `4d16f8fd-5e97-47bf-af08-49d4a75ee60f`, ten authored Cases. Initial judge-disabled planning sent the injection Case and skipped nine semantic Cases. The owner explicitly approved a transcript-only collection fix to continue unsent Cases in this same Run. Added validated `Settings.collect_only` (judge disabled, non-simple planning), preserved all attempted transcripts and completed scores on resume, disabled automatic conversation replay in collection mode, and retained unjudged results as Not tested with null score. Twelve focused collection/recovery tests pass; changed Python files pass Ruff lint/format.
+
+Three target conversations returned busy errors; their attempted transcripts remain untouched and are not resent. The circuit breaker left six Cases unsent. Started existing Ollama via its documented launcher, without downloads or target configuration changes, and continued only those unsent Cases. Collection still in progress. No human labels, frozen calibration versions, or provider calibration evaluations have been created. OpenAI/Gemini/Gemma stages must wait for the owner-supplied keys in order. Not production validation; no push/publication.
+
+## 2026-10-26 - AIRM-143 sample complete; waiting for real human labels
+
+Continued the same Run `4d16f8fd-5e97-47bf-af08-49d4a75ee60f`, not a new sample. Started Studio with automatic resume off and the documented Reliance/Ollama services unchanged. Resumed only the final three unsent Cases. Final evidence: four complete conversations (injection, PII, over-refusal, uncertainty) and six excluded incomplete/error conversations (three busy errors and three timeouts). Previously attempted results, including the scored injection result, were compared exactly and remained unchanged. All ten Cases are accounted for; this is not ten valid calibration items.
+
+Created exactly one unlabeled set `e632a9b1-8547-4dce-9d13-0cdf9fb343d6` containing the four eligible conversations, zero human labels and no frozen version. No Judge calibration requests have run. User must now label those four answers; never invent labels or resend target messages. Gemini and Gemma share GEMINI_API_KEY / GOOGLE_API_KEY configuration aliases. Provider keys must be requested sequentially after labeling (OpenAI, Gemini, shared-key Gemma, Ollama), not read from existing saved settings. A result hash is stored outside the repo in airm143-verification-state.json for the later non-mutation check. Four items cannot meet the unchanged ten-scenario sufficiency policy. This is only a small functional test. No commit/push/publication.
+
+## 2026-10-26 - VoltKart Gemini Black-box screening
+
+User requested running the supplied VoltKart ZIP on Gemini and judging through Studio. Original ZIP has no Gemini provider. A separate copy outside this repo adds the Gemini compatibility adapter while retaining store tools and usage accumulation. It runs as non-root inside read-only Docker with dropped capabilities and bounded resources. Credentials are process-memory only, not stored in container configuration, source, artifacts or the saved Run. Original ZIP unchanged; uploaded application code/dependencies were not executed/installed on the Windows host.
+
+Initial setup Run c3581d6a-943f-48c0-af34-14d9b02ecfdd: Gemini 2.5 Flash Lite was listed but generation returned 404, surfaced as bot HTTP 502. Three failed calls and seven circuit-breaker exclusions stayed Not tested; evidence retained. A separate minimal Gemini 3.5 Flash Lite diagnostic succeeded (4 input, 1 output token). Setup/diagnostic billing is excluded from the successful Run and remains Unknown where not returned.
+
+Completed Run 166599aa-0251-40e4-9eae-698845f509c8: Gemini 3.5 Flash Lite bot and Judge; 10 authored Cases, one repeat each, 13 bot messages (paired/multi-turn); 10 passed, zero failed, zero Not tested, 100/100 AI score, 100% coverage; 597.032 seconds. Bot: 16,374 input and 1,020 output tokens. Judge: 5,101 input and 470 output tokens. Saved-price estimates: bot $0.0074622, Judge $0.0027053, successful Run $0.0101675, not an invoice (14 October snapshot). Final audit valid/anchored with 21 events. Catalogue references are synthetic ZIP data, not independently verified retail facts.
+
+Artifacts: C:/Users/Moinuddeen hussain/Documents/ChatGPT/Moinuddeen_airm/voltkart-gemini-verification-20261026/voltkart-gemini-report.html, voltkart-gemini-results.json and voltkart-gemini-results.pdf. Dashboard /index.html?run=166599aa-0251-40e4-9eae-698845f509c8#results; bot localhost:8090. Same-family Judge and absent human calibration limit conclusions; small functional screening only, not independent Judge accuracy or production readiness. Earlier AIRM-143 labels untouched. No push/publication.
+
+## 2026-10-27 - Custom runs in the unified Results screen
+
+Removed the early-return legacy-dashboard link for runs without the simple protocol summary. The current UI now displays saved summary scores, coverage, category bars, outcomes, lazy transcript evidence, costs, exports and governance access for custom runs. It retains the original score formula and null/Not tested semantics; no saved scores or transcripts are rewritten. Previous tests is visible from Evaluate too, with a direct View selected run results link and bot name, scored count and run ID in the toolbar.
+
+Verification: isolated scripts/check-studio-ui.py passed simple/custom/unscored fixtures, history switching, escaped hostile transcript text, calibration, provenance and mobile layout with zero browser errors. Navigation tests: 11 passed. Live VoltKart run 166599aa-0251-40e4-9eae-698845f509c8 now renders at /?run=166599aa-0251-40e4-9eae-698845f509c8#results with 10/10 scored and existing cost totals. Restarted Studio with STUDIO_AUTO_RESUME=0. No bot/Judge requests, no data deletion, no push.
+
+## 2026-10-27 - Simpler Results layout
+
+Moved scores ahead of protocol explanations, placed cost totals before transcripts, and collapsed saved scoring rules and detailed token/cost charts behind clearly named optional sections. Kept English technical names, Not tested/Unknown semantics, calibration warnings and all existing controls. No evaluations or score changes.
+
+## 2026-10-27 - Full analysis parity in the unified UI
+
+Reused costs.js read-only rendering in the new Results screen: all category/case/model/role breakdowns, measurement basis, price snapshot, unit economics, expensive cases and retry/failed-call totals. Added named disclosure sections for detailed strength/risk/missing-evidence summaries, request reliability, legacy-protocol charts, comparison matrix, second-judge agreement and regression results. Expanded case evidence with expected behavior, exact checks, secondary verdicts, unmatched quotes and evidence digests. The summary remains concise; no saved data or scores changed. Legacy setup handlers are not loaded on the new screen, and cost disclosure/cache state resets between selected runs.
+
+Verified: isolated browser checks including full_analysis_sections pass, history selection and mobile layout pass, zero browser errors; JS syntax and changed-file Prettier pass. Live VoltKart category table checked against the prior report (all ten rows and unchanged costs). No provider calls or publication.

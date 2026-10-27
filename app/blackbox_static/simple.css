@@ -911,3 +911,57 @@ pre {
   display: block;
   color: #4a4668;
 }
+
+/* Detailed reports remain within the same responsive Results page. */
+#cost-panel .columns,
+#charts .stat-grid,
+#charts .chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+  gap: 16px;
+}
+#cost-panel .card,
+#charts .card {
+  min-width: 0;
+  padding: 12px 0;
+}
+#cost-panel,
+#analysis-details,
+#comparison-details {
+  overflow-wrap: anywhere;
+}
+#charts .donut {
+  width: 150px;
+  max-width: 100%;
+}
+#charts .latency-chart {
+  width: 100%;
+  height: auto;
+}
+#charts .stat-grid strong,
+#charts .stat-grid span {
+  display: block;
+  margin: 8px 0;
+}
+#charts .category-bar {
+  margin: 12px 0;
+}
+#charts .category-bar .bar-track > div {
+  height: 100%;
+  background: #8274df;
+}
+#cost-panel .badge {
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: #eef0ff;
+}
+#cost-panel .not_tested {
+  background: #fff1d5;
+  color: #724800;
+}
+#cost-panel .score {
+  font-size: 1.5rem;
+}
+#cost-panel details {
+  margin: 14px 0;
+}

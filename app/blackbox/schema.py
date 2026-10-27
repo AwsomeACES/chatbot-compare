@@ -206,6 +206,7 @@ class Settings(BaseModel):
     judge_url: str = "http://127.0.0.1:1234/v1/chat/completions"
     judge_model: str = ""
     judge_token: SecretStr | None = None
+    collect_only: bool = False
     judge_enabled: bool = True
     primary_judge_family: str = Field(default="", max_length=100)
     secondary_judge_enabled: bool = False
@@ -239,6 +240,10 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def check(self):
+        if self.collect_only and (self.judge_enabled or self.simple_mode):
+            raise ValueError(
+                "Transcript-only collection requires judge disabled and legacy case planning."
+            )
         if any(type(n) is not int or not 1 <= n <= 20 for n in self.repeat_counts.values()):
             raise ValueError("Repeat counts must be integers between 1 and 20.")
         if any(type(n) is not int or not 1 <= n <= 16 for n in self.provider_limits.values()):
