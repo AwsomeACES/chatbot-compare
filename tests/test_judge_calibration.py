@@ -1115,3 +1115,119 @@ def test_markdown_export_carries_confusion_folds_and_denominators():
     assert "Distinct scenarios:" in text
     for limitation in body["limitations"]:
         assert limitation in text
+
+
+# --- the reference profile is part of evaluator identity (T-040, section 9) ---------------------
+
+
+def owner_profile(facts=("Standard delivery takes 2-5 business days.",), capabilities=()):
+    from app.blackbox.reference_profile import ReferenceProfile, ReferenceProvenance
+
+    return ReferenceProfile(
+        general_facts=list(facts),
+        capabilities=list(capabilities),
+        provenance=ReferenceProvenance(supplied_by="owner", source="policy page"),
+    )
+
+
+def profiled(profile, model="m", url=LOCAL):
+    return Settings(
+        targets=[Target(kind="zip")],
+        judge_model=model,
+        judge_url=url,
+        reference_profile=profile,
+    )
+
+
+def test_supplying_a_reference_profile_changes_the_evaluator_identity():
+    """Claim rules travel in the user payload, so they need their own identity dimension."""
+    base = evaluator_fingerprint(settings())
+    with_profile = evaluator_fingerprint(profiled(owner_profile()))
+    assert with_profile["claim_rules_hash"] != base["claim_rules_hash"]
+    assert with_profile["id"] != base["id"]
+    assert base["template_hash"] == with_profile["template_hash"], (
+        "the system message is unchanged, which is why a separate hash is needed"
+    )
+
+
+def test_editing_the_declared_facts_changes_the_identity():
+    one = evaluator_fingerprint(profiled(owner_profile()))["claim_rules_hash"]
+    two = evaluator_fingerprint(
+        profiled(
+            owner_profile(facts=("Standard delivery takes 2-5 business days.", "7-day returns."))
+        )
+    )["claim_rules_hash"]
+    assert one != two
+
+
+def test_declaring_a_capability_changes_the_identity_independently():
+    facts_only = evaluator_fingerprint(profiled(owner_profile()))["claim_rules_hash"]
+    both = evaluator_fingerprint(
+        profiled(owner_profile(capabilities=("get_order_status(order_id, phone)",)))
+    )["claim_rules_hash"]
+    assert facts_only != both
+
+
+def test_the_same_profile_produces_the_same_identity():
+    """Identity must be stable, or every run would look like a different evaluator."""
+    assert (
+        evaluator_fingerprint(profiled(owner_profile()))["claim_rules_hash"]
+        == evaluator_fingerprint(profiled(owner_profile()))["claim_rules_hash"]
+    )
+
+
+def test_a_reference_change_is_reported_as_a_stale_reason():
+    """An alignment recorded without a declaration must not be reported as still aligned."""
+    recorded = evaluator_fingerprint(settings())
+    current = evaluator_fingerprint(profiled(owner_profile()))
+    reasons = cal.mismatch_reasons({"evaluator": recorded}, current, None, None, {}, [])
+    assert "Reference facts or capability declarations changed." in reasons
+
+
+def test_a_record_written_before_the_dimension_existed_is_treated_as_a_mismatch():
+    """A missing dimension cannot be shown to match, so it is not quietly accepted."""
+    recorded = {k: v for k, v in evaluator_fingerprint(settings()).items()}
+    recorded.pop("claim_rules_hash")
+    reasons = cal.mismatch_reasons(
+        {"evaluator": recorded}, evaluator_fingerprint(settings()), None, None, {}, []
+    )
+    assert "Reference facts or capability declarations changed." in reasons
+
+
+def test_an_unchanged_configuration_reports_no_reference_mismatch():
+    fingerprint = evaluator_fingerprint(settings())
+    reasons = cal.mismatch_reasons({"evaluator": fingerprint}, fingerprint, None, None, {}, [])
+    assert reasons == []
+
+
+def test_resolve_compatibility_accepts_a_saved_profile_dictionary():
+    """A saved Run stores the profile as configuration data, not as a live object."""
+    saved = owner_profile().model_dump()
+    state = cal.resolve_compatibility("judge-a", LOCAL, None, None, saved)
+    assert state["state"] in (
+        "uncalibrated",
+        "stale",
+        "not_aligned",
+        "insufficient_sample",
+        "meets",
+    )
+
+
+def test_resolve_compatibility_survives_an_unusable_saved_profile():
+    """A stored profile that no longer validates must not break the alignment read."""
+    state = cal.resolve_compatibility("judge-a", LOCAL, None, None, {"general_facts": "not a list"})
+    assert state["state"] in (
+        "uncalibrated",
+        "stale",
+        "not_aligned",
+        "insufficient_sample",
+        "meets",
+    )
+
+
+def test_the_prompt_template_version_records_the_direction_contract():
+    """The ambiguous scale and the explicit one must not share an identity."""
+    from app.blackbox.judge_prompts import PROMPT_TEMPLATE_VERSION
+
+    assert PROMPT_TEMPLATE_VERSION == "rubric-v2-compliance-direction"
+    assert evaluator_fingerprint(settings())["template_version"] == PROMPT_TEMPLATE_VERSION

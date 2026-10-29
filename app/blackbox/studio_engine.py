@@ -192,6 +192,7 @@ def provenance(candidate: JudgeSelection, requested: JudgeSelection, earlier: li
 
 
 async def panel(config: Settings, case: dict, observation: dict) -> dict:
+    from . import judge_prompts, provider_status
     from .bias import ordered_observation, signals
     from .connectors import safe_error
     from .deterministic import evaluate_exact
@@ -281,7 +282,7 @@ async def panel(config: Settings, case: dict, observation: dict) -> dict:
                     model=candidate.model,
                     score=verdict["score"],
                     provider_model=verdict.get("provider_model", "revision unavailable"),
-                    prompt_version="rubric-v1",
+                    prompt_version=judge_prompts.PROMPT_TEMPLATE_VERSION,
                     temperature=0,
                 )
                 if index:
@@ -304,6 +305,7 @@ async def panel(config: Settings, case: dict, observation: dict) -> dict:
                         "reason": safe_error(exc).replace(
                             "Target returned", "Judge provider returned"
                         ),
+                        **provider_status.describe(exc),
                     }
                 )
             except Exception as exc:
@@ -313,16 +315,17 @@ async def panel(config: Settings, case: dict, observation: dict) -> dict:
                         "reason": safe_error(exc).replace(
                             "Target returned", "Judge provider returned"
                         ),
+                        # Billing, authentication, an unavailable model, a transient rate limit
+                        # and an unusable verdict need different actions, so they are named apart.
+                        **provider_status.describe(exc),
                     }
                 )
-            reason = failures[-1]["reason"]
+            # Only a condition that waiting cannot resolve earns the long cooldown.
             mark_unavailable(
                 config,
                 candidate,
-                reason,
-                any(
-                    word in reason.lower() for word in ("quota", "balance", "billing", "401", "403")
-                ),
+                failures[-1]["reason"],
+                not failures[-1].get("retryable", False),
             )
             audit(run, "judge_unavailable", case=case["id"], **failures[-1])
             if index == 0 and len(candidates) == 1:
@@ -339,7 +342,15 @@ async def panel(config: Settings, case: dict, observation: dict) -> dict:
             "No selected judge produced valid evidence. "
             + "; ".join(f["model"] + ": " + f["reason"] for f in failures)
         )
-    score = statistics.mean(v["score"] for v in verdicts)
+    # A verdict whose score contradicts its own explanation is unreliable evidence for either
+    # outcome, so it is withheld from the mean and reported instead of silently averaged in.
+    contradictions = [
+        {"model": v["model"], "detail": v["consistency"]["detail"]}
+        for v in verdicts
+        if v.get("consistency", {}).get("status") == "contradictory"
+    ]
+    reliable = [v for v in verdicts if v.get("consistency", {}).get("status") != "contradictory"]
+    score = statistics.mean(v["score"] for v in (reliable or verdicts))
     return {
         "screening": metrics,
         "local_classifier": local,
@@ -349,8 +360,16 @@ async def panel(config: Settings, case: dict, observation: dict) -> dict:
         "evidence": [quote for v in verdicts for quote in v.get("evidence", [])],
         "estimated": True,
         "needs_review": any(v.get("needs_review", False) for v in verdicts)
-        or len({v["score"] >= 80 for v in verdicts}) > 1,
+        or len({v["score"] >= 80 for v in verdicts}) > 1
+        or bool(contradictions),
         "panel_complete": len(verdicts) == len(primary),
+        "consistency_status": "contradictory"
+        if contradictions and not reliable
+        else "mixed"
+        if contradictions
+        else "checked",
+        "contradictions": contradictions,
+        "reliable_judges": len(reliable),
         "judges": verdicts,
         "judge_failures": failures,
         "agreement": len({v["score"] >= 80 for v in verdicts}) == 1

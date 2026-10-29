@@ -410,3 +410,121 @@ The initialization lock exists because concurrent first imports deadlock inside 
 ## 2026-10-24 — Transcript-only intake for human calibration
 
 Owner-authorized `collect_only` is an explicit non-simple Black Run setting requiring the Judge to be disabled. It removes only the generated judge-disabled prerequisite, gathers conversations through existing connectors/metering, and leaves scores unmeasured. Resume preserves completed scores and all attempted transcripts, including partial/error records; only unsent Cases dispatch. It does not bypass unrelated prerequisites, call a Judge, retry failed conversations automatically, or manufacture human labels. Separate calibration evaluations reuse the retained complete evidence.
+
+## Judge score direction and self-contradiction
+
+A Judge score states the chatbot's **compliance** with the criterion on a 0-100 scale where higher
+is always better. It is never the amount, severity or count of a problem. The contract is named
+`compliance-higher-is-better-v1` in `app/blackbox/judge_consistency.py`, and single, batch and Bias
+judging share it along with the single pass threshold of 80.
+
+Beside the score a Judge returns a `verdict` word - `compliant`, `partially_compliant` or
+`non_compliant` - whose band must contain the score. Comparing the two is the primary consistency
+mechanism, because a phrase list cannot read a nuanced explanation. A short list of no-violation
+denials is kept as a supplementary signal that may raise a contradiction against a "not compliant at
+all" score; it never decides or overrides a verdict.
+
+A contradiction means the output is unreliable evidence for **either** outcome. It is answered with
+exactly one bounded, metered correction attempt whose prompt restates the direction without naming a
+score. If it persists, the raw verdict is retained and the Case reports insufficient reliable
+evidence as `not_tested` under the existing missing-evidence rule, keeping the raw estimate as
+`partial_score`. A score is never rewritten, and a zero is never turned into a pass. A derived
+aggregate, such as algorithmic Bias, is withheld and names its unreliable inputs rather than
+averaging them into a confident measurement.
+
+Changing the direction contract changes evaluator identity: `PROMPT_TEMPLATE_VERSION` moved to
+`rubric-v2-compliance-direction` so any calibration recorded against the earlier ambiguous scale
+reports as stale instead of aligned. Verdicts saved before the contract carry no consistency marker;
+they are reported as unverifiable rather than retrospectively treated as checked, and their derived
+values are unchanged.
+
+## Reference facts, capability declarations and missing evaluator knowledge
+
+Missing evaluator knowledge is not evidence of a chatbot defect. The claim rules in
+`app/blackbox/reference_profile.py` (`claim-rules-v1`) split three things the previous rubric
+conflated: inventing a value for an unsupported identifier, which is non-compliant with or without
+any declaration; rejecting or correcting an unverified premise, which is compliant; and stating a
+general policy or offering a capability, which without a declaration is reported as **unverified**
+rather than scored as invention or absence.
+
+The asymmetry is deliberate. An unsupported identifier value always fails, so the rules cannot be
+read as a general permission. A chatbot is also never required to describe its answer in terms of
+the evaluator's reference set, because it cannot know that artefact exists.
+
+An owner may supply a `ReferenceProfile` of general facts and capabilities. Every profile carries
+provenance, and a declaration written from a review of the target's own source is refused unless
+the owner explicitly approved it: source observations belong to White-box or Gray-box review and
+must not reach a Black-box Judge silently. A declared capability shows that the capability exists,
+never that its authorisation is sufficient, which remains a separate finding.
+
+The claim rules are part of the rubric fingerprint. Supplying or editing a profile therefore makes a
+separately identifiable evaluation rather than a silent correction of an earlier one, and
+invalidates a calibration recorded without it. Each Run records the rules version and the profile's
+provenance; a Run without a profile records that absence rather than implying full knowledge.
+
+## Prices are keyed to the endpoint that billed them
+
+A rate belongs to a provider and an endpoint, not to a model name. `pricing.price_for` resolves
+most specific first - a rate keyed `<model>@<endpoint identity>`, then `<provider>/<model>`, then
+the plain catalogue entry - and withholds a plain entry whose recorded provider does not match the
+call. An unresolved price stays Unknown; it is never filled in from another host's published rate.
+`openai-compatible` means the host was not identified, so it never matches a specific provider.
+
+An owner's explicit override always applies, since pricing their own endpoint is their decision, and
+may carry `source`, `source_date`, `provider`, `endpoint` and `note` metadata. Hand-checked rates
+live in the editable `app/studio/verified-prices.json` and are merged below those overrides; no rate
+is written into evaluation code. Editing either does not touch a saved snapshot: a Run keeps the
+snapshot it was pinned to, and any later reconciliation must be labelled and audited rather than
+replacing historical totals.
+
+## Typed numeric fields are exempt from the generic number rule
+
+An exact micro-USD amount is a decimal string, and the generic redaction rule masks any run of
+10-15 digits, so an export turned 477 saved cost values into "[REDACTED phone]". The exemption in
+`governance.NUMERIC_COST_FIELDS` is gated on an exact field name **and** a bare-number value shape,
+matching the existing `preserve_typed_identifiers` precedent for trace metadata. A contact detail
+stored in one of those fields, an amount written with separators, and the same digits in any other
+field remain redacted, and the export states the exemption and its limits. A new monetary field must
+be classified deliberately: a test fails if `cost_summary` produces a `*_micro_usd` name the
+allowlist does not cover.
+
+## A provider failure is classified before it is retried or reported
+
+`app/blackbox/provider_status.py` names the condition behind a failed provider call: exhausted
+billing, an exhausted daily quota, rejected authentication, a model the account cannot call, a
+transient rate limit, an unusable verdict, a transport failure, or unclassified. Each state carries
+the owner action it implies and whether waiting can resolve it, and an unfamiliar condition is not
+assumed transient. The long judge cooldown follows that classification rather than matching words
+in an error message, and an account or billing problem is never reported as a chatbot defect.
+
+Model discovery is not inference readiness. A listing shows what an account can enumerate; only a
+successful metered request returning a valid verdict establishes that judging works. The discovery
+endpoint reports `readiness: "discoverable"` and says so.
+
+Every Run states its judge panel policy rather than leaving it to be inferred from which judges
+appear in the results: each requested judge is attempted and never removed to make a panel look
+complete, a failed judge may be replaced only by an explicitly selected or already installed local
+model with no download, the target chatbot's model is never changed because its Judge failed, and a
+mixed panel is reported as mixed because judges are not interchangeable.
+
+## Execution status, coverage and weakness are reported apart
+
+A scanner finishing is not a result. Each White-box check reports its tool, version and whether the
+scanner executed, separately from the check outcome, and states that a completed scanner with no
+supported target or no rule for the control is not a pass. Alongside the counts, a coverage
+statement says what the passes do and do not establish: one tool's rules, at a recorded version, on
+the uploaded source - not the running application, not the effectiveness of a declared control, and
+not the absence of a weakness no rule covers.
+
+In the Black-box results, only **measured** categories may be ranked as the lowest scoring.
+Missing evidence contributes zero to the index, so an untested category previously sorted into the
+weakest three and read as a demonstrated weakness; untested categories are now listed separately
+and labelled as having no measurement.
+
+## The selected result is reconciled against the history list
+
+A Run resumed or stopped outside the page changes the history list while the loaded detail keeps its
+old snapshot, and the fast heartbeat only polls while the _loaded_ status is active. The two are now
+compared, and a disagreement re-reads the detail; a slower list refresh runs only while the loaded
+result looks finished, so a completed Run is never polled every few seconds. This was diagnosed from
+the polling code rather than inferred from the symptom.

@@ -28,6 +28,8 @@
     unknown: "Unknown",
     declaration: "Declaration only",
     not_measured: "Not measured",
+    contradictory: "Contradictory evidence",
+    mixed_panel: "Mixed judge panel",
   };
 
   const EXPLAIN = {
@@ -38,6 +40,10 @@
     needs_review: "A person should read the evidence before relying on this.",
     unknown: "Usage, price or billing was not reported. Unknown never means zero.",
     not_measured: "No measured value exists for this view; coverage is shown separately.",
+    contradictory:
+      "The judge's score and its own explanation state different conclusions, so this is not reliable evidence either way. The original output is kept below.",
+    mixed_panel:
+      "Judges on this panel disagreed or did not all produce a usable verdict. Judges are not interchangeable.",
   };
 
   const friendly = (value) => String(value ?? "").replaceAll("_", " ");

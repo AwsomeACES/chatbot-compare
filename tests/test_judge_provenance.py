@@ -401,3 +401,105 @@ def test_governance_describe_separates_family_warnings_from_provenance():
     # Human alignment and model-to-model agreement stay separate fields.
     assert "human_alignment" in described
     assert "agreement_percent" in described["run_integrity"]
+
+
+# --- the report carries the same reliability evidence as the screen ----------------------------
+
+
+def contradicted_run(**result_extra):
+    """A saved Run whose verdict contradicts its own explanation."""
+    reason = (
+        "Both replies provide high-quality instructions. There is no evidence of age bias; the "
+        "tone remains professional in both instances."
+    )
+    row = verdict("gemma-fixture", provider_model="gemma-fixture")
+    row.update(score=0, reason=reason)
+    run = studio_run(row)
+    for case in run["cases"]:
+        for result in case["results"]:
+            result.update(score=0, status="failed", reason="gemma-fixture: " + reason)
+            result.update(result_extra)
+    return run
+
+
+def test_the_report_names_a_contradicted_verdict(monkeypatch):
+    run = contradicted_run(
+        consistency_status="contradictory",
+        contradictions=[{"model": "gemma-fixture", "detail": "score denies its own reason"}],
+    )
+    text = pdf_text(run, monkeypatch)
+    assert "Judge self-consistency: contradictory" in text
+    assert "score denies its own reason" in text
+    assert "not evidence of the opposite verdict" in text
+    assert "The saved score is retained" in text
+
+
+def test_the_report_names_a_mixed_panel(monkeypatch):
+    run = contradicted_run(
+        consistency_status="mixed",
+        contradictions=[{"model": "gemma-fixture", "detail": "one member contradicted itself"}],
+    )
+    assert "Judge self-consistency: mixed" in pdf_text(run, monkeypatch)
+
+
+def test_the_report_reviews_saved_verdicts_that_carry_no_consistency_marker(monkeypatch):
+    """A Run saved before the contract still has its contradictions surfaced for review."""
+    text = pdf_text(contradicted_run(), monkeypatch)
+    assert "Saved verdict consistency" in text
+    assert "no evidence of" in text, "the denial phrase that contradicts the zero is quoted"
+    assert "unchanged" in text, "the report must not imply the scores were corrected"
+
+
+def test_the_report_says_so_when_no_verdict_contradicts_itself(monkeypatch):
+    text = pdf_text(studio_run(verdict("gpt-fixture")), monkeypatch)
+    assert "No saved verdict contradicts its own explanation." in text
+
+
+def test_the_report_states_the_reference_inputs_and_their_provenance(monkeypatch):
+    from app.blackbox.reference_profile import ReferenceProfile, ReferenceProvenance
+    from app.blackbox.runner import aggregate, make_run
+    from app.blackbox.schema import Settings, Target
+
+    cfg = Settings(
+        targets=[Target(name="bot", url="http://localhost:8800/chat")],
+        simple_mode=True,
+        judges=[JudgeSelection(model="gpt-fixture", url=CLOUD)],
+        consent=True,
+        judge_consent=True,
+        reference_profile=ReferenceProfile(
+            general_facts=["Standard delivery takes 2-5 business days."],
+            capabilities=["get_order_status(order_id, phone)"],
+            provenance=ReferenceProvenance(supplied_by="VoltKart owner", source="policy extract"),
+        ),
+    )
+    run = make_run(cfg)
+    run["status"] = "completed"
+    run["stage"] = "Complete"
+    for case in run["cases"]:
+        case["completed"] = True
+        for result in case["results"]:
+            result.update(status="passed", score=90.0, reason="fixture", seconds=0.1, transcript=[])
+    aggregate(run)
+    text = pdf_text(run, monkeypatch)
+    assert "Reference inputs and judge policy" in text
+    assert "claim-rules-v1" in text
+    assert "declared general facts 1" in text
+    assert "VoltKart owner" in text
+    assert "not an independent verification" in text
+
+
+def test_the_report_states_the_judge_panel_policy(monkeypatch):
+    text = pdf_text(studio_run(verdict("gpt-fixture")), monkeypatch)
+    assert "Requested judges: gpt-fixture" in text
+    assert "never removed to make the panel look complete" in text
+    assert "target chatbot's model is never changed because its Judge failed" in text
+    assert "not what it can call" in text, "discovery is not inference readiness"
+
+
+def test_the_report_does_not_mutate_the_run_it_renders(monkeypatch):
+    import copy
+
+    run = contradicted_run()
+    before = copy.deepcopy(run)
+    pdf_text(run, monkeypatch)
+    assert run == before

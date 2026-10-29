@@ -213,7 +213,12 @@ def summarize(run):
             "(additional models, embeddings, tools and retries) require bot "
             "telemetry and are not inferred."
         ),
-        "prices_used": {r["model_alias"]: snap["models"].get(r["model_alias"]) for r in rows},
+        "prices_used": {
+            r["model_alias"]: pricing.price_for(
+                snap, r["model"], r["model_alias"], saved, provider=r.get("provider", "")
+            )[0]
+            for r in rows
+        },
         "events": rows,
     }
 
@@ -226,8 +231,15 @@ def estimate(config, cases):
         "output_tokens": saved.get("average_output_tokens", 300),
     }
 
-    def component(model, alias, local, calls):
-        rates, resolved = pricing.price_for(snap, model, alias, saved)
+    def component(model, alias, local, calls, endpoint=""):
+        rates, resolved = pricing.price_for(
+            snap,
+            model,
+            alias,
+            saved,
+            provider=metering.provider_from(endpoint) if endpoint else "",
+            endpoint=endpoint,
+        )
         value, status = pricing.calculate(counts, rates, local=local)
         if not calls:
             value = Decimal(0)
@@ -245,6 +257,7 @@ def estimate(config, cases):
             t.model_alias,
             t.local_model,
             sum(len(c["turns"]) for c in cases if not c.get("derived")),
+            endpoint=t.url,
         )
         for t in config.targets
     ]
@@ -260,7 +273,11 @@ def estimate(config, cases):
         len(config.targets) + len(config.targets) * (len(config.targets) - 1)
     )
     judge = component(
-        config.judge_model, config.judge_model_alias, config.judge_local_model, judge_calls
+        config.judge_model,
+        config.judge_model_alias,
+        config.judge_local_model,
+        judge_calls,
+        endpoint=config.judge_url,
     )
     import math
 
@@ -271,6 +288,7 @@ def estimate(config, cases):
         math.ceil(judge_cases * config.secondary_sample_rate) * len(config.targets)
         if config.secondary_judge_enabled
         else 0,
+        endpoint=config.secondary_judge_url,
     )
     if config.simple_mode:
         primary = [j for j in config.judges if not j.fallback]
@@ -280,6 +298,7 @@ def estimate(config, cases):
                 j.price_alias or j.model,
                 j.local,
                 math.ceil(judge_cases * len(config.targets) / config.judge_batch_size),
+                endpoint=j.url,
             )
             for j in primary
         ]

@@ -10,7 +10,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
 
 from ..config import RUNTIME
-from . import judge_provenance
+from . import judge_consistency, judge_provenance
 
 
 def score_text(value):
@@ -120,6 +120,36 @@ def generate_pdf(run):
         for warning in provenance["family_warnings"]:
             paragraph(warning)
         paragraph(provenance["revision_note"] + " " + provenance["calibration_note"])
+        review = run.get("verdict_consistency") or judge_consistency.review(run)
+        paragraph("Saved verdict consistency", "Heading2")
+        if review["contradictions"]:
+            for row in review["contradictions"]:
+                paragraph(
+                    f"{row['case']} (bot {row['bot']}, judge {row['model']}, saved score "
+                    f"{row['score']}): {row['detail']}"
+                )
+        else:
+            paragraph("No saved verdict contradicts its own explanation.")
+        paragraph(review["note"] + " " + review["coverage_note"])
+        inputs = run.get("reference_inputs")
+        if inputs:
+            paragraph("Reference inputs and judge policy", "Heading2")
+            profile = inputs["profile"]
+            paragraph(
+                f"Claim rules {inputs['claim_rules_version']}; declared general facts "
+                f"{profile['general_facts']}; declared capabilities {profile['capabilities']}."
+            )
+            paragraph(profile.get("note", ""))
+            if profile.get("provenance"):
+                paragraph("Declaration provenance: " + json.dumps(profile["provenance"]))
+        policy = run.get("judge_policy")
+        if policy:
+            requested = ", ".join(j["model"] for j in policy["requested_judges"]) or "none recorded"
+            fallbacks = ", ".join(j["model"] for j in policy["declared_fallbacks"]) or "none"
+            paragraph(f"Requested judges: {requested}. Declared fallbacks: {fallbacks}.")
+            for rule in policy["rules"]:
+                paragraph(rule)
+            paragraph(policy["discovery_note"])
         paragraph("Audit log", "Heading2")
         paragraph(json.dumps(run.get("audit", []), ensure_ascii=False))
         paragraph(
@@ -327,6 +357,27 @@ def generate_pdf(run):
                     "Evidence needs review: "
                     + r.get("review_reason", "Inspect matched and unmatched quotes.")
                 )
+            # A score that contradicts its own explanation is unreliable evidence for either
+            # outcome. It is named here for the same reason it is named on the screen.
+            if r.get("consistency_status") in ("contradictory", "mixed"):
+                paragraph(
+                    "Judge self-consistency: "
+                    + r["consistency_status"]
+                    + ". "
+                    + "; ".join(
+                        f"{row.get('model', 'judge')}: {row.get('detail', '')}"
+                        for row in r.get("contradictions", [])
+                    )
+                    + " The saved score is retained; a contradiction is not evidence of the"
+                    + " opposite verdict."
+                )
+            for verdict in r.get("judges", []):
+                state = (verdict.get("consistency") or {}).get("status")
+                if state and state != "consistent":
+                    paragraph(
+                        f"Judge {verdict.get('model', 'not recorded')} consistency: {state}. "
+                        + (verdict["consistency"].get("detail") or "")
+                    )
             for t in r["transcript"]:
                 paragraph("Customer: " + t["input"])
                 paragraph("Bot: " + str(t.get("output") or t.get("error")))

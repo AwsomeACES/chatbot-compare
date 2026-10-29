@@ -481,6 +481,60 @@ def explanation_cost(run: dict) -> dict:
     return {"status": summary.get("status", "Unknown"), "calls": len(rows), "totals": summary}
 
 
+def scanner_state(run: dict, finding: dict) -> dict:
+    """Whether the tool ran, reported separately from what the check concluded.
+
+    A scanner finishing is not a result. Six tools completed on the VoltKart source and eleven
+    checks still had no evidence, so execution status and check outcome are shown apart.
+    """
+    engine = (run.get("engine_status") or {}).get(finding["mode"], "unknown")
+    details = finding.get("details") or {}
+    completed = details.get("scanner_completed")
+    if completed is None:
+        completed = engine == "completed" and finding["verdict"] != "tool_error"
+    return {
+        "tool": finding.get("tool", "") or "none recorded",
+        "version": finding.get("tool_version", "") or "not recorded",
+        "engine_status": engine,
+        "executed": bool(completed),
+        "note": "The scanner ran and returned a report. That is separate from the check outcome: "
+        "a completed scanner with no supported target, or with no rule for this control, is not "
+        "a pass."
+        if completed
+        else "The scanner did not produce a usable report, so this check has no result from it.",
+    }
+
+
+def coverage_statement(counts: dict) -> dict:
+    """Say plainly what the measured results do and do not establish."""
+    return {
+        "measured_of_planned": f"{counts['measured']} of {counts['planned']}",
+        "statement": (
+            f"{counts['passed']} of {counts['planned']} checks passed and "
+            f"{counts['unverified']} produced no evidence. A passing check means one tool's rules "
+            "found nothing of their kind in the supplied source. Most of this assessment is "
+            "therefore unverified rather than clean, and the passes do not add up to a secure "
+            "application."
+        ),
+        "what_a_pass_means": (
+            "One named tool, at the recorded version, applied its own rules to the uploaded "
+            "source and reported no match. It is a statement about those rules on that source, "
+            "not about the running application."
+        ),
+        "what_is_not_established": [
+            "Runtime behaviour: source scanning cannot show what the deployed application does.",
+            "Effectiveness of any control that is only declared in source; a declaration is not "
+            "behavioural evidence.",
+            "Absence of a weakness for which no rule exists, including logic and design flaws.",
+            "Anything outside the uploaded source, such as infrastructure, configuration held "
+            "elsewhere, or a dependency resolved only at deployment.",
+            "Vulnerabilities in dependency versions that could not be resolved; an unresolved "
+            "version is unverified, never a confirmed installed vulnerable version.",
+        ],
+        "note": "This is a coverage statement, not a certification or a legal finding.",
+    }
+
+
 def evidence_status(run: dict) -> dict:
     """Counts and per-check guidance for a saved run, derived without mutating it."""
     catalogue = guidance()
@@ -515,6 +569,7 @@ def evidence_status(run: dict) -> dict:
                 if code == "insufficient_evidence"
                 else meta["text"],
                 "recorded_reason": finding.get("explanation", ""),
+                "scanner": scanner_state(run, finding),
                 "source_scope": info.get("source_scope", ""),
                 "required_evidence": info.get("required_evidence", []) if unresolved else [],
                 "owner_action": info.get("owner_action", "") if unresolved else "",
@@ -562,6 +617,7 @@ def evidence_status(run: dict) -> dict:
         "counts": counts,
         "by_outcome": by_outcome,
         "checks": rows,
+        "coverage": coverage_statement(counts),
         "notice": "Processed means the check ran. Only Passed and Needs attention are measured "
         "results. Declarations and unverified checks are not passes.",
         "historical_note": "Explanations are added to the original results. No check was "
@@ -596,6 +652,18 @@ def teammate_markdown(run: dict) -> str:
         text(status["notice"]),
         "",
         text(status["historical_note"]),
+        "",
+        "## What these results establish",
+        "",
+        text(status["coverage"]["statement"]),
+        "",
+        f"- A passing check means: {text(status['coverage']['what_a_pass_means'])}",
+        *(
+            f"- Not established: {text(item)}"
+            for item in status["coverage"]["what_is_not_established"]
+        ),
+        "",
+        text(status["coverage"]["note"]),
         "",
         "## Checks to resolve",
         "",

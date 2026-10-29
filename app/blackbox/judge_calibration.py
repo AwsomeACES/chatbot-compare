@@ -13,6 +13,8 @@ import re
 import uuid
 from datetime import datetime, timezone
 
+from pydantic import ValidationError
+
 from .. import database as db
 from ..config import ROOT
 from . import metering
@@ -1501,8 +1503,11 @@ def mismatch_reasons(
         ("template_hash", "Prompt template changed."),
         ("validation_hash", "Evidence-validation semantics changed."),
         ("generation_hash", "Evaluation settings changed."),
+        ("claim_rules_hash", "Reference facts or capability declarations changed."),
     ):
-        if old[key] != current[key]:
+        # A record written before a dimension existed cannot be shown to match it, so it is
+        # treated as a mismatch rather than quietly accepted as aligned.
+        if old.get(key) != current[key]:
             reasons.append(text)
     if policy_text is not None and all(i["payload"]["policy"] != policy_text for i in items):
         reasons.append("Policy context changed.")
@@ -1519,7 +1524,9 @@ def mismatch_reasons(
     return list(dict.fromkeys(reasons))
 
 
-def resolve_compatibility(model: str, url: str, policy_text=None, scope_text=None) -> dict:
+def resolve_compatibility(
+    model: str, url: str, policy_text=None, scope_text=None, reference_profile=None
+) -> dict:
     """Alignment status of the CURRENT evaluator. History stays readable; credentials are ignored."""
     p = policy()
     base = {
@@ -1537,11 +1544,17 @@ def resolve_compatibility(model: str, url: str, policy_text=None, scope_text=Non
         return base | {"headline": "No Judge selected."}
     from .schema import Settings, Target
 
-    cfg = Settings(
-        targets=[Target(kind="zip")],
-        judge_model=model,
-        judge_url=url or "http://127.0.0.1:1234/v1/chat/completions",
-    )
+    fields = {
+        "targets": [Target(kind="zip")],
+        "judge_model": model,
+        "judge_url": url or "http://127.0.0.1:1234/v1/chat/completions",
+    }
+    try:
+        cfg = Settings(**fields, reference_profile=reference_profile)
+    except ValidationError:
+        # A stored profile that no longer validates cannot be reproduced, so alignment is
+        # resolved without it. The resulting hash mismatch keeps the status conservative.
+        cfg = Settings(**fields)
     current = evaluator_fingerprint(cfg)
     rubrics = current_rubrics()
     history = [e for e in db.all_records(KIND_EVALUATION) if not e.get("invalidated")]
@@ -1610,7 +1623,11 @@ def alignment_for_run(run: dict) -> list[dict]:
         ]
     return [
         resolve_compatibility(
-            j["model"], j.get("url", ""), config.get("policy"), config.get("scope")
+            j["model"],
+            j.get("url", ""),
+            config.get("policy"),
+            config.get("scope"),
+            config.get("reference_profile"),
         )
         | {"judge_model": j["model"]}
         for j in judges

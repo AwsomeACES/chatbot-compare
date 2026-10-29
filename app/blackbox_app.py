@@ -609,10 +609,14 @@ def get_run(ident):
 @app.get("/api/blackbox/runs/{ident}")
 def result(ident: uuid.UUID):
     """The saved Run plus read-only evaluator provenance; neither is rescored or re-saved."""
+    from .blackbox.judge_consistency import review
     from .blackbox.judge_provenance import describe
 
     run = get_run(ident)
     run["judge_provenance"] = describe(run)
+    # A later reading of saved verdicts whose score contradicts their own explanation. Derived on
+    # read, so no stored score, status or reason is touched.
+    run["verdict_consistency"] = review(run)
     return run
 
 

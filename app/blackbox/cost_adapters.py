@@ -72,6 +72,7 @@ class ModelAdapter:
             model=self.config.judge_model,
             alias=self.config.judge_model_alias,
             provider=metering.provider_from(self.config.judge_url),
+            endpoint=self.config.judge_url,
             messages=messages,
             local=self.config.judge_local_model,
         )

@@ -157,11 +157,24 @@ def save_settings(data):
             not isinstance(model, str)
             or not 1 <= len(model) <= 250
             or not isinstance(rates, dict)
-            or set(rates) - set(RATE_KEYS)
+            or set(rates) - set(RATE_KEYS) - set(PRICE_META_KEYS)
         ):
             raise ValueError("Invalid price override.")
+        meta = {}
+        for key in PRICE_META_KEYS:
+            value = rates.get(key)
+            if value in (None, ""):
+                continue
+            if not isinstance(value, str) or len(value) > 500:
+                raise ValueError("Price override metadata must be text of at most 500 characters.")
+            meta[key] = value
         clean["overrides"][model] = {
-            k: str(decimal(v)) for k, v in rates.items() if v is not None and v != ""
+            **{
+                k: str(decimal(v))
+                for k, v in rates.items()
+                if k in RATE_KEYS and v is not None and v != ""
+            },
+            **meta,
         }
     if not isinstance(clean["aliases"], dict) or len(clean["aliases"]) > 500:
         raise ValueError("Invalid aliases.")
@@ -185,19 +198,54 @@ def save_settings(data):
     return clean
 
 
+VERIFIED_PRICES = ROOT / "app" / "studio" / "verified-prices.json"
+
+
+def verified_prices():
+    """Hand-checked rates with a source and a date, merged on top of the catalogue.
+
+    An entry keyed ``<model>@<endpoint identity>`` applies only to that endpoint, which is how a
+    provider's published rate is kept away from another host serving the same model name. The
+    file is editable configuration; it is never consulted for an already pinned snapshot.
+    """
+    if not VERIFIED_PRICES.exists():
+        return {}
+    data = json.loads(VERIFIED_PRICES.read_text(encoding="utf-8"))
+    models = data.get("models", {})
+    if not isinstance(models, dict) or len(models) > 1000:
+        raise ValueError("Invalid verified price file.")
+    for name, rates in models.items():
+        if not isinstance(name, str) or not isinstance(rates, dict) or len(name) > 400:
+            raise ValueError("Invalid verified price entry.")
+        for key in set(rates) & set(RATE_KEYS):
+            decimal(rates[key])
+    return models
+
+
 def pin(config):
     if getattr(config, "price_snapshot_id", ""):
         return snapshot(config.price_snapshot_id)
     current = snapshot()
     s = settings()
     models = json.loads(json.dumps(current["models"]))
+    checked = verified_prices()
+    for name, rates in checked.items():
+        models[name] = {**models.get(name, {}), **rates, "verified": True}
     for name, rates in s["overrides"].items():
         models[name] = {**models.get(name, {}), **rates, "override": True}
+    labels = [
+        label
+        for label, present in (("verified prices", checked), ("saved overrides", s["overrides"]))
+        if present
+    ]
     pinned = (
         store_snapshot(
-            models, current["source"] + " + saved overrides", current["date"], activate=False
+            models,
+            current["source"] + " + " + " + ".join(labels),
+            current["date"],
+            activate=False,
         )
-        if s["overrides"]
+        if labels
         else current
     )
     config.price_snapshot_id = pinned["id"]
@@ -207,10 +255,80 @@ def pin(config):
     return pinned
 
 
-def price_for(snap, model, alias="", saved=None):
+#: Metadata an owner may record beside a price override, so a rate is traceable to a source and
+#: a date rather than appearing as an unexplained constant.
+PRICE_META_KEYS = ("source", "source_date", "provider", "endpoint", "note")
+
+#: Labels that mean "this host was not positively identified" rather than naming a provider.
+#: `provider_from` returns "openai-compatible" for any host it does not recognise, so it cannot
+#: be treated as a provider identity.
+UNIDENTIFIED_PROVIDERS = frozenset({"", "unknown", "openai-compatible", "custom", "local"})
+
+#: Catalogue provider names that denote the same billing account as a Studio endpoint label.
+PROVIDER_ALIASES = {
+    "google": "gemini",
+    "google_ai_studio": "gemini",
+    "gemini": "gemini",
+    "openai": "openai",
+    "azure": "openai",
+    "anthropic": "anthropic",
+}
+
+
+def endpoint_identity(url):
+    """Scheme/host/port/path identity for keying a price. Credentials and query are excluded."""
+    from urllib.parse import urlsplit
+
+    parsed = urlsplit(url or "")
+    if not parsed.hostname:
+        return ""
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme.lower()}://{parsed.hostname.lower()}{port}{parsed.path.rstrip('/')}"
+
+
+def compatible_provider(catalogue, requested):
+    """Whether a catalogue rate may be applied to the provider that actually served a call.
+
+    A catalogue entry that names a specific provider is not applied to an endpoint Studio could
+    not identify: the same model name is hosted by several providers at different prices, and one
+    of them publishing a free tier says nothing about another's bill.
+    """
+    entry = PROVIDER_ALIASES.get(str(catalogue).casefold(), str(catalogue).casefold())
+    asked = PROVIDER_ALIASES.get(str(requested).casefold(), str(requested).casefold())
+    if entry in UNIDENTIFIED_PROVIDERS:
+        return True
+    return entry == asked
+
+
+def price_for(snap, model, alias="", saved=None, provider="", endpoint=""):
+    """Resolve a rate for this model on the provider and endpoint that actually served it.
+
+    Most specific first: a rate the owner keyed to this exact endpoint, then one keyed to the
+    provider, then the plain catalogue entry. The plain entry is withheld when it names a
+    different provider than the call, so an unresolved price stays Unknown instead of being
+    priced from another host's published rate.
+    """
     name = alias or model
     name = (saved or {}).get("aliases", {}).get(name, name)
-    return snap["models"].get(name), name
+    models = snap["models"]
+    identity = endpoint_identity(endpoint)
+    if identity:
+        keyed = f"{name}@{identity}"
+        if keyed in models:
+            return models[keyed], keyed
+    if provider:
+        qualified = f"{provider}/{name}"
+        if qualified in models:
+            return models[qualified], qualified
+    rates = models.get(name)
+    if rates is None:
+        return None, name
+    # An owner's explicit override is their decision about their own endpoint, so it applies.
+    if rates.get("override"):
+        return rates, name
+    if not compatible_provider(rates.get("provider", ""), provider):
+        return None, name
+    return rates, name
 
 
 def calculate(tokens, rates, latency_ms=0, local=False, compute_rate="0"):

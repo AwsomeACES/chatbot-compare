@@ -316,3 +316,92 @@ def test_started_run_records_preflight_and_every_check_outcome(monkeypatch):
     status = readiness.evidence_status(run)
     assert {row["outcome"] for row in status["checks"]} == {"missing_input"}
     assert status["counts"]["processed"] == 0
+
+
+# --- scanner execution status is separate from the check outcome --------------------------------
+
+
+def test_a_completed_scanner_with_no_result_is_not_a_pass():
+    """Six tools completed on the VoltKart source and eleven checks still had no evidence."""
+    run = {**voltkart_like(), "engine_status": {"white": "completed"}}
+    rows = {row["test_id"]: row for row in readiness.evidence_status(run)["checks"]}
+    empty = rows["container_vulnerabilities"]
+    assert empty["scanner"]["executed"] is True, "the scanner ran"
+    assert empty["verdict"] == "not_tested", "which is not a result"
+    assert empty["outcome"] != "measured_pass"
+    assert "is not a pass" in empty["scanner"]["note"]
+
+
+def test_each_check_names_the_tool_and_version_that_ran_it():
+    run = {**voltkart_like(), "engine_status": {"white": "completed"}}
+    for row in readiness.evidence_status(run)["checks"]:
+        scanner = row["scanner"]
+        assert scanner["tool"], row["test_id"]
+        assert scanner["engine_status"] == "completed"
+
+
+def test_a_scanner_that_produced_no_usable_report_is_reported_as_not_executed():
+    run = voltkart_like()
+    run["engine_status"] = {"white": "completed"}
+    run["findings"][0]["details"] = {"scanner_completed": False}
+    rows = {row["test_id"]: row for row in readiness.evidence_status(run)["checks"]}
+    scanner = rows["hardcoded_secrets"]["scanner"]
+    assert scanner["executed"] is False
+    assert "did not produce a usable report" in scanner["note"]
+
+
+def test_an_engine_that_did_not_complete_is_not_reported_as_executed():
+    run = voltkart_like()
+    run["engine_status"] = {"white": "failed"}
+    for finding in run["findings"]:
+        finding["details"] = {}
+    rows = readiness.evidence_status(run)["checks"]
+    assert all(row["scanner"]["executed"] is False for row in rows)
+    assert all(row["scanner"]["engine_status"] == "failed" for row in rows)
+
+
+# --- what the passing checks do and do not establish --------------------------------------------
+
+
+def test_the_coverage_statement_counts_passes_against_the_whole_plan():
+    status = readiness.evidence_status(voltkart_like())
+    coverage = status["coverage"]
+    assert coverage["measured_of_planned"] == "5 of 14"
+    assert "3 of 14 checks passed" in coverage["statement"]
+    assert "8 produced no evidence" in coverage["statement"]
+
+
+def test_the_coverage_statement_denies_that_passes_add_up_to_security():
+    """Three rule-based passes must never be read as a secure application."""
+    coverage = readiness.evidence_status(voltkart_like())["coverage"]
+    assert "do not add up to a secure application" in coverage["statement"]
+    assert "unverified rather than clean" in coverage["statement"]
+    assert "not about the running application" in coverage["what_a_pass_means"]
+    assert "not a certification or a legal finding" in coverage["note"]
+
+
+def test_the_coverage_statement_names_what_source_scanning_cannot_show():
+    missing_items = " ".join(
+        readiness.evidence_status(voltkart_like())["coverage"]["what_is_not_established"]
+    )
+    assert "Runtime behaviour" in missing_items
+    assert "a declaration is not behavioural evidence" in missing_items
+    assert "no rule exists" in missing_items
+    assert "unresolved version is unverified, never a confirmed installed vulnerable version" in (
+        missing_items
+    )
+
+
+def test_the_teammate_export_carries_the_coverage_statement():
+    body = readiness.teammate_markdown(voltkart_like())
+    assert "## What these results establish" in body
+    assert "do not add up to a secure application" in body
+    assert "Not established: Runtime behaviour" in body
+
+
+def test_the_coverage_statement_does_not_mutate_the_saved_run():
+    run = voltkart_like()
+    before = copy.deepcopy(run)
+    readiness.evidence_status(run)
+    readiness.teammate_markdown(run)
+    assert run == before

@@ -172,7 +172,12 @@ def check_saved_report(page, base: str, run: dict) -> dict:
     assert panel_visible(page, "results"), "A run URL did not open the Results panel"
     label = page.locator("#selected-run").inner_text()
     assert "Synthetic UI bot" in label, f"The selected run is not named in the header: {label!r}"
-    page.locator("#case-results details").first.locator("summary").click()
+    page.locator("#case-results details[data-case]").first.locator("summary").click()
+    # The details toggle event is queued separately from the click. Wait for actual evidence,
+    # not merely the open attribute; faster CI runners can otherwise read an empty body.
+    page.locator("#case-results details[data-case] [data-case-body] .transcript").first.wait_for(
+        state="visible"
+    )
     body = page.locator("#case-results").inner_text()
     assert "compliant reply" in body or "non-compliant reply" in body, (
         "No synthetic transcript text reached the Results panel"
@@ -250,9 +255,11 @@ def check_provenance(page, base: str, run: dict) -> dict:
     assert "uncalibrated" in table.lower(), "human calibration status is not shown per evaluator"
     assert "not interchangeable" in table.lower(), "a mixed panel is not qualified"
 
-    rows = page.locator("#case-results details")
+    rows = page.locator("#case-results details[data-case]")
     for index in range(rows.count()):
-        rows.nth(index).locator("summary").click()
+        row = rows.nth(index)
+        row.locator(":scope > summary").click()
+        row.locator("[data-case-body] .transcript").first.wait_for(state="visible")
     page.wait_for_function(
         "() => document.querySelectorAll('#case-results details[open]').length > 0"
     )
@@ -304,6 +311,20 @@ def main(argv=None) -> int:
             browser = play.chromium.launch(headless=True)
             context = browser.new_context(viewport={"width": 1440, "height": 1000})
             context.tracing.start(screenshots=True, snapshots=True)
+            # Exercise deferred disclosure rendering deterministically on every platform.
+            # This affects only synthetic test pages, never the application or saved history.
+            context.add_init_script("""
+                document.addEventListener('toggle', event => {
+                    if (!event.target.matches?.('#case-results details[data-case]') ||
+                        event.studioDeferred) return;
+                    event.stopImmediatePropagation();
+                    setTimeout(() => {
+                        const deferred = new Event('toggle');
+                        deferred.studioDeferred = true;
+                        event.target.dispatchEvent(deferred);
+                    }, 75);
+                }, true);
+            """)
             page = context.new_page()
             errors: list[str] = []
             page.on("pageerror", lambda error: errors.append(str(error)))
@@ -336,7 +357,7 @@ def main(argv=None) -> int:
                 page.get_by_text("View selected run results", exact=True).click()
                 page.wait_for_selector("#case-results details")
                 assert "Not measured" in page.locator("#scores").inner_text()
-                page.locator("#case-results details").first.locator("summary").click()
+                page.locator("#case-results details[data-case]").first.locator("summary").click()
                 page.get_by_text("Fixture provider HTTP 404", exact=True).wait_for(state="visible")
                 page.locator("#test-history").select_option("run:" + custom["id"])
                 page.wait_for_function(

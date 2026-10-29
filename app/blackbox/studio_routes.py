@@ -213,6 +213,7 @@ async def model_choices(selection: JudgeSelection):
 
     from pydantic import SecretStr
 
+    from . import provider_status
     from .connectors import safe_error, validate_destination
     from .easy_setup import judge_defaults
 
@@ -242,7 +243,9 @@ async def model_choices(selection: JudgeSelection):
         models = data.get("models", data.get("data", []))
         return {
             "models": [m.get("id", m.get("name", "")).removeprefix("models/") for m in models],
-            "note": "Account model listing succeeded; actual judgment still requires a valid response.",
+            "readiness": "discoverable",
+            "note": "Account model listing succeeded; actual judgment still requires a valid "
+            "response. " + provider_status.DISCOVERY_NOTE,
         }
     except Exception as exc:
         raise HTTPException(422, safe_error(exc)) from exc

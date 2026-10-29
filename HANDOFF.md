@@ -1,3 +1,131 @@
+## 2026-10-29 — Evaluation reliability from the VoltKart retest (current task)
+
+Worked in `D:/AI-Agent-Testing-Studio`, branch `codex/industry-reliability`. **Nothing was pushed.**
+No provider call, no paid evaluation, no Jira issue, no saved history deleted or modified. The only
+network request was one read-only fetch of Google's public pricing page.
+
+### Checkout decision, made after verifying all three
+
+| Checkout                                                                             | Origin                             | State at start                                             |
+| ------------------------------------------------------------------------------------ | ---------------------------------- | ---------------------------------------------------------- |
+| `C:/Users/Moinuddeen hussain/Documents/ChatGPT/Moinuddeen_airm/studio-publish`       | AwsomeACES/chatbot-compare         | `codex/industry-reliability` @ `043173c`, 5 modified files |
+| `C:/Users/Moinuddeen hussain/Documents/ChatGPT/Moinuddeen_airm/studio-simali-update` | Simali2724/AI-Agent-Testing-Studio | `master` @ `0978e48`, clean                                |
+| **`D:/AI-Agent-Testing-Studio`** (used)                                              | Simali2724/AI-Agent-Testing-Studio | `codex/industry-reliability` @ `90cd616`, clean            |
+
+Every uncommitted file in `studio-publish` was verified to exist committed elsewhere first:
+`simple.css`, `simple.js` and `test-studio-navigation.cjs` are byte-identical to Simali `0978e48`,
+and `check-studio-ui.py` is committed in D: as `90cd616`. **Nothing was at risk of loss.** D: was
+one commit behind, so `0978e48` was cherry-picked in as `3b93d74`. Both C: checkouts were left
+exactly as found — re-verify with `git status` in each before any further work.
+
+### Local commits, oldest first
+
+Rebased onto `origin/master` (`0978e48`) before publication, which dropped an earlier
+cherry-pick of that same commit as a duplicate patch. The tree is byte-identical to the
+pre-rebase branch, confirmed with `git diff`, and the branch fast-forwards from `origin/master`.
+
+| Commit    | Scope                                                                                            |
+| --------- | ------------------------------------------------------------------------------------------------ |
+| `88288c5` | Phase A — Judge score direction contract and self-contradiction handling (T-039)                 |
+| `ad9f87a` | Phase B — claim rules, owner reference facts and capability declarations (T-040)                 |
+| `4354e9f` | Phase C — numeric cost-field redaction (T-041) and provider/endpoint prices (T-042)              |
+| `9185d8a` | Phases D/E/F — White coverage semantics (T-044), provider readiness (T-043), truthful UI (T-045) |
+| `e04b42c` | Prettier formatting of DECISIONS.md                                                              |
+| `f26cd73` | docs — T-039 to T-045 and the resolved defect rows                                               |
+| `03614b8` | Phase H — read-time review of verdicts saved before the contract                                 |
+| `3368b88` | Phase I — claim rules joined evaluator identity; PDF parity                                      |
+| `c4462e8` | Phase J — declare facts and capabilities from the Evaluate screen                                |
+| `5ae4872` | docs — this handoff and the extended T-040 entry                                                 |
+| `83450b3` | Phase K — display the panel policy, failed judges and local-fallback cost                        |
+
+A branch `backup/pre-rebase-84b788b` holds the pre-rebase tip in case the old hashes are needed.
+
+### What to know before changing this further
+
+1. **Score direction is a contract, not a prompt tweak.** `app/blackbox/judge_consistency.py`
+   defines `compliance-higher-is-better-v1`: higher is better, bands `compliant` 80-100,
+   `partially_compliant` 20-79, `non_compliant` 0-19 around the single pass threshold of 80.
+   Single, batch and Bias judging all use it. Changing a band or the threshold changes what every
+   verdict means; the bands are covered by a test that walks all 101 scores.
+2. **The structured verdict is the primary check; the phrase list is not.** A Judge returns a
+   `verdict` word beside its score and the two are compared. `NO_VIOLATION_CUES` is supplementary,
+   may only raise a contradiction against a `non_compliant` score, and must never become the sole
+   mechanism. Measured on the saved retest it flags 4 of 4 reported contradictions and 0 of 14
+   genuine low-score verdicts; keep that property if you touch it.
+3. **A contradiction is not the opposite verdict.** One bounded metered correction, then the raw
+   output is kept and the Case reports insufficient reliable evidence as `not_tested` with
+   `partial_score`. Never convert a zero into a pass.
+4. **Historical records must keep deriving identically.** The consistency marker is written at
+   judge time, so a record saved earlier has none and `bias.derive_algorithmic` produces exactly
+   what it did before. A regression test pins this, and re-aggregating the real saved run changes
+   no score, status or reason. Any new gate must be keyed on a field only new runs carry.
+5. **Claim rules live in the user payload, not the system message.** That is why they needed their
+   own identity (`judge_prompts.claim_rules_fingerprint`) before a reference change would invalidate
+   a recorded alignment. `mismatch_reasons` reads it with `.get()` and treats a record written
+   before the dimension existed as a **mismatch**. Any future rubric dimension needs the same
+   treatment or alignment will silently look valid.
+6. **The redaction exemption is gated on field name _and_ value shape.** `governance.PLAIN_AMOUNT`
+   accepts a bare decimal including the `0E-12` exponent form. A telephone number parked in a cost
+   field is still redacted. A test fails if `cost_summary` grows a `*_micro_usd` field the
+   allowlist does not cover — classify it, do not widen the pattern.
+7. **A price belongs to an endpoint.** `pricing.price_for` resolves endpoint, then provider, then
+   catalogue, and withholds a catalogue entry whose provider does not match the call so the price
+   stays Unknown. `openai-compatible` means "host not identified" and never matches a specific
+   provider. Hand-checked rates go in `app/studio/verified-prices.json`, never in evaluation code.
+8. **Two navigation-harness traps.** Script slices run in a `vm` realm, so an array built there has
+   a different prototype and `assert.deepEqual` from `node:assert/strict` rejects it even when the
+   contents match — copy with `Array.from` first. And Prettier reflows prose in `simple.html`, so a
+   markup assertion should collapse whitespace rather than match across line breaks.
+9. **Heredocs break on very long lines** in this shell. Write a script into the scratchpad directory
+   and run it with the interpreter instead.
+
+### Verification actually run (Windows 11 10.0.26300, Python 3.12.3, project `.venv`)
+
+- Full suite: **793 passed, 1 skipped** (the Windows symlink privilege case) in 138.91 s.
+- Navigation: **17 passed**. JavaScript syntax: 16 files. Ruff lint and format: 116 files.
+  Prettier repository check and `scripts/check_docs.py`: clean.
+- Isolated browser check `scripts/check-studio-ui.py`: every section passed including mobile
+  layout, with **zero browser errors**.
+- Measured contrast `scripts/check_contrast.py`: **44 pairs, 0 failing, 0 skipped**.
+- Historical integrity, against the real saved run
+  `40df499d-ea32-4a4a-b349-87fa441747c7`: re-aggregating changes **0** scores, **0** statuses and
+  **0** reason strings; overall 91.81 preserved; derived Bias 70 and 40 preserved. The read-time
+  review inspects 218 verdicts, finds the 4 reported contradictions and leaves the record
+  byte-identical.
+- Evidence files under
+  `C:/Users/Moinuddeen hussain/Documents/ChatGPT/Moinuddeen_airm/voltkart-retest-20261029` are
+  untouched (`black-results.json` sha256 begins `e0aeae048d62ce80`).
+
+### Outstanding external prerequisites (ask only for these)
+
+- **Human calibration labels under the current rubric.** Evaluator identity now includes the
+  direction contract and the claim rules, so any earlier calibration correctly reports **stale**.
+  No real human-labelled sample ever existed, so nothing measured was lost. Follow
+  `docs/judge-validation.md`. The old 53% figure came from fabricated labels and must never be
+  reported as validation.
+- **A funded provider or a running local Ollama model** for any live validation. None was called.
+  A fresh, clearly versioned re-judge of the Bias category under the new rubric needs this plus the
+  owner's explicit go-ahead; it would be a **new Run**, never an edit of `40df499d…`.
+- **Runtime evidence inputs** for the White checks whose `next_test` points at Gray-box:
+  synthetic test users, tool-call logs, retention TTL, timeout/retry limits, a CI run link.
+- **Scanner images and offline databases**, and **native Linux and macOS environments** (T-032).
+- **An owner-supplied reference profile** if the hallucination and capability categories should be
+  judged against declared facts rather than reported as unverified. The Evaluate screen now
+  collects it; nothing is assumed in its absence.
+
+### Startup
+
+```powershell
+cd D:\AI-Agent-Testing-Studio
+.\run.ps1                                  # first run creates .venv and installs the locked set
+# or, with an existing environment:
+$env:STUDIO_AUTO_RESUME = "0"
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 2708
+```
+
+Studio serves the current shell at `http://127.0.0.1:2708/`. Do not resume or rerun the completed
+VoltKart Run. No credentials are in this handoff, and none belong in one.
+
 ## 2026-10-24 — Review response, Phases A–H (current task)
 
 Worked in `D:/AI-Agent-Testing-Studio`, branch `codex/industry-reliability`. **Nothing was pushed.** The personal origin `Simali2724/AI-Agent-Testing-Studio` was not contacted, and the shared C: publishing checkout was not touched. No provider call was made, no paid evaluation ran, and no saved history was deleted or modified.

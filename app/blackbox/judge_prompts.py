@@ -17,7 +17,8 @@ def request_body(config, payload: dict, pair: bool = False) -> tuple[dict, list[
     schema = (
         '{"winner":"A|B|tie","reason":"brief explanation","evidence_ids":[0]}'
         if pair
-        else '{"score":0,"reason":"brief explanation","evidence_ids":[0]}'
+        else '{"score":0,"verdict":"compliant|partially_compliant|non_compliant",'
+        '"reason":"brief explanation","evidence_ids":[0]}'
     )
     body = {
         "model": config.judge_model,
@@ -53,7 +54,7 @@ def request_body(config, payload: dict, pair: bool = False) -> tuple[dict, list[
 # Fingerprints are derived from the same builder and source that execute a request, so editing
 # prompt text or evidence-validation code invalidates calibration even if nobody bumps a label.
 
-PROMPT_TEMPLATE_VERSION = "rubric-v1"
+PROMPT_TEMPLATE_VERSION = "rubric-v2-compliance-direction"
 _PROBE = {"category": "probe", "criterion": "probe", "transcript": [{"output": "probe output"}]}
 _PAIR_PROBE = {
     "category": "probe",
@@ -80,6 +81,20 @@ def _source_hash(*objects) -> str:
     return digest([inspect.getsource(o) for o in objects])
 
 
+def claim_rules_fingerprint(config) -> str:
+    """Identity of the owner-declared reference facts and capability rules in force.
+
+    The claim rules travel in the user payload rather than the system message, so they do not
+    reach `template_hash`. They are part of the rubric a verdict was produced under, so they get
+    their own identity: supplying or editing a reference profile must invalidate an alignment
+    recorded without it.
+    """
+    from . import reference_profile
+    from .execution_cache import digest
+
+    return digest(reference_profile.guidance(getattr(config, "reference_profile", None)))
+
+
 def template_fingerprint(config) -> dict:
     """Prompt-template identity from the canonical builder (independent of any transcript)."""
     from .execution_cache import digest
@@ -98,6 +113,7 @@ def template_fingerprint(config) -> dict:
         "generation_hash": digest(
             {k: v for k, v in single.items() if k not in ("messages", "model")}
         ),
+        "claim_rules_hash": claim_rules_fingerprint(config),
     }
 
 
@@ -111,13 +127,25 @@ def validation_fingerprint() -> str:
 
 
 def rubric_fingerprint(payload: dict) -> str:
-    """Rubric/context identity: criterion, references, category, subtype, policy and scope."""
+    """Rubric/context identity: criterion, references, claim rules, category, subtype, policy, scope.
+
+    The claim rules are part of the rubric, so supplying or changing a reference profile makes a
+    separately identifiable evaluation and invalidates an alignment recorded without it.
+    """
     from .execution_cache import digest
 
     return digest(
         {
             k: payload.get(k)
-            for k in ("category", "criterion", "reference", "policy", "scope", "bias_subtype")
+            for k in (
+                "category",
+                "criterion",
+                "reference",
+                "claim_rules",
+                "policy",
+                "scope",
+                "bias_subtype",
+            )
         }
     )
 
@@ -135,6 +163,7 @@ def evaluator_fingerprint(config, returned_model: str = "") -> dict:
         "template_version": t["version"],
         "template_hash": t["template_hash"],
         "generation_hash": t["generation_hash"],
+        "claim_rules_hash": t["claim_rules_hash"],
         "validation_hash": validation_fingerprint(),
     }
     # Provider-returned names are not immutable revisions, so they stay out of the identity hash.

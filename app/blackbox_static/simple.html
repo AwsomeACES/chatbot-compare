@@ -148,6 +148,45 @@
                 ><label>What should these bots help with?<input id="scope" /></label>
               </div>
             </div>
+            <fieldset id="reference-profile">
+              <legend>
+                Your bot's own facts and capabilities <span class="muted">— optional</span>
+              </legend>
+              <p class="helper">
+                One per line. Without these, a Judge reports a general policy statement or an
+                offered capability as unverified rather than as a fault. A claim about an
+                unsupported identifier still fails either way. A declaration records what you say is
+                true; it is not an independent check, and a declared capability does not show that
+                its authorization is sufficient.
+              </p>
+              <div class="grid">
+                <label
+                  >True general policies<textarea
+                    id="declared-facts"
+                    placeholder="Standard delivery takes 2-5 business days.&#10;Electronics carry the manufacturer's warranty."
+                  ></textarea>
+                </label>
+                <label
+                  >Capabilities the bot really has<textarea
+                    id="declared-capabilities"
+                    placeholder="get_order_status(order_id, phone) looks up an order's status."
+                  ></textarea>
+                </label>
+              </div>
+              <div class="grid">
+                <label>Who is declaring this?<input id="declared-by" /></label>
+                <label>Where did it come from?<input id="declared-source" /></label>
+              </div>
+              <label
+                ><input id="declared-from-source" type="checkbox" /> This came from reading the
+                bot's own source code, and I approve sending it to the Judge</label
+              >
+              <p class="helper">
+                Black-box testing never reads your bot's source. A declaration written from a source
+                review needs the box above, because source observations otherwise belong to
+                White-box or Gray-box review.
+              </p>
+            </fieldset>
             <label
               >Keep run data (days; 0 = until you delete it)<input
                 id="retention"

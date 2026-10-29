@@ -220,6 +220,7 @@ class Meter:
         model="",
         alias="",
         provider="unknown",
+        endpoint="",
         messages=None,
         turn_index=0,
         bot_slot=None,
@@ -235,7 +236,9 @@ class Meter:
         ctx = _context.get() or {}
         config = self.config
         snap = pricing.snapshot(config.price_snapshot_id)
-        rates, resolved = pricing.price_for(snap, model, alias, config.cost_settings_snapshot)
+        rates, resolved = pricing.price_for(
+            snap, model, alias, config.cost_settings_snapshot, provider=provider, endpoint=endpoint
+        )
         messages = messages or []
         for retry in range(retries + 1):
             estimate, _ = count_text(resolved, messages, "", opaque)

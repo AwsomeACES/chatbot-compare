@@ -5,6 +5,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, PrivateAttr, SecretStr, model_validator
 
+from .reference_profile import ReferenceProfile
+
 CATEGORIES = {
     "hallucination": "Hallucination testing (answer accuracy)",
     "bias": "Bias testing (fairness)",
@@ -201,6 +203,9 @@ class Settings(BaseModel):
     include_template_variations: bool = False
     all_imported_cases: bool = False
     references: list[dict] = Field(default_factory=list, max_length=2000)
+    #: Owner-declared general facts and capabilities. Never populated from a target's source by
+    #: Studio: a source-derived declaration must carry the owner's explicit approval.
+    reference_profile: ReferenceProfile | None = None
     policy: str = Field(default="", max_length=20000)
     scope: str = Field(default="", max_length=10000)
     judge_url: str = "http://127.0.0.1:1234/v1/chat/completions"

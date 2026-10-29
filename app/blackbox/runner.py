@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 
 from .. import database as db
-from . import metering, pricing
+from . import judge_consistency, metering, pricing, provider_status, reference_profile
 from .catalog import build_cases
 from .connectors import Connector, safe_error
 from .cost_summary import summarize
@@ -294,6 +294,26 @@ def make_run(config):
             "Partial or ellipsis evidence is flagged for review; scores remain AI estimates.",
             "Browser completion uses stable assistant text and may not support all streaming widgets.",
         ],
+    }
+    if config.simple_mode:
+        # What the panel was allowed to do, stated rather than inferred from which judges happen
+        # to appear in the results.
+        run["judge_policy"] = provider_status.panel_policy(config)
+    # Which owner-declared inputs this Run was judged against, so a result is never read as
+    # though the evaluator knew more, or less, than it actually did.
+    run["reference_inputs"] = {
+        "claim_rules_version": reference_profile.CLAIM_RULES_VERSION,
+        "profile": config.reference_profile.describe()
+        if config.reference_profile
+        else {
+            "version": "",
+            "general_facts": 0,
+            "capabilities": 0,
+            "provenance": {},
+            "note": "No owner reference profile was supplied. An unsupported identifier value "
+            "still fails, while a general policy statement or an offered capability is reported "
+            "as unverified rather than scored as a chatbot defect.",
+        },
     }
     from .baselines import snapshot
 
@@ -583,6 +603,15 @@ class EvaluationExecutor:
                     partial_score=judged["score"],
                     reason="Some requested judges were unavailable; remaining valid estimates are retained for review. "
                     + judged["reason"],
+                )
+            if self.config.simple_mode and judged.get("consistency_status") == "contradictory":
+                # No judge on the panel produced a self-consistent verdict. The raw output is
+                # retained in `judges`; the Case contributes no measured score.
+                case["results"][i].update(
+                    status="not_tested",
+                    score=None,
+                    partial_score=judged["score"],
+                    reason=judge_consistency.UNRESOLVED_REASON + " " + judged["reason"],
                 )
             if judged.get("budget_stop"):
                 raise metering.BudgetLimit(judged["budget_stop"])

@@ -215,6 +215,7 @@ class Connector:
                         model=t.model,
                         alias=t.model_alias,
                         provider=metering.provider_from(t.url),
+                        endpoint=t.url,
                         messages=history,
                         turn_index=turn_index,
                         conversation_id=(

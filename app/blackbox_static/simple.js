@@ -157,6 +157,7 @@ function configuration() {
       ]),
     ),
     references: JSON.parse($("references").value || "[]"),
+    reference_profile: declaredProfile(),
     policy: $("policy").value,
     scope: $("scope").value,
     ...settings.execution,
@@ -168,17 +169,58 @@ const money = (n, local = false) => {
   if (n === 0 && local) return "$0 (local)";
   return n > 0 && n < 100 ? "<$0.0001" : "$" + (n / 1000000).toFixed(6);
 };
-const costMoney = (row) =>
-  row?.cost_micro_usd != null &&
-  Number(row.exact_micro_usd) > 0 &&
-  Number(row.exact_micro_usd) < 100
+const costMoney = (row) => {
+  if (row?.cost_micro_usd == null) {
+    const unknown = window.StudioStatus.QUALIFIER.unknown;
+    return row?.known_cost_micro_usd == null
+      ? unknown
+      : `${money(row.known_cost_micro_usd)} known subtotal <small>Total ${unknown.toLowerCase()} — some charges are missing.</small>`;
+  }
+  return row?.cost_micro_usd != null &&
+    Number(row.exact_micro_usd) > 0 &&
+    Number(row.exact_micro_usd) < 100
     ? "<$0.0001"
     : money(row?.cost_micro_usd, row?.calls > 0 && row.local_calls === row.calls);
+};
 function table(head, rows) {
   return `<div class="scroll"><table><thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
 }
 function bar(value, max) {
   return `<div class="bar-track"><div class="bar" style="width:${Math.min(100, Math.max(0, (Number(value) / Math.max(1, max)) * 100))}%"></div></div>`;
+}
+/* Whether the loaded detail for the selected run disagrees with the status the history list
+   reports. An externally resumed Run (a recovery script, or a second window) changes the list
+   while the loaded snapshot keeps its old status, and the fast heartbeat below only polls while
+   the loaded status is active. */
+/* The owner's declared facts and capabilities, or null when nothing was declared. Each line is
+   one declaration; the backend refuses a source-derived declaration without the approval box. */
+function declaredLines(id) {
+  return ($(id).value || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+function declaredProfile() {
+  const facts = declaredLines("declared-facts");
+  const capabilities = declaredLines("declared-capabilities");
+  if (!facts.length && !capabilities.length) return null;
+  const fromSource = $("declared-from-source").checked;
+  return {
+    general_facts: facts,
+    capabilities,
+    provenance: {
+      supplied_by: $("declared-by").value.trim() || "Not stated",
+      supplied_at: new Date().toISOString(),
+      source: $("declared-source").value.trim() || "Not stated",
+      source_derived: fromSource,
+      owner_approved: fromSource,
+    },
+  };
+}
+function staleAgainstHistory(runs, id, loaded) {
+  if (!id || !loaded || loaded.id !== id) return false;
+  const listed = (runs || []).find((r) => r && r.id === id);
+  return Boolean(listed && listed.status !== loaded.status);
 }
 function render(run) {
   current = run;
@@ -218,6 +260,12 @@ function render(run) {
     $("policy").value = run.config.policy;
     $("scope").value = run.config.scope;
     $("references").value = JSON.stringify(run.config.references || []);
+    const declared = run.config.reference_profile;
+    $("declared-facts").value = (declared?.general_facts || []).join("\n");
+    $("declared-capabilities").value = (declared?.capabilities || []).join("\n");
+    $("declared-by").value = declared?.provenance?.supplied_by || "";
+    $("declared-source").value = declared?.provenance?.source || "";
+    $("declared-from-source").checked = Boolean(declared?.provenance?.source_derived);
     hydrateRequested = false;
     planned();
   }
@@ -262,7 +310,7 @@ function render(run) {
   if (!studio) {
     // Display the saved summary without converting it to the newer scoring protocol.
     $("verdict").innerHTML =
-      `<details class="subtle-details"><summary>Saved evaluation results — scoring details</summary><p>Run ${esc(run.id)} · ${esc(run.status)}. Original scoring rules are preserved. Not tested means missing evidence, not a failed answer.</p><p>${esc(run.score_formula || "Quality and coverage are reported separately.")}</p></details>${evaluatorProvenance()}`;
+      `<details class="subtle-details"><summary>Saved evaluation results — scoring details</summary><p>Run ${esc(run.id)} · ${esc(run.status)}. Original scoring rules are preserved. Not tested means missing evidence, not a failed answer.</p><p>${esc(run.score_formula || "Quality and coverage are reported separately.")}</p></details>${verdictConsistency()}${evaluatorProvenance()}${panelPolicy()}`;
     $("scores").innerHTML = (run.targets || [])
       .map((target, index) => {
         const summary = run.summary?.[index];
@@ -287,7 +335,7 @@ function render(run) {
     $("relevance-charts").innerHTML = "";
   } else {
     $("verdict").innerHTML =
-      `<div class="verdict-card"><h3>${studio.winner == null ? (studio.bots.length === 1 ? "Evaluation summary" : "Comparison summary") : "Winner: " + esc(run.targets[studio.winner].name)}</h3><p>${esc(studio.confidence_note)}</p>${generalWarnings(studio).length ? `<p class="unknown">${generalWarnings(studio).map(esc).join(" ")}</p>` : ""}${familyWarnings(studio)}</div>${evaluatorProvenance()}<details class="subtle-details"><summary>How to read these scores</summary><p>${esc(studio.formula)}</p><p>Not tested is missing evidence, not a failed answer. It contributes zero to this evaluation index. Measured quality and coverage are shown separately.</p></details>`;
+      `<div class="verdict-card"><h3>${studio.winner == null ? (studio.bots.length === 1 ? "Evaluation summary" : "Comparison summary") : "Winner: " + esc(run.targets[studio.winner].name)}</h3><p>${esc(studio.confidence_note)}</p>${generalWarnings(studio).length ? `<p class="unknown">${generalWarnings(studio).map(esc).join(" ")}</p>` : ""}${familyWarnings(studio)}</div>${verdictConsistency()}${evaluatorProvenance()}${panelPolicy()}<details class="subtle-details"><summary>How to read these scores</summary><p>${esc(studio.formula)}</p><p>Not tested is missing evidence, not a failed answer. It contributes zero to this evaluation index. Measured quality and coverage are shown separately.</p></details>`;
     if (studio.comparison) {
       const comparison = studio.comparison;
       $("verdict").innerHTML +=
@@ -322,13 +370,25 @@ function render(run) {
       `<div class="grid">${studio.bots
         .map(
           (b) =>
-            `<article class="metric"><h3>${esc(b.name)}</h3><span class="pill">${b.tested === b.planned ? "Fully scored" : "Partial coverage"}</span><p class="muted">Overall score</p><div class="score">${b.score}<small>/100</small></div><p><strong>${b.tested}/${b.planned}</strong> outcomes scored · ${b.planned ? Math.round((100 * b.tested) / b.planned) : 0}% coverage</p><p>Strongest measured check: ${esc([...b.categories].filter((c) => c.tested).sort((a, z) => z.quality - a.quality)[0]?.name || "Not established")}<br>Lowest category scores: ${esc(
+            `<article class="metric"><h3>${esc(b.name)}</h3><span class="pill">${b.tested === b.planned ? "Fully scored" : "Partial coverage"}</span><p class="muted">Overall score</p><div class="score">${b.score}<small>/100</small></div><p><strong>${b.tested}/${b.planned}</strong> outcomes scored · ${b.planned ? Math.round((100 * b.tested) / b.planned) : 0}% coverage</p><p>Strongest measured check: ${esc([...b.categories].filter((c) => c.tested).sort((a, z) => z.quality - a.quality)[0]?.name || "Not established")}<br>Lowest measured category scores: ${esc(
               [...b.categories]
+                .filter((c) => c.tested)
                 .sort((a, z) => a.score - z.score)
                 .slice(0, 3)
                 .map((c) => c.name)
-                .join(", "),
-            )}</p>${bar(b.score, 100)}</article>`,
+                .join(", ") || "None measured",
+            )}${
+              /* An unmeasured category has no score to be lowest. Listing it beside the weakest
+                 measured ones would present missing evidence as a demonstrated weakness. */
+              [...b.categories].some((c) => !c.tested)
+                ? `<br><span class="muted">Not tested (no measurement, not a weakness): ${esc(
+                    [...b.categories]
+                      .filter((c) => !c.tested)
+                      .map((c) => c.name)
+                      .join(", "),
+                  )}</span>`
+                : ""
+            }</p>${bar(b.score, 100)}</article>`,
         )
         .join("")}</div>` +
       '<h3 class="chart-heading">Scores by category</h3>' +
@@ -397,35 +457,24 @@ function render(run) {
         .map((b) => ({ ...b.evaluation, label: "Judge: " + b.name })),
     ];
     const max = Math.max(1, ...rows.map((r) => r.input_tokens + r.output_tokens));
-    const maxCost = Math.max(1, ...rows.map((r) => r.cost_micro_usd || 0));
+    const chartCost = (r) => r.cost_micro_usd ?? r.known_cost_micro_usd;
+    const maxCost = Math.max(1, ...rows.map((r) => chartCost(r) || 0));
     $("costs").innerHTML =
       '<div class="cost-summary"><span>Bot cost <strong>' +
       costMoney(costs.bot) +
-      "</strong></span><span>Judge cost <strong>" +
+      `</strong><small>${costs.bot.input_tokens.toLocaleString()} input / ${costs.bot.output_tokens.toLocaleString()} output tokens</small></span><span>Judge cost <strong>` +
       costMoney(costs.evaluation) +
-      "</strong></span></div>" +
-      '<details class="subtle-details"><summary>View token counts and cost charts</summary>' +
+      `</strong><small>${costs.evaluation.input_tokens.toLocaleString()} input / ${costs.evaluation.output_tokens.toLocaleString()} output tokens</small></span></div>` +
+      "<h3>Usage by bot and judge</h3>" +
       table(
-        [
-          "Bot / judge",
-          "Input",
-          "Output",
-          "Reasoning (included in output)",
-          "Tokens chart",
-          "USD cost",
-          "Cost chart",
-        ],
+        ["Bot / judge", "Tokens (input / output)", "USD cost / known subtotal"],
         rows.map((r) => [
           esc(r.label),
-          r.input_tokens,
-          r.output_tokens,
-          r.reasoning_tokens || 0,
-          bar(r.input_tokens + r.output_tokens, max),
-          costMoney(r),
-          r.cost_micro_usd == null ? "Unknown" : bar(r.cost_micro_usd, maxCost),
+          `${r.input_tokens.toLocaleString()} / ${r.output_tokens.toLocaleString()}${bar(r.input_tokens + r.output_tokens, max)}`,
+          costMoney(r) + (chartCost(r) == null ? "" : bar(chartCost(r), maxCost)),
         ]),
       ) +
-      `<p>Bot total: ${costMoney(costs.bot)}. Evaluation total: ${costMoney(costs.evaluation)}. Hidden bot calls require its own telemetry. Token totals can include estimates for failed or opaque calls; JSON records each source.</p></details>`;
+      '<p class="helper">Dollar amounts use this run’s saved prices, not a provider invoice. Known subtotals exclude missing charges. Token totals may include estimates; hidden bot calls need the bot’s own usage reporting. Reasoning tokens are already included in output.</p>';
   } else
     $("costs").innerHTML =
       '<p class="empty-state">Cost is unavailable for this run. Missing usage is never treated as free.</p>';
@@ -448,8 +497,13 @@ function render(run) {
     const why = (verdict.fallback_reasons || [])
       .map((row) => `${esc(row.model)}: ${esc(row.reason)}`)
       .join("; ");
+    /* A local fallback runs on this machine: it is slower than a hosted judge and its API fee
+       is zero while the hardware cost is excluded. Saying so explains a slow run. */
+    const slow = verdict.local
+      ? " Runs on this machine, so it is slower than a hosted judge; its API fee is zero and hardware cost is excluded."
+      : "";
     const fallback = verdict.fallback
-      ? `<br><small class="provenance">Fallback evaluator. ${why ? `Requested judge unavailable — ${why}` : "Reason not recorded."}</small>`
+      ? `<br><small class="provenance">Fallback evaluator. ${why ? `Requested judge unavailable — ${why}` : "Reason not recorded."}${slow}</small>`
       : "";
     return `<br><small class="provenance">Actual evaluator: ${parts.join(" · ")}. Returned names are not guaranteed immutable revisions.</small>${fallback}`;
   }
@@ -501,6 +555,87 @@ function render(run) {
     return `<details class="subtle-details" id="evaluator-provenance"><summary>Which judge scored these cases</summary>${mixed}${unavailable}${rows ? `<table class="cal-table"><thead><tr><th>Actual evaluator</th><th>Requested</th><th>Provider</th><th>Returned identifier</th><th>Fallback</th><th>Human calibration</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="helper">No LLM judge verdict is recorded for this test.</p>`}${engines ? `<ul>${engines}</ul>` : ""}<p class="helper">${esc(info.revision_note)} ${esc(info.calibration_note)}</p></details>`;
   }
 
+  /* A score that contradicts its own explanation is unreliable evidence for either outcome, so
+     it is named where the evidence is read rather than left to look like a measured failure. */
+  function consistencyNotice(result) {
+    const rows = result.contradictions || [];
+    if (result.consistency_status !== "contradictory" && !rows.length) return "";
+    const label =
+      result.consistency_status === "contradictory"
+        ? window.StudioStatus.QUALIFIER.contradictory
+        : window.StudioStatus.QUALIFIER.mixed_panel;
+    const explain =
+      result.consistency_status === "contradictory"
+        ? window.StudioStatus.EXPLAIN.contradictory
+        : window.StudioStatus.EXPLAIN.mixed_panel;
+    const detail = rows.map((row) => `${row.model}: ${row.detail}`).join(" ");
+    return `<p class="unknown"><strong>${esc(label)}</strong> ${esc(explain)}${
+      detail ? " " + esc(detail) : ""
+    } Next action: read the retained judge output below, then record a human review.</p>`;
+  }
+
+  /* Per-judge consistency, so a mixed panel shows which member contradicted itself. */
+  function judgeConsistency(judge) {
+    const state = judge.consistency?.status;
+    if (!state || state === "consistent") return "";
+    if (state === "contradictory")
+      return ` <span class="pill">${esc(window.StudioStatus.QUALIFIER.contradictory)}</span><br><small>${esc(judge.consistency.detail || "")}</small>`;
+    return ` <span class="pill">${esc(window.StudioStatus.QUALIFIER.not_measured)}: no verdict word was returned, so agreement was not established</span>`;
+  }
+
+  /* Contradictions found by reading the saved verdicts. Shown for review beside the scores; no
+     stored score, status or reason is changed by it. */
+  function verdictConsistency() {
+    const info = run.verdict_consistency;
+    if (!info) return "";
+    const rows = (info.contradictions || [])
+      .map(
+        (row) =>
+          `<tr><td>${esc(row.case)}</td><td>${esc(run.targets[row.bot]?.name || "Bot " + (row.bot + 1))}</td><td>${esc(row.model)}</td><td>${esc(row.score)}</td><td>${esc(row.detail)}</td></tr>`,
+      )
+      .join("");
+    const summary = rows
+      ? `${info.contradictions.length} saved ${window.StudioStatus.QUALIFIER.contradictory.toLowerCase()} — review before relying on these results`
+      : "Saved verdict consistency review — none found";
+    return `<details class="subtle-details" id="verdict-consistency"${rows ? " open" : ""}><summary>${esc(summary)}</summary>${
+      rows
+        ? `<p class="unknown">${esc(window.StudioStatus.EXPLAIN.contradictory)}</p><table class="cal-table"><thead><tr><th>Case</th><th>Bot</th><th>Judge</th><th>Saved score</th><th>Why it contradicts</th></tr></thead><tbody>${rows}</tbody></table><p>Next action: open each case below, read the retained judge output, then record a human review. Re-judging produces a separately identifiable evaluation.</p>`
+        : `<p class="helper">No saved verdict was found whose score contradicts its own explanation.</p>`
+    }<p class="helper">${esc(info.note)} ${esc(info.coverage_note)}</p></details>`;
+  }
+
+  /* Providers that failed on this Case, with the condition and the action it implies. Recorded
+     per result by the panel; an account or billing problem is not a chatbot defect. */
+  function judgeFailures(result) {
+    const rows = (result?.judge_failures || []).filter(Boolean);
+    if (!rows.length) return "";
+    const items = rows
+      .map((row) => {
+        const label = row.label || window.StudioStatus.label(row.state || "unknown");
+        const waiting = row.retryable === false ? " Waiting will not resolve this." : "";
+        const status = row.http_status ? ` HTTP ${esc(row.http_status)}.` : "";
+        return `<li><strong>${esc(row.model || "Judge")}: ${esc(label)}.</strong>${status} ${esc(row.reason || "")}${esc(waiting)}${row.action ? ` <em>Next action: ${esc(row.action)}</em>` : ""}</li>`;
+      })
+      .join("");
+    return `<div class="unknown"><p><strong>Judges that did not produce a verdict here</strong></p><ul>${items}</ul></div>`;
+  }
+
+  /* What the panel was allowed to do, stated rather than inferred from which judges appear. */
+  function panelPolicy() {
+    const policy = run.judge_policy;
+    if (!policy) return "";
+    const requested =
+      (policy.requested_judges || [])
+        .map((j) => `${esc(j.model)}${j.local ? " (local)" : ""}`)
+        .join(", ") || "none recorded";
+    const fallbacks =
+      (policy.declared_fallbacks || [])
+        .map((j) => `${esc(j.model)}${j.local ? " (local)" : ""}`)
+        .join(", ") || "none declared";
+    const rules = (policy.rules || []).map((rule) => `<li>${esc(rule)}</li>`).join("");
+    return `<details class="subtle-details" id="judge-policy"><summary>Which judges were allowed, and what happens when one fails</summary><p>Requested judges: ${requested}. Declared fallbacks: ${fallbacks}. Automatic local fallback: ${policy.automatic_local_fallback ? "on" : "off"}.</p><ul>${rules}</ul><p class="helper">${esc(policy.discovery_note || "")}</p></details>`;
+  }
+
   function caseEvidence(category) {
     return run.cases
       .filter((c) => c.category === category)
@@ -509,7 +644,7 @@ function render(run) {
           `<div class="case-evidence"><h4>${esc(c.name)} · case ${c.scenario_index || 1}, repeat ${c.repeat ?? 1}</h4><div class="grid">${c.results
             .map(
               (r, i) =>
-                `<article><strong>${esc(run.targets[i].name)} <span class="pill">${esc(window.StudioStatus.label(r.status))}</span></strong><p>Score: ${r.score == null ? `${window.StudioStatus.RESULT.not_tested}${studio ? " (index contribution 0)" : " (excluded from measured quality)"}` : r.score + "/100"}</p><p>${r.human_review_note ? "<strong class=badge>Overridden — reason logged</strong> " : ""}${r.needs_review ? `<strong>${esc(window.StudioStatus.QUALIFIER.needs_review)}</strong> ` : ""}${esc(r.reason)}</p>${(r.judges || []).map((j) => `<p class="judge-reason">Judge: ${esc(j.model)} — ${j.score}%<br>Evidence: ${j.evidence.map(esc).join(" | ")}${judgeProvenance(j)}</p>`).join("")}${nonJudgeEngine(r)}${window.renderEvidenceDetails(c, r)}${r.transcript
+                `<article><strong>${esc(run.targets[i].name)} <span class="pill">${esc(window.StudioStatus.label(r.status))}</span></strong><p>Score: ${r.score == null ? `${window.StudioStatus.RESULT.not_tested}${studio ? " (index contribution 0)" : " (excluded from measured quality)"}` : r.score + "/100"}</p><p>${r.human_review_note ? "<strong class=badge>Overridden — reason logged</strong> " : ""}${r.needs_review ? `<strong>${esc(window.StudioStatus.QUALIFIER.needs_review)}</strong> ` : ""}${esc(r.reason)}</p>${consistencyNotice(r)}${(r.judges || []).map((j) => `<p class="judge-reason">Judge: ${esc(j.model)} — ${j.score}%${judgeConsistency(j)}<br>Evidence: ${j.evidence.map(esc).join(" | ")}${judgeProvenance(j)}</p>`).join("")}${judgeFailures(r)}${nonJudgeEngine(r)}${window.renderEvidenceDetails(c, r)}${r.transcript
                   .map(
                     (t) => `<div class="transcript"><strong>User:</strong> ${esc(t.input)}
 <strong>Bot:</strong> ${esc(t.output || t.error || "No response")}
@@ -530,7 +665,15 @@ Time: ${t.seconds ?? "Unknown"} seconds</div>`,
       const scored = rows.filter(
         (r) => r.score != null && ["passed", "failed"].includes(r.status),
       ).length;
-      return `<details data-case="${esc(item.category)}" ${openIds.has(item.category) ? "open" : ""}><summary>${esc(caseName(item))}<span class="summary-meta">${scored}/${rows.length} outcomes scored</span></summary><div data-case-body>${openIds.has(item.category) ? caseEvidence(item.category) : ""}</div></details>`;
+      const passed = rows.filter((r) => r.status === "passed").length;
+      const untested = rows.filter((r) => r.status === "not_tested").length;
+      const contradicted = rows.filter(
+        (r) => r.consistency_status === "contradictory" || (r.contradictions || []).length,
+      ).length;
+      const meta =
+        `${rows.length} processed · ${scored} scored · ${passed} passed · ${untested} ${window.StudioStatus.RESULT.not_tested}` +
+        (contradicted ? ` · ${contradicted} ${window.StudioStatus.QUALIFIER.contradictory}` : "");
+      return `<details data-case="${esc(item.category)}" ${openIds.has(item.category) ? "open" : ""}><summary>${esc(caseName(item))}<span class="summary-meta">${esc(meta)}</span></summary><div data-case-body>${openIds.has(item.category) ? caseEvidence(item.category) : ""}</div></details>`;
     })
     .join("");
   // Load evidence only when requested, rather than inserting hundreds of hidden transcripts.
@@ -613,6 +756,11 @@ async function poll() {
 async function loadHistory() {
   const runs = await api("/api/blackbox/runs");
   window.StudioUI.setRuns(runs);
+  /* A Run resumed or stopped outside this page (by a recovery script, or a second window)
+     reports its new status in this list while the selected result still holds the old
+     snapshot. The heartbeat below only polls while the *loaded* status is active, so without
+     this reconciliation the panel stayed stale until Refresh was pressed. */
+  if (staleAgainstHistory(runs, runId, current)) await poll();
   $("history").innerHTML = runs
     .map(
       (r) =>
@@ -884,6 +1032,12 @@ boot().catch((error) => tell(error.message));
 setInterval(() => {
   if (current && ["queued", "running"].includes(current.status)) poll();
 }, 2500);
+/* While the loaded result looks finished, re-read the history list at a slower cadence so an
+   externally resumed Run is picked up without polling a completed result every few seconds. */
+setInterval(() => {
+  if (!runId || (current && ["queued", "running"].includes(current.status))) return;
+  loadHistory().catch(() => {});
+}, 10000);
 
 let liveEvents = null;
 let liveRun = "";

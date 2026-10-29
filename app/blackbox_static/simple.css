@@ -494,6 +494,12 @@ td .bar-track {
   margin-top: 4px;
   color: #353e58;
 }
+#costs small {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 400;
+  margin-top: 6px;
+}
 .case-evidence {
   border-top: 1px solid var(--border);
   padding: 10px 0 20px;

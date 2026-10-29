@@ -50,6 +50,15 @@ ID_EXEMPTION_NOTE = (
     "this is a baseline for accidental disclosure, not an adversarial filter."
 )
 
+#: Why typed cost fields keep their digits, for export disclosure.
+AMOUNT_EXEMPTION_NOTE = (
+    "Typed numeric cost and usage fields keep their exact decimal value, because the generic "
+    "number rule would otherwise mask an amount such as 133316.000000000000 as a telephone "
+    "number. The exemption applies only to these known field names holding a bare number: a "
+    "contact detail stored in one of them, or any amount written with spaces, brackets or a "
+    "country code, is still redacted."
+)
+
 LIMITATION_NOTE = (
     "Names, postal addresses, account handles, free-text personal details and identifiers "
     "specific to your organisation are not detected by pattern matching. Review context before "
@@ -86,18 +95,51 @@ def redact_text(text: str) -> str:
     return "".join(pieces)
 
 
+#: Typed fields whose value is a monetary amount or a counter, never a telephone number. Exact
+#: micro-USD amounts are stored as decimal strings, and the generic number rule matches any run
+#: of 10-15 digits, so an export turned 477 saved cost values into "[REDACTED phone]" and
+#: truncated others to "7217.[REDACTED phone]". The exemption is gated on the field name *and*
+#: the value shape, so a contact detail parked in one of these fields is still redacted.
+NUMERIC_COST_FIELDS = frozenset(
+    {
+        "exact_micro_usd",
+        "cost_exact_micro_usd",
+        "cost_micro_usd",
+        "known_cost_micro_usd",
+        "local_compute_micro_usd",
+        "reserved_micro_usd",
+        "cost_per_answer_micro_usd",
+        "cost_per_conversation_micro_usd",
+    }
+)
+#: A bare decimal number, including the exponent form `Decimal` produces for small amounts
+#: ("0E-12"). No spaces, brackets, dashes or country code can appear, which is what separates an
+#: amount from a telephone number.
+PLAIN_AMOUNT = re.compile(r"\A-?\d{1,30}(?:\.\d{1,18})?(?:[eE][+-]?\d{1,4})?\Z")
+
+
+def typed_amount(field: str, value: object) -> bool:
+    """True when this exact field and value shape is an amount rather than free text."""
+    return (
+        field in NUMERIC_COST_FIELDS
+        and isinstance(value, str)
+        and bool(PLAIN_AMOUNT.fullmatch(value))
+    )
+
+
 def redact(value: object) -> object:
     """PII regex baseline; names/addresses need contextual review before sharing.
 
     Public structured identifiers survive (see STRUCTURED_IDS); credentials, email addresses,
-    telephone numbers and national identifiers around them do not.
+    telephone numbers and national identifiers around them do not. Typed numeric cost fields
+    keep their exact decimal value (see NUMERIC_COST_FIELDS).
     """
     if isinstance(value, str):
         return redact_text(value)
     if isinstance(value, list):
         return [redact(x) for x in value]
     if isinstance(value, dict):
-        return {k: redact(v) for k, v in value.items()}
+        return {k: v if typed_amount(k, v) else redact(v) for k, v in value.items()}
     return value
 
 
@@ -226,7 +268,7 @@ def verify(run: dict) -> dict:
 
 
 def describe(run: dict) -> dict:
-    from . import judge_provenance
+    from . import judge_consistency, judge_provenance
     from .judge_calibration import alignment_for_run
 
     rows = [r for c in run.get("cases", []) for r in c["results"]]
@@ -292,6 +334,9 @@ def describe(run: dict) -> dict:
         "judge_provenance": judge_provenance.describe(run),
         # Human-label alignment is separate from run_integrity.agreement_percent (model vs model).
         "human_alignment": alignment_for_run(run),
+        # A later reading of saved verdicts whose score contradicts their own explanation. It
+        # changes no stored score; older verdicts lack a declared verdict word, which it states.
+        "verdict_consistency": judge_consistency.review(run),
         "mapping": mapping,
         "timings": progress(run),
         "retention_days": run.get("config", {}).get("retention_days", 0),
@@ -308,6 +353,7 @@ def export_run(run: dict) -> dict:
         "source_integrity": integrity["audit_integrity"],
         "note": "PII regex baseline (emails/phones/SSNs/key patterns); names and addresses may remain. Audit payloads are redacted, so their original hashes verify only against retained source data.",
         "identifier_exemptions": ID_EXEMPTION_NOTE,
+        "numeric_field_exemptions": AMOUNT_EXEMPTION_NOTE,
         "limitations": LIMITATION_NOTE,
         "hash_verification": (
             "The hashes inside this redacted export cannot be recomputed from it, because "

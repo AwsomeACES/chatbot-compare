@@ -95,7 +95,13 @@ def calibration_for(model: str, endpoint: str, run: dict) -> dict | None:
 
     config = run.get("config") or {}
     try:
-        return resolve_compatibility(model, endpoint, config.get("policy"), config.get("scope"))
+        return resolve_compatibility(
+            model,
+            endpoint,
+            config.get("policy"),
+            config.get("scope"),
+            config.get("reference_profile"),
+        )
     except Exception:  # noqa: BLE001 - a diagnostic read must never break the Results view
         return None
 

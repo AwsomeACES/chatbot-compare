@@ -1,0 +1,16 @@
+{
+  "version": "verified-prices-v1",
+  "note": "Rates verified by hand against a provider's official pricing page, merged on top of the catalogue snapshot and below an owner's own overrides. A key of the form \"<model>@<scheme>://<host>[:port]/<path>\" applies only to that endpoint, so one provider's published rate is never used for another host serving the same model name. Rates are USD per million tokens. Editing this file does not change any saved price snapshot: existing Runs keep the snapshot they were pinned to.",
+  "models": {
+    "gemma-4-26b-a4b-it@https://generativelanguage.googleapis.com/v1beta/openai/chat/completions": {
+      "input": "0",
+      "cached_input": "0",
+      "output": "0",
+      "reasoning": "0",
+      "provider": "gemini",
+      "source": "https://ai.google.dev/gemini-api/docs/pricing",
+      "source_date": "2026-10-29",
+      "note": "Gemini Developer API free tier lists Gemma 4 input and output as free of charge; the paid tier lists it as not available. A paid-tier account therefore has no published rate and its billing stays Unknown. This key is bound to Google's own endpoint and must not be copied to another host."
+    }
+  }
+}
