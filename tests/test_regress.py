@@ -174,6 +174,37 @@ def test_judge_preflight_reports_a_retired_judge_model(monkeypatch):
     assert regress.judge_preflight(second=True) == []
 
 
+def test_nightly_alert_names_a_retired_judge_and_what_to_change(monkeypatch):
+    from adapters import BotError
+
+    class Retired:
+        model = "z-ai/glm-5.3"
+
+        def structured(self, *args):
+            raise BotError("z-ai/glm-5.3: HTTP 410: The model has reached its end of life")
+
+    class Busy:
+        model = "gemini-3.5-flash-lite"
+
+        def structured(self, *args):
+            raise BotError("gemini-3.5-flash-lite: HTTP 429: quota")
+
+    posted, started = [], []
+    monkeypatch.setattr(regress, "notify", posted.append)
+    monkeypatch.setattr(regress, "load_bots", lambda: [{"id": "a", "label": "A"}])
+    monkeypatch.setattr(regress, "preflight", lambda *a: [])
+    monkeypatch.setattr(regress.evaluator.llm, "JUDGE", Retired())
+    monkeypatch.setattr(regress.evaluator.llm, "SECOND_JUDGE", Busy())
+    monkeypatch.setattr(regress.evaluator, "start_run", lambda *a, **k: started.append(1))
+    assert regress.cmd_run(["--bots", "a"]) == 3
+    assert not started
+    retired, other = posted[0].split("\n\n")
+    assert "retired" in retired and "JUDGE_MODEL" in retired and "z-ai/glm-5.3" in retired and "gemini" not in retired
+    assert "not answering" in other and "HTTP 429" in other
+    # only a quota problem: the usual headline, nothing about retiring
+    assert "retired" not in regress.judge_alert([("gemini", "HTTP 429: quota")])
+
+
 def test_resume_continues_a_stopped_run_in_this_process_then_checks_it(monkeypatch):
     run = {"id": "r1", "status": "interrupted", "bots": [{"id": "a", "label": "A"}], "progress": {"done": 3, "total": 9}}
     resumed = []

@@ -27,6 +27,7 @@ Set REGRESSION_WEBHOOK to a Slack-style incoming-webhook URL to also post the re
 
 import json
 import os
+import re
 import sys
 import time
 import urllib.request
@@ -142,6 +143,25 @@ def judge_preflight(second=False):
     return down
 
 
+RETIRED = re.compile(r"HTTP (404|410)\b")
+
+
+def judge_alert(judges_down):
+    """The nightly alert for judges that failed the pre-flight. A retired or unserved model (HTTP 404 / 410) won't come
+    back by itself, unlike a quota or an outage, so it gets its own headline saying what to change (AIRM-124, -165)."""
+    retired = [(m, e) for m, e in judges_down if RETIRED.search(e)]
+    other = [(m, e) for m, e in judges_down if not RETIRED.search(e)]
+    parts = []
+    if retired:
+        parts.append("Chatbot Compare nightly run skipped, judge model retired or not served to this account. "
+                     "It won't come back: set JUDGE_MODEL (or SECOND_JUDGE_MODEL) in .env to a model that answers, "
+                     "or change the default in llm.py:\n" + "\n".join(f"- {m}: {e}" for m, e in retired))
+    if other:
+        parts.append("Chatbot Compare nightly run skipped, judge(s) not answering:\n"
+                     + "\n".join(f"- {m}: {e}" for m, e in other))
+    return "\n\n".join(parts)
+
+
 def baseline_used_rewordings(ids):
     baselines = evaluator.load_baselines()
     return any((evaluator.get_run(baselines[i]) or {}).get("rewordings") for i in ids if i in baselines)
@@ -173,7 +193,7 @@ def cmd_run(args):
     second_judge = bool(evaluator.llm.SECOND_JUDGE) and "--no-second-judge" not in args
     judges_down = judge_preflight(second_judge) if "--no-judge" not in args else []
     if judges_down:
-        text = "Chatbot Compare nightly run skipped, judge(s) not answering:\n" + "\n".join(f"- {m}: {e}" for m, e in judges_down)
+        text = judge_alert(judges_down)
         print(text)
         notify(text)
         return 3

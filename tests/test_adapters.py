@@ -102,6 +102,52 @@ def test_voltkart_with_no_tool_calls_retrieved_nothing(http):
     assert open_conversation({**VOLTKART, "trace": True}).send("hi").trace == {"tools": [], "context": ""}
 
 
+def test_voltkart_sends_back_its_owner_cookie_on_later_turns_and_reset(http):
+    """AIRM-166: VoltKart ties a conversation to the chat_owner cookie it sets; without it turn 2 and reset are 404."""
+    calls, queue = http
+    first = FakeResponse(data={"session_id": "s1", "reply": "Hi"})
+    first.cookies = {"chat_owner": "abc"}
+    queue += [first, FakeResponse(data={"session_id": "s1", "reply": "Rs 47,990"}), FakeResponse(data={"ok": True})]
+    conv = open_conversation(VOLTKART)
+    conv.send("hello")
+    conv.send("price?")
+    conv.close()
+    assert "Cookie" not in (calls[0]["headers"] or {})
+    assert calls[1]["headers"]["Cookie"] == "chat_owner=abc"
+    assert calls[2]["url"].endswith("/api/reset") and calls[2]["headers"]["Cookie"] == "chat_owner=abc"
+
+
+def test_voltkart_white_box_sends_the_debug_token_header(http, monkeypatch):
+    calls, queue = http
+    monkeypatch.setenv("VK_TOKEN", "t0k")
+    queue += [FakeResponse(data={"session_id": "s", "reply": "x", "trace": {"tools": []}})] * 2
+    open_conversation({**VOLTKART, "trace": True, "debug_token_env": "VK_TOKEN"}).send("hi")
+    assert calls[0]["headers"]["X-Debug-Token"] == "t0k"
+    open_conversation({**VOLTKART, "debug_token_env": "VK_TOKEN"}).send("hi")  # trace off: no token sent
+    assert "X-Debug-Token" not in (calls[1]["headers"] or {})
+
+
+def test_voltkart_warns_when_trace_is_on_but_no_tool_calls_come_back(http, caplog):
+    _, queue = http
+    queue += [FakeResponse(data={"session_id": "s", "reply": "x"})] * 2
+    conv = open_conversation({**VOLTKART, "trace": True, "debug_token_env": "UNSET_TOKEN_VAR"})
+    with caplog.at_level("WARNING", logger="adapters"):
+        conv.send("a")
+        conv.send("b")
+    assert [r.message for r in caplog.records].count(
+        "v: trace is on but VoltKart sent no tool calls; set UNSET_TOKEN_VAR to the server's DEBUG_TOKEN") == 1
+
+
+def test_voltkart_logs_a_failed_reset(http, caplog):
+    _, queue = http
+    queue += [FakeResponse(data={"session_id": "s", "reply": "x"}), FakeResponse(404, {"detail": "gone"})]
+    conv = open_conversation(VOLTKART)
+    conv.send("a")
+    with caplog.at_level("WARNING", logger="adapters"):
+        conv.close()
+    assert "HTTP 404" in caplog.text
+
+
 def test_fallback_reply_is_an_error_not_an_answer(http):
     _, queue = http
     queue.append(FakeResponse(data={"session_id": "s", "reply": "Please tell me the issue and I'll help."}))

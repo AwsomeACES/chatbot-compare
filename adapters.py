@@ -37,6 +37,7 @@ supportflow read a "usage" field in the reply, sse_chat a "usage" field in a met
 """
 
 import json
+import logging
 import os
 import sqlite3
 import threading
@@ -46,6 +47,8 @@ from contextlib import closing
 from dataclasses import dataclass
 
 import httpx2
+
+log = logging.getLogger("adapters")
 
 TIMEOUT = float(os.environ.get("BOT_TIMEOUT", "120"))
 MAX_CONTEXT = 8000  # characters of retrieved context kept per turn
@@ -157,6 +160,11 @@ def _json(r):
 
 
 def _post(url, body, headers=None, timeout=None):
+    return _json(_post_response(url, body, headers, timeout))
+
+
+def _post_response(url, body, headers=None, timeout=None):
+    """The response itself (for its cookies), after the same error handling as _post."""
     try:
         r = httpx2.post(url, json=body, headers=headers or {}, timeout=timeout or TIMEOUT)
     except httpx2.HTTPError as e:
@@ -167,7 +175,7 @@ def _post(url, body, headers=None, timeout=None):
         except (ValueError, AttributeError):
             detail = r.text
         raise BotError(f"HTTP {r.status_code}: {str(detail)[:300]}")
-    return _json(r)
+    return r
 
 
 class Conversation:
@@ -200,18 +208,45 @@ class Conversation:
 
 
 class VoltKartConversation(Conversation):
+    """VoltKart's /api/chat. Since AIRM-157 a conversation belongs to the owner cookie ("chat_owner") VoltKart sets
+    on its first reply: later turns and /api/reset without it answer 404, so the cookies it sets are kept and sent
+    back. Its tool calls (white-box) come only with the X-Debug-Token header matching the server's DEBUG_TOKEN:
+    with "trace" on, the token is read from the env var named in "debug_token_env"."""
+
     def __init__(self, cfg):
         super().__init__(cfg)
         self.session_id = None
+        self.cookies = {}
+        self._warned = False
+
+    def _headers(self):
+        headers = {}
+        if self.cookies:
+            headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in self.cookies.items())
+        if self.debug and (token := os.environ.get(self.cfg.get("debug_token_env") or "", "")):
+            headers["X-Debug-Token"] = token
+        return headers
+
+    def _keep_cookies(self, r):
+        jar = getattr(r, "cookies", None)
+        if jar:
+            self.cookies.update(dict(jar.items()) if hasattr(jar, "items") else jar)
 
     def _send(self, message):
         body = {"message": message, "session_id": self.session_id, "model": self.cfg["model"]}
         if self.debug:
             body["debug"] = True
-        data = _post(f"{self.cfg['base_url'].rstrip('/')}/api/chat", body, timeout=self.cfg.get("timeout"))
+        r = _post_response(f"{self.cfg['base_url'].rstrip('/')}/api/chat", body, headers=self._headers(),
+                           timeout=self.cfg.get("timeout"))
+        self._keep_cookies(r)
+        data = _json(r)
         self.session_id = data["session_id"]
         self.usage = data.get("usage")
         calls = (data.get("trace") or {}).get("tools") if self.debug else None
+        if self.debug and calls is None and not self._warned:  # asked for tool calls, got none: token missing/wrong
+            self._warned = True
+            log.warning("%s: trace is on but VoltKart sent no tool calls; set %s to the server's DEBUG_TOKEN",
+                        self.cfg.get("id"), self.cfg.get("debug_token_env") or "debug_token_env")
         # route (gray-box) comes with every reply; tools need debug output (an old server sends neither)
         self.trace = make_trace(route=data.get("route"),
                                 tools=None if calls is None else [{"name": c["name"], "input": c.get("input")} for c in calls],
@@ -221,11 +256,15 @@ class VoltKartConversation(Conversation):
 
     def close(self):
         if self.session_id:
+            url = f"{self.cfg['base_url'].rstrip('/')}/api/reset"
             try:
-                httpx2.post(f"{self.cfg['base_url'].rstrip('/')}/api/reset",
-                            json={"message": "", "session_id": self.session_id}, timeout=10)
-            except httpx2.HTTPError:
-                pass
+                r = httpx2.post(url, json={"message": "", "session_id": self.session_id}, headers=self._headers(),
+                                timeout=10)
+                if r.status_code >= 400:
+                    log.warning("%s: reset of session %s answered HTTP %s", self.cfg.get("id"), self.session_id,
+                                r.status_code)
+            except httpx2.HTTPError as e:
+                log.warning("%s: reset of session %s failed: %s", self.cfg.get("id"), self.session_id, e)
 
 
 class HttpConversation(Conversation):

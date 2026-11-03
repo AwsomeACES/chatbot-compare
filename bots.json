@@ -8,6 +8,7 @@
       "source": "~/projects/reliance-digital-chatbot",
       "llm": "Claude Sonnet 5.5",
       "type": "voltkart",
+      "debug_token_env": "VOLTKART_DEBUG_TOKEN",
       "trace": true,
       "base_url": "http://localhost:8010",
       "model": "claude-sonnet-5-5",
@@ -27,6 +28,7 @@
       "source": "~/projects/reliance-digital-chatbot",
       "llm": "Claude Haiku 5.5",
       "type": "voltkart",
+      "debug_token_env": "VOLTKART_DEBUG_TOKEN",
       "trace": true,
       "base_url": "http://localhost:8010",
       "model": "claude-haiku-5-5",
@@ -47,6 +49,7 @@
       "llm": "Gemini 2.5 Flash",
       "rpm": 6,
       "type": "voltkart",
+      "debug_token_env": "VOLTKART_DEBUG_TOKEN",
       "trace": true,
       "base_url": "http://localhost:8010",
       "model": "gemini-2.5-flash",
@@ -64,6 +67,7 @@
       "source": "~/projects/reliance-digital-chatbot",
       "llm": "GPT-5 mini",
       "type": "voltkart",
+      "debug_token_env": "VOLTKART_DEBUG_TOKEN",
       "trace": true,
       "base_url": "http://localhost:8010",
       "model": "gpt-5-mini",
@@ -76,6 +80,7 @@
       "source": "~/projects/reliance-digital-chatbot",
       "llm": "Amazon Nova Pro",
       "type": "voltkart",
+      "debug_token_env": "VOLTKART_DEBUG_TOKEN",
       "trace": true,
       "base_url": "http://localhost:8010",
       "model": "nova-pro",
@@ -89,6 +94,7 @@
       "source": "~/projects/reliance-digital-chatbot",
       "llm": "Qwen2.5 3B (local)",
       "type": "voltkart",
+      "debug_token_env": "VOLTKART_DEBUG_TOKEN",
       "trace": true,
       "base_url": "http://localhost:8010",
       "model": "qwen2.5-3b-local",
@@ -104,7 +110,7 @@
     {
       "id": "mouni-gemini",
       "label": "Mouni's chatbot · Gemini 3.6 Flash",
-      "description": "SupportFlow AI (Flask, Mouni's GitHub main, 4f0c598 of 2026-10-23): database lookups (products, orders, refunds, warranties, offers) then Gemini 3.6 Flash (free tier); hands the chat to a human agent when the customer asks for one",
+      "description": "SupportFlow AI (Flask, Mouni's GitHub main, b64a012 of 2026-10-29): database lookups (products, orders, refunds, warranties, offers) then Gemini 3.6 Flash (free tier); hands the chat to a human agent when the customer asks for one",
       "profile": "mouni",
       "source": "~/projects/mouni-bot/github-latest",
       "llm": "Gemini 3.6 Flash",
@@ -203,9 +209,10 @@
     {"name": "ollama", "port": 11434, "dir": ".", "cmd": ["ollama", "serve"],
      "health": {"path": "/api/version", "expect": "version"}, "note": "VoltKart's free local model"},
     {"name": "voltkart", "port": 8010, "dir": "~/projects/reliance-digital-chatbot",
+     "env": {"DEBUG_TOKEN": "$VOLTKART_DEBUG_TOKEN"},
      "health": {"path": "/api/models", "expect": "store_name"},
      "cmd": [".venv/bin/uvicorn", "app:app", "--port", "8010"],
-     "note": "8010, not uvicorn's default 8000, which other local projects' dev servers often take"},
+     "note": "8010, not uvicorn's default 8000, which other local projects' dev servers often take. DEBUG_TOKEN comes from VOLTKART_DEBUG_TOKEN in .env, the same value the adapter sends as X-Debug-Token for white-box traces"},
     {"name": "hussain", "port": 8001, "dir": "~/projects/hussain-bot/digital-multi-agent-ai-main/backend",
      "env": {"RAG_DATA_ROOT": "~/projects/hussain-bot/digital-multi-agent-ai-main/data",
              "CHROMA_PATH": "~/projects/hussain-bot/digital-multi-agent-ai-main/data/chroma_db",
@@ -217,7 +224,7 @@
              "GEMINI_MODEL": "gemini-3.6-flash"},
      "health": {"path": "/api/health", "expect": "\"ok\""},
      "cmd": [".venv-local/bin/flask", "--app", "app", "run", "--port", "5000", "--no-reload"],
-     "note": "Mouni's GitHub version, on its own test database (the adapter closes finished test chats with its close endpoint). Started with flask run: since 4f0c598 `python app.py` refuses to start unless debug mode is on"}
+     "note": "Mouni's GitHub version (b64a012, 2026-10-29; checked 2026-11-03), on its own test database (the adapter closes finished test chats with its close endpoint). Started with flask run: since 4f0c598 `python app.py` refuses to start unless debug mode is on"}
   ],
   "judge_pricing": [
     {
@@ -235,6 +242,19 @@
 ,
     {
       "model": "z-ai/glm-*",
+      "input": 0,
+      "output": 0,
+      "source": "free: NVIDIA NIM free API"
+    }
+,
+    {
+      "model": "nvidia/nemotron-*",
+      "input": 0,
+      "output": 0,
+      "source": "free: NVIDIA NIM free API"
+    },
+    {
+      "model": "mistralai/mistral-large-*",
       "input": 0,
       "output": 0,
       "source": "free: NVIDIA NIM free API"
