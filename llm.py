@@ -1,14 +1,17 @@
 """The free models this app uses to grade and to write test cases, through any OpenAI-compatible chat API.
 
-Default main judge: GLM 5.3 (Zhipu AI) on NVIDIA NIM's free API (a key from build.nvidia.com in NVIDIA_API_KEY).
-Kimi K3, the judge before it, reached end of life on NIM on 2026-10-15 (HTTP 410).
+Default main judge: Nemotron 3 Ultra (NVIDIA) on NVIDIA NIM's free API (a key from build.nvidia.com in NVIDIA_API_KEY),
+with Mistral Large 4 next in the list for JUDGE_SWITCH_MODELS=1. The judges before it reached end of life on NIM and
+answered HTTP 410: Kimi K3 on 2026-10-15, GLM 5.3 on 2026-10-28. NVIDIA's own model is the least likely to be pulled
+from NVIDIA's catalogue without notice; the nightly pre-flight names a retired judge in its alert either way.
 It's not the family of any bot under test (they run Gemini and Claude), so no bot is graded alone by its own model
 family; Gemini is the second judge (.env), which can dispute a verdict but never pass a Gemini bot on its own. The
 same code talks to Gemini's free tier, a local Ollama ("http://localhost:11434/v1", no key) or Groq: set the base URL,
 model and key variable.
 
   JUDGE_BASE_URL     default https://integrate.api.nvidia.com/v1
-  JUDGE_MODEL        default z-ai/glm-5.3 (kimi-k2.6 is listed by NIM but not served to every account). Only the
+  JUDGE_MODEL        default nvidia/nemotron-3-ultra-550b-a55b,mistralai/mistral-large-4-1t-a52b (kimi-k2.6 is listed
+                     by NIM but not served to every account; GLM 5.3 Flash and DeepSeek V4.1 Flash timed out). Only the
                      first is used unless JUDGE_SWITCH_MODELS=1, so every conversation in a run is graded by the same
                      model; a quota that runs out leaves "judge error" cases for rejudge.py to grade later with it
   JUDGE_SWITCH_MODELS  1 = when a model is overloaded or rate-limited, try the next one in the list, then the
@@ -192,6 +195,7 @@ def _endpoint(prefix, base_url, model, key_env, rpm, fallback=None):
 
 
 _FALLBACK = _endpoint("JUDGE_FALLBACK", OLLAMA, "", "", "0")
-JUDGE = _endpoint("JUDGE", NIM, "z-ai/glm-5.3", "NVIDIA_API_KEY", "30",
+JUDGE = _endpoint("JUDGE", NIM, "nvidia/nemotron-3-ultra-550b-a55b,mistralai/mistral-large-4-1t-a52b",
+                  "NVIDIA_API_KEY", "30",
                   fallback=_FALLBACK or None)
 SECOND_JUDGE = _endpoint("SECOND_JUDGE", OLLAMA, "", "", "0")

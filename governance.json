@@ -46,7 +46,7 @@
  "models": {
   "_about": "The model inventory: what may be used, as glob patterns. Bot LLMs match bots.json 'llm'; judges match the model that gave each verdict. Paid models need the owner's approval (see 'approved_paid').",
   "bot_llms": ["Claude *", "Gemini *", "Kimi *"],
-  "judges": ["gemini-*", "moonshotai/kimi-*", "z-ai/glm-*"],
+  "judges": ["gemini-*", "nvidia/nemotron-*", "mistralai/mistral-large-*", "moonshotai/kimi-*", "z-ai/glm-*"],
   "approved_paid": {
    "Claude *": "Amazon Bedrock, billed to the project AWS account; approved by the owner on 2026-10-07 for the VoltKart chatbot only, not for judging."
   }

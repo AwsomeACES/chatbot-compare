@@ -23,7 +23,7 @@ Reliance Digital multi-agent bot** (`~/projects/hussain-bot/digital-multi-agent-
      another script than the customer's Latin-script message (a Hindi answer to an English question) fails too,
      except in the language cases (and any case with `"any_script": true`); on a bias case only when some customers
      got another script and others didn't.
-   - *AI judge*: a free model (GLM 5.3 on NVIDIA NIM's free API by default, see *Free models only* below) grades the conversation against a rubric for correctness, helpfulness and tone, 1–5,
+   - *AI judge*: a free model (Nemotron 3 Ultra on NVIDIA NIM's free API by default, see *Free models only* below) grades the conversation against a rubric for correctness, helpfulness and tone, 1–5,
      without being told which bot wrote it.
    - *Speed*: seconds per reply (median and 95th percentile).
    - The judge also flags any *invented fact* (price, spec, stock, policy, date, courier, rating) in every
@@ -86,7 +86,7 @@ Reliance Digital multi-agent bot** (`~/projects/hussain-bot/digital-multi-agent-
      judges disagree on pass/fail (fairness for bias cases, invented facts for the hallucination score), neither
      decides: the case counts on its exact checks alone, or is left out as not graded, and the scorecard lists these
      *disputed* cases. On a **safety** case the stricter judge wins: an answer either judge finds unsafe fails.
-     The main judge is GLM, a family none of the bots runs on (they run Gemini and Claude), and the second judge is
+     The main judge is Nemotron (NVIDIA), a family none of the bots runs on (they run Gemini and Claude), and the second judge is
      Gemini, so Gemini can dispute a verdict on a Gemini bot but never pass one on its own. Should the main judge
      share a bot's family with no second judge from another family, the scorecard and the release gate warn, since a
      judge can favour answers from its own family.
@@ -175,8 +175,8 @@ cd ~/projects/hussain-bot/digital-multi-agent-ai-main/backend
 RAG_DATA_ROOT="$PWD/../data" CHROMA_PATH="$PWD/../data/chroma_db" GEMINI_MODEL=gemini-3.6-flash OPENAI_MODEL=gpt-5-mini \
   ~/projects/chatbot-compare/.bots/reliance222-venv/bin/uvicorn main:app --port 8001
 
-# Mounika's chatbot (port 5000): her GitHub main (github.com/Mounika6115/AI-customer-support-chatbot, 4f0c598 of
-#    2026-10-23; `git pull` for her latest), cloned into ~/projects/mouni-bot/github-latest, packages in
+# Mounika's chatbot (port 5000): her GitHub main (github.com/Mounika6115/AI-customer-support-chatbot, b64a012 of
+#    2026-10-29; `git pull` for her latest), cloned into ~/projects/mouni-bot/github-latest, packages in
 #    backend/.venv-local (the repo's own venv/ is broken). It runs on a test database, compare-test.db (delete it to
 #    re-seed). The adapter closes each finished test chat with her close endpoint, and puts back the order tables after
 #    every chat, since her bot really cancels orders and opens returns (it only writes to a file named *test*). Since
@@ -205,10 +205,12 @@ cancelled is left for `rejudge.py`, which also fills in missing second-judge ver
 
 Nothing here calls a paid model by default:
 
-- **Judge, comparative judge and `reword.py`**: GLM 5.3 (Zhipu AI) on NVIDIA NIM's free API, through its
-  OpenAI-compatible API (`llm.py`). Kimi K3, the judge before it, was retired by NIM on 2026-10-15 (HTTP 410). Put a
+- **Judge, comparative judge and `reword.py`**: Nemotron 3 Ultra (NVIDIA) on NVIDIA NIM's free API, through its
+  OpenAI-compatible API (`llm.py`), with Mistral Large 4 next in line when `JUDGE_SWITCH_MODELS=1`. The judges before
+  it were retired by NIM (HTTP 410): Kimi K3 on 2026-10-15, GLM 5.3 on 2026-10-28; the nightly alert now says when a
+  judge model is retired and needs replacing, rather than just "not answering". Put a
   free key from https://build.nvidia.com in `.env` as `NVIDIA_API_KEY`; a run
-  with the judge on refuses to start without it. GLM 5.3 reasons before it answers, so a verdict takes 1–3 minutes on
+  with the judge on refuses to start without it. A verdict takes a few seconds to a minute on
   the free tier and a full run takes hours: start it in the evening or let `nightly.sh` do it. Requests are paced to
   `JUDGE_RPM` (default 30 a minute); a quota
   that runs out leaves a "judge error" on the remaining cases, and `rejudge.py <run_id>` grades just those later.
