@@ -1,3 +1,11 @@
+## 2026-11-10 — Windows performance gate follow-up
+
+Current worktree: `C:\Users\Moinuddeen hussain\Documents\ChatGPT\Moinuddeen_airm\studio-hussain-update-20261110`, branch `hussain-code`, remote `shared` = AwsomeACES/chatbot-compare. Base abb04ec is published. Its Windows CI run 42764659615 failed the fixed benchmark at 1.281 s; Linux/macOS passed. The warning is unrelated.
+
+T-053 removes repeated filesystem path resolution per database access. Path cache keys are absolute and invalidated by pool close; relative runtime and separate-folder isolation have regression tests. Database durability and the 1.200 s gate remain unchanged. Focused 47-test suite and Ruff pass. Full regression passed: 820 passed, 1 Windows symlink skip, 1 existing warning in 168.55 s. Repository-wide Prettier and docs checks pass. New hosted CI verification is pending; do not claim CI resolution until observed. Profile and CI logs are outside Git in sibling `studio-review-20261110`. No API keys or live chatbot calls are required.
+
+The owner has authorized updates to shared hussain-code. Do not push origin/Simali or overwrite the original AI-Agent-Testing-Studio checkout's staged release work. The older studio-publish branch was not merged. Existing open-source release limitations remain recorded below and in docs/release-review-20261110.md.
+
 ## 2026-11-10 — Shared hussain-code update
 
 The owner explicitly requested publishing the current release updates to AwsomeACES/chatbot-compare, branch hussain-code. Integration is prepared in the isolated `studio-hussain-update-20261110` worktree from shared commit `db02513`, preserving its older comparison-tool files. The release source is the C: `AI-Agent-Testing-Studio` checkout at `cfbe8de` plus its 34 staged release changes. The separate studio-publish lineage was not merged.

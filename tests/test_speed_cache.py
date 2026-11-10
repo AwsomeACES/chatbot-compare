@@ -175,7 +175,7 @@ def test_repeats_make_fresh_calls_then_resume_uses_durable_cache(monkeypatch):
 
 
 def test_standard_suite_runtime_regression_budget(monkeypatch):
-    """Paired sequential control on same host; >20% beyond parallel baseline fails.
+    """Warm-up then five parallel runs; >20% beyond the fixed baseline fails.
 
     A fixed I/O workload is dominant, avoiding clock-specific millisecond limits.
     Threshold is configurable in app/studio/benchmark.json, never self-updated.

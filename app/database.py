@@ -6,6 +6,7 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 
 from .config import RUNTIME
 
@@ -19,6 +20,21 @@ class Lease:
 
 _pools: dict[tuple[str, int], list[Lease]] = {}
 _pool_lock = threading.Lock()
+_resolved_paths: dict[Path, str] = {}
+
+
+def database_path() -> str:
+    """Resolve once per absolute runtime path until the connection pools close.
+
+    Cache and audit operations share this hot path. Repeating filesystem resolution
+    for every transaction blocks the event loop, especially on Windows. Absolute
+    keys keep relative runtimes isolated when the working directory changes.
+    """
+    candidate = (RUNTIME / "studio.db").absolute()
+    with _pool_lock:
+        if candidate not in _resolved_paths:
+            _resolved_paths[candidate] = str(candidate.resolve())
+        return _resolved_paths[candidate]
 
 
 def acquire(path: str) -> Lease:
@@ -57,6 +73,7 @@ def close() -> None:
                 if not lease.busy:
                     lease.connection.close()
         _pools.clear()
+        _resolved_paths.clear()
 
 
 atexit.register(close)
@@ -64,8 +81,7 @@ atexit.register(close)
 
 @contextmanager
 def connect():
-    path = str((RUNTIME / "studio.db").resolve())
-    lease = acquire(path)
+    lease = acquire(database_path())
     try:
         with lease.connection:
             yield lease.connection

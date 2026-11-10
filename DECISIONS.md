@@ -608,3 +608,11 @@ unverified**.
 **Why.** One tested interpreter does not justify "3.12 and newer", and a checked-in `start.sh`
 is not evidence that it runs. The release gate ledger records each gate's real status, including
 the ones that are not met.
+
+### D-PERF-20261110 — Resolve database paths per pool lifetime
+
+**Decision.** Memoize resolved database filenames by their absolute lexical path under the pool lock. Clear that memo when `database.close()` retires the connection pools. Preserve SQLite WAL, synchronous FULL, transaction boundaries, audit writes and the fixed 1.200 s benchmark workload.
+
+**Why.** The Windows CI benchmark at abb04ec failed at 1.281 s. A local six-run profile showed 531 database accesses repeatedly resolving the same path; database context overhead was 0.649 s, and Windows final-path lookups across the process took 0.338 s. After the change these measured 0.214 s and 0.025 s respectively. This removes verified synchronous filesystem overhead without weakening durability. Local wall-clock medians remain noisy; these profile totals do not prove the original CI failure had a single cause or that every hosted runner will meet the gate.
+
+**Boundary.** Runtime folders are stable while their connection pools are open. If a directory junction or symlink is deliberately retargeted, close the pools or restart Studio before using its new destination. Absolute cache keys preserve the meaning of relative runtime folders across working-directory changes. Tests cover runtime isolation, relative paths, one resolution per pool lifetime and fresh resolution after close.

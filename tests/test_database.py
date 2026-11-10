@@ -2,6 +2,7 @@
 
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 
@@ -60,6 +61,50 @@ def test_reuses_idle_connection_without_reusing_active_transaction(database):
         assert reused is first
         with db.connect() as nested:
             assert nested is not reused
+
+
+def test_runtime_switches_do_not_share_records(database, monkeypatch, tmp_path):
+    db.save("fixture", {"id": "one", "value": "original"})
+    other = tmp_path / "other"
+    other.mkdir()
+    monkeypatch.setattr(db, "RUNTIME", other)
+    assert db.get("fixture", "one") is None
+    db.save("fixture", {"id": "one", "value": "other"})
+    monkeypatch.setattr(db, "RUNTIME", database.parent)
+    assert db.get("fixture", "one")["value"] == "original"
+
+
+def test_relative_runtime_tracks_working_directory(database, monkeypatch, tmp_path):
+    other = tmp_path / "other"
+    other.mkdir()
+    monkeypatch.setattr(db, "RUNTIME", Path("."))
+    monkeypatch.chdir(tmp_path)
+    db.save("fixture", {"id": "one", "value": "original"})
+    monkeypatch.chdir(other)
+    assert db.get("fixture", "one") is None
+    db.save("fixture", {"id": "one", "value": "other"})
+    monkeypatch.chdir(tmp_path)
+    assert db.get("fixture", "one")["value"] == "original"
+
+
+def test_path_resolution_is_reused_until_close(database, monkeypatch):
+    db.close()
+    resolve = Path.resolve
+    resolutions = []
+
+    def counted(path, *args, **kwargs):
+        if path.name == "studio.db":
+            resolutions.append(path)
+        return resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", counted)
+    db.save("fixture", {"id": "one", "value": 1})
+    for _ in range(10):
+        assert db.get("fixture", "one")["value"] == 1
+    assert len(resolutions) == 1
+    db.close()
+    assert db.get("fixture", "one")["value"] == 1
+    assert len(resolutions) == 2
 
 
 def test_shutdown_waits_for_active_transaction_to_finish(database):
