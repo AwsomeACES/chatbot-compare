@@ -32,9 +32,9 @@ Leave `STUDIO_JUDGE_URL`, `STUDIO_JUDGE_MODEL`, and `STUDIO_JUDGE_API_KEY` empty
 
 Provider endpoints, model-variable names and credential-variable names live in `app/studio/settings.json`. Advanced installations may still explicitly opt into `STUDIO_JUDGE_ENV_FILE` and `STUDIO_JUDGE_KEY_NAME` for a separate credentials file. They are unused by default; a Studio-owned provider key takes priority. No target-bot path belongs in the standard setup.
 
-## Change the Reliance chatbot's provider key
+## Change the target chatbot's own provider key
 
-Edit `D:\reliance-project\backend\.env`, then restart the Reliance backend. Its source reads these names:
+This is a change inside **your chatbot**, not inside Studio. Studio never needs it and never reads it. Edit that project's own environment file — for example `<your-chatbot>/backend/.env` — then restart that backend. Chatbot projects commonly read these names:
 
 | Provider              | Key variable        | Model variable                 |
 | --------------------- | ------------------- | ------------------------------ |
@@ -43,7 +43,7 @@ Edit `D:\reliance-project\backend\.env`, then restart the Reliance backend. Its 
 | Claude                | `ANTHROPIC_API_KEY` | `CLAUDE_MODEL`                 |
 | Local Ollama          | No provider API key | `OLLAMA_MODEL`                 |
 
-For Reliance, use `GOOGLE_API_KEY` for Gemini, not `GEMINI_API_KEY`. Set the requested provider in the chatbot as well; adding a key alone does not change an explicitly selected provider. Another chatbot may use a different configuration file; follow that chatbot's `.env.example`.
+Watch for near-identical names: some projects read `GOOGLE_API_KEY` for Gemini rather than `GEMINI_API_KEY`, and setting the wrong one looks like an authentication failure. Set the requested provider in the chatbot as well; adding a key alone does not change an explicitly selected provider. Always follow that chatbot's own `.env.example` rather than assuming these names.
 
 In Studio, a bot card's **Advanced connection settings → API key** authenticates requests to that chatbot's API. It does not update the cloud key inside the chatbot server.
 

@@ -1475,3 +1475,129 @@ pass.
 
 With this the Black-box side matches what White-box already did: a result that produced no
 measurement says why and what to do next, rather than leaving the reader to infer it.
+
+## 2026-11-09 — Open-source release candidate 0.1.0-rc.1 (T-046 to T-052)
+
+Worked in `C:/Users/Moinuddeen hussain/Documents/ChatGPT/Moinuddeen_airm/AI-Agent-Testing-Studio`
+on new branch `codex/open-source-release`, based on `cfbe8de`. Nothing was pushed, published,
+tagged or made visible. No provider credential was used; every check ran against synthetic
+fixtures, mocked providers and local loopback processes.
+
+### Working tree provenance, read this first
+
+The session began in `D:\AI-Agent-Testing-Studio`. That was a **removable volume**, and it
+disconnected mid-session: Windows logged NTFS `Delayed Write Failed` errors against `D:\$Mft`
+and `D:\AI-Agent-Testing-Studio\.venv\...` at 22:08:40, after which the volume disappeared and
+`Get-Disk` showed only the internal NVMe. No command issued against `D:` had been anything but
+read-only.
+
+Because that tree was **clean** and its HEAD matched the published `master`
+(`cfbe8de9c9e4953e2fdce84fa2dbe77e106ae6d5`), the source was recovered in full by cloning
+`https://github.com/Simali2724/AI-Agent-Testing-Studio.git` to the surviving `C:` drive. The
+recovered inventory matched the lost tree at **184 of 184** source files. What was **not**
+recovered: that volume's git-ignored `runtime/` directory, including any saved evaluations and
+the local `.env`. Neither is part of any release artifact.
+
+A second, older checkout at `.../Moinuddeen_airm/studio-publish` still exists and was left
+untouched. It holds work this lineage does not have — a VoltKart connector, a judge rubric
+review and a pacing clock seam with its stress harness — and uses a **different task-ID
+lineage** in which T-040 to T-042 mean different things. On the owner's instruction this
+candidate was built from the published lineage only, and that work was deliberately deferred
+rather than merged. See T-052.
+
+### Changed files
+
+| File                                                                          | Change                                                                                                                                                                                                                           |
+| ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LICENSE`                                                                     | New: MIT, copyright 2026 Moinuddeen Hussain, on the owner's instruction                                                                                                                                                          |
+| `CHANGELOG.md`                                                                | New: added, fixed and known limitations for this candidate                                                                                                                                                                       |
+| `.github/ISSUE_TEMPLATE/bug_report.md`, `feature_request.md`                  | New: issue templates that ask for redacted evidence and an ownership confirmation                                                                                                                                                |
+| `.github/pull_request_template.md`                                            | New: commands run, plus the evidence-honesty checklist                                                                                                                                                                           |
+| `scripts/package_release.py`                                                  | Root manifest gained the three lockfiles, `start.sh`, both Dockerfiles, `compose.yaml`, `.dockerignore`, `LICENSE`, `CHANGELOG.md`, `AGENTS.md`, `CLAUDE.md`; reviewed `.github` templates allowlisted; root globs made explicit |
+| `tests/test_package_release.py`                                               | Three new tests exporting the **real** repository via `git ls-files`, asserting required files, resolvable README links and a manifest that stayed narrow                                                                        |
+| `app/blackbox/reports.py`                                                     | New `MAX_PARAGRAPH_CHARS`, `MAX_FLOWABLES`, `TRUNCATION_NOTICE` and `ReportTooLarge`; bounded `paragraph()`; disclosure inserted after the title; `build` wrapped so a layout failure becomes one actionable refusal             |
+| `app/blackbox_app.py`                                                         | PDF download maps `ReportTooLarge` to `413`; demo case-set route added; `demo_bot` imported                                                                                                                                      |
+| `tests/test_report_bounds.py`                                                 | New: 9 tests including captured-story assertions that a normal report is not truncated and the budget strictly shortens one                                                                                                      |
+| `app/blackbox/demo_bot.py`                                                    | New: deterministic synthetic replies, a fictional catalogue and 8 demo Cases with literal checks                                                                                                                                 |
+| `scripts/demo_bot.py`                                                         | New: standalone loopback demo-bot server with a `/health` identity and a loopback-only bind guard                                                                                                                                |
+| `tests/test_demo.py`                                                          | New: 12 tests, including one asserting `metering.completion` is never reached                                                                                                                                                    |
+| `app/config.py`                                                               | An empty `STUDIO_RUNTIME` is treated as unset instead of resolving to the current directory                                                                                                                                      |
+| `scripts/check_docs.py`                                                       | Link and anchor checking broadened from 5 documents to every maintained Markdown file, skipping generated dirs and history                                                                                                       |
+| `README.md`                                                                   | Rewritten: local scope, honest capability matrix, measured demo figures, no wrong-repository badge, license section                                                                                                              |
+| `SECURITY.md`                                                                 | Rewritten: supported versions, a truthful reporting notice, threat boundary, portable export commands                                                                                                                            |
+| `CONTRIBUTING.md`                                                             | Locked install on both platforms, architecture pointers, workflow, review policy, first contribution, extension guides                                                                                                           |
+| `docs/open-source-readiness.md`, `release-checklist.md`, `troubleshooting.md` | New: gate ledger, repeatable release procedure with rollback, and first-run failure guidance                                                                                                                                     |
+| `docs/verification.md`                                                        | Appended the measured candidate record and its explicit limits                                                                                                                                                                   |
+| `docs/tasks.md`                                                               | New Phase 10 with T-046 to T-052                                                                                                                                                                                                 |
+| `docs/Architecture.md`                                                        | Corrected a false "no Python lockfile exists" claim; recorded the PDF rendering bound                                                                                                                                            |
+| `docs/Rules.md`                                                               | Change-to-test table gained exports/reports and synthetic-demo rows                                                                                                                                                              |
+| `docs/api-keys.md`                                                            | Replaced an absolute workstation path into a separate local project with portable guidance                                                                                                                                       |
+| `docs/legacy-guide.md`                                                        | Re-based five relative links broken since the file moved into `docs/`                                                                                                                                                            |
+| `docs/simple-guide.md`                                                        | Added the demo walkthrough and what it does not establish                                                                                                                                                                        |
+| `package.json`                                                                | Prettier globs now cover the `.github` templates                                                                                                                                                                                 |
+
+### Defects found and fixed
+
+1. **The source archive could not follow its own instructions.** The root allowlist permitted
+   `requirements*.txt` but not `requirements*.lock`, `start.sh`, `Dockerfile`,
+   `Dockerfile.scanners`, `compose.yaml` or `.dockerignore`. An extracted archive therefore
+   could not perform the hash-locked install its own README documented.
+2. **The shipped README linked documents the archive excludes** (`PROGRESS.md`, `HANDOFF.md`),
+   so every published archive carried two broken links. The public links were deliberately
+   removed rather than shipping internal history.
+3. **The README badge pointed at an unrelated repository and branch**, and a section described a
+   shared branch and a historical commit that mean nothing to an outside reader.
+4. **PDF rendering was unbounded** and ran inside the request handler, which matches the recorded
+   export timeout. Now bounded, disclosed when truncated, and refused with `413` when unrenderable.
+5. **`docs/api-keys.md` published an absolute workstation path** into a separate local project.
+6. **`docs/legacy-guide.md` had five broken relative links**, found only once link checking was
+   broadened beyond the five core documents.
+7. **`docs/Architecture.md` claimed no Python lockfile existed.** Three hash-pinned locks are
+   checked in and the launchers install with `--require-hashes`.
+8. **`SECURITY.md` had no vulnerability reporting route at all**, plus a workstation path that
+   pointed at the now-dead `D:` volume.
+9. **An empty `STUDIO_RUNTIME` resolved to the current directory**, scattering runtime caches
+   into the source tree. Found because a diagnostic of mine triggered it.
+
+### My own corrected mistakes
+
+Recorded because the corrections are part of the evidence:
+
+- A first bounded-PDF cap of 4000 characters **truncated a legitimate governance block in every
+  report**. Measurement showed that block is one paragraph of roughly 8.7 KB that does not grow
+  with Case count, so the cap became 20000 and document growth is bounded by the flowable budget.
+- A first version of the flowable-budget test **passed with or without the budget** (45 KB versus
+  54 KB, both under its threshold). It was replaced with a captured-story comparison that fails
+  without the budget.
+- A first demo design served the bot from inside Studio. Studio's middleware requires a
+  cross-site-request header on every write that a target chatbot has no reason to send, so the
+  demo bot became a separate loopback process rather than weakening that guard.
+- My first end-to-end check queried `/api/blackbox/history`, which lists legacy records of kind
+  `run`; Studio Runs are kind `blackbox` and are listed by `/api/blackbox/runs`.
+
+### Validation
+
+Full suite, lint, format, JS, UI, documents, packaging, a real end-to-end demo and a fresh
+extracted install are all recorded with their commands and observed numbers in
+[docs/verification.md](docs/verification.md). Headline figures: the candidate archive holds
+**229 files**; a fresh locked install from the archive placed **75 packages** with `pip check`
+clean and `run.ps1` served HTTP 200 in **6.9 s** from a path containing spaces; the demo scored
+**8 of 8 Cases with no Judge, 7 passed and 1 failed**, exported as JSON and PDF, and survived a
+restart.
+
+### Remaining work
+
+- **T-051 (blocked):** the owner's written distribution rights, the decision on published
+  third-party company references, and a real security reporting route.
+- **T-052 (blocked):** parallel pacing stress is **Not tested** in this lineage, and native
+  Linux, macOS and Docker remain unqualified.
+- Human calibration labels and a live provider smoke test were not obtained, and are reported
+  as outstanding rather than done.
+
+## 2026-11-10 — Integrate release changes into shared hussain-code
+
+Prepared the 34 staged release updates from the current C: release checkout on top of shared hussain-code commit db02513 in an isolated worktree. The histories differ, so integration uses the reviewed release diff rather than replacing the shared repository or discarding its retained legacy comparison files. Only README conflicted; current installation guidance was retained. The owner explicitly authorized this shared branch push. No runtime data, credentials or private audit screenshots are included.
+
+The preceding source audit recorded 817 passed and 1 skipped, 23 JavaScript navigation tests passed, both synthetic browser checks passed, and six defects. Formatting is corrected in this update; the five functional defects remain open in docs/release-review-20261110.md. No source behavior was silently changed to claim those fixes. Integration checks and publication outcome will be recorded separately.
+
+Integration validation: 41 focused demo/report/packaging/docs tests passed, 1 Windows symlink-capability skip, 1 Starlette warning. The first packaging run detected the newly linked review document was not staged; staging that file resolved it and the scoped suite passed. Ruff lint and formatting passed (135 Python files), Prettier passed across the repository, JavaScript syntax passed (17 files, including retained shared tooling), navigation tests passed (23), and the docs checker passed (35 documents). The complete app tree matches the previously audited release source byte-for-byte. Retained shared adapters, root app, bots configuration, evaluator, rejudge tool, static assets and suites are unchanged. Changed-file credential pattern screening found no matches; this is a safeguard, not proof that pattern scanning detects every secret. git diff --check passed. The original release checkout and its staged work remain intact.

@@ -1,4 +1,128 @@
-## 2026-10-29 — Evaluation reliability from the VoltKart retest (current task)
+## 2026-11-10 — Shared hussain-code update
+
+The owner explicitly requested publishing the current release updates to AwsomeACES/chatbot-compare, branch hussain-code. Integration is prepared in the isolated `studio-hussain-update-20261110` worktree from shared commit `db02513`, preserving its older comparison-tool files. The release source is the C: `AI-Agent-Testing-Studio` checkout at `cfbe8de` plus its 34 staged release changes. The separate studio-publish lineage was not merged.
+
+The README conflict was resolved by retaining current installation guidance. Formatting corrections are included. See [the dated release review](docs/release-review-20261110.md) for five still-open functional defects and test boundaries. This is a branch update, not a release-ready claim or authorization to publish a tag or release. Publication outcome and final checks are recorded in PROGRESS below and the user-facing response.
+
+## 2026-11-09 — Open-source release candidate 0.1.0-rc.1 (current task)
+
+Read this section first; everything below it is dated history.
+
+### Where the work is
+
+```text
+C:\Users\Moinuddeen hussain\Documents\ChatGPT\Moinuddeen_airm\AI-Agent-Testing-Studio
+```
+
+Branch `codex/open-source-release`, based on `cfbe8de` (= published `origin/master`).
+Remote `origin` is `https://github.com/Simali2724/AI-Agent-Testing-Studio.git`, which is
+**already public**. **Nothing was pushed, committed, tagged, published or made visible by
+this task**; all changes are uncommitted in the working tree. No provider credential was
+used and no paid or cloud call was made.
+
+### Why the path changed — read before looking for `D:`
+
+The session started in `D:\AI-Agent-Testing-Studio`. **That volume was removable and it
+disconnected mid-session.** Windows logged NTFS `Delayed Write Failed` errors against
+`D:\$Mft` and `D:\AI-Agent-Testing-Studio\.venv\...` at 22:08:40, then the volume vanished;
+`Get-Disk` now shows only the internal NVMe. Every command issued against `D:` had been
+read-only.
+
+The tree was **clean** and its HEAD equalled published `master`, so the source was recovered
+in full by cloning to `C:`. The recovered inventory matched the lost tree at **184 of 184**
+source files. **Not recovered:** that volume's git-ignored `runtime/` directory, which held
+local saved evaluations, and its local `.env`. If the drive is reconnected, that data may
+still be there — nothing was deleted by this work.
+
+### The other checkout — do not merge it blindly
+
+`C:\Users\Moinuddeen hussain\Documents\ChatGPT\Moinuddeen_airm\studio-publish` still exists,
+untouched, on branch `codex/industry-reliability` at `043173c` with ~48 dirty files. It holds
+work this lineage does **not** have: `app/blackbox/voltkart.py`, `app/blackbox/judge_review.py`,
+`app/studio/judge-rubric.json`, a `scheduling.py` clock seam, `tests/fake_clock.py`,
+`tests/test_pacing.py` and `scripts/pacing-stress.py`.
+
+It also uses a **different task-ID lineage**: there T-040 to T-042 mean rubric review, pacing
+and the release program, while in this repository they mean reference facts, cost redaction and
+endpoint pricing. Do not cross-reference task numbers between the two. The owner chose to build
+this candidate from the published lineage only and to defer that work (T-052).
+
+### Phase status
+
+| Item                                      | Status                                                            |
+| ----------------------------------------- | ----------------------------------------------------------------- |
+| T-046 bounded PDF rendering               | **Done**, 9 tests                                                 |
+| T-047 no-key synthetic demo               | **Done**, 12 tests plus a real end-to-end run                     |
+| T-048 source archive manifest repaired    | **Done**, 14 tests including a real-repository export             |
+| T-049 license and honest public documents | **Done**                                                          |
+| T-050 document link checking broadened    | **Done**, now 32 documents                                        |
+| T-051 owner decisions                     | **Blocked** on the owner                                          |
+| T-052 pacing stress and native platforms  | **Blocked**; absent from this lineage, no Linux/macOS environment |
+
+### Commands and results
+
+All recorded with observed numbers in [docs/verification.md](docs/verification.md), newest
+section. Summary: ruff format and check clean over 134 files; Prettier clean including the new
+`.github` templates; `check:js` 16 files; `test:ui` 23 passed; `scripts/check_docs.py` passed
+over 32 documents; packaging 14 passed 1 skipped; a fresh extracted archive installed 75
+packages with `pip check` clean and `run.ps1` served HTTP 200 in 6.9 s from a path with spaces;
+the demo scored 8 of 8 Cases with no Judge, 7 passed and 1 failed, and survived a restart.
+
+The one skip is `test_symlink_escape_is_skipped`, which skips where the Windows account cannot
+create symlinks. It is not a disabled failure.
+
+### Failed or not-run checks
+
+- **Pacing stress: not run.** No harness exists here. Do **not** record the other tree's 50 of
+  50 result against this candidate.
+- **`start.sh` on native Linux or macOS: not run.** No such environment was available.
+- **Docker: not run.** Docker is not installed on this machine, so no image was built and no
+  White-box scanner executed.
+- **Remote CI: not run.** Publication was not authorized, so no candidate commit was pushed.
+- **Live provider smoke test: not run.** No credential was requested or used.
+- **Human calibration labels: not obtained.** Judges remain uncalibrated and are labelled so.
+- **Chromium first-run download: skipped** in the fresh install, so the web-chat browser
+  connector is unverified in the extracted archive.
+
+### Private data boundaries
+
+- No `.env`, key, certificate or provider-key-shaped string exists in any reachable commit.
+- Credential-shaped literals in `tests/test_export_redaction.py` and
+  `tests/test_judge_calibration.py` are synthetic redaction fixtures. Leave them.
+- `PROGRESS.md` and `HANDOFF.md` are deliberately **excluded from the source archive** and no
+  longer linked from the public README. Keep them that way.
+- Pattern scanning proves nothing was found, not that nothing exists. Say it that way.
+
+### Pending approvals
+
+1. Written confirmation that all included material is the owner's to distribute under MIT.
+2. The decision on the named third-party company still present in UI labels, auto-detection
+   logic, API route names and case-pack filenames. Content is synthetic; the naming is public.
+3. A security reporting route. GitHub private vulnerability reporting is **verified disabled**
+   (`"enabled": false` as of 2026-11-09). No address was invented.
+4. Explicit authorization before any push, tag, release or announcement.
+
+### Numbered next steps
+
+1. Review the working-tree diff on `codex/open-source-release`, then commit it after a
+   secret-safe staged review. A local commit is not permission to push.
+2. Get the owner's answers to the four pending approvals above and record them in
+   `DECISIONS.md` and `docs/open-source-readiness.md`.
+3. Rebuild the archive after any further change, recompute its SHA-256, and update the manifest
+   — the hash must describe the **final** artifact, not an earlier build.
+4. If pacing matters for the release, port only the pacing files from `studio-publish`
+   (`scheduling.py` clock seam, `tests/fake_clock.py`, `tests/test_pacing.py`,
+   `scripts/pacing-stress.py`), renumbering their task IDs to free ones, then run
+   `scripts/pacing-stress.py --repetitions 50 --parallel 12` separately from the benchmark.
+5. For Linux and macOS, run a fresh extracted install and `./start.sh` on each, and record the
+   result in `docs/verification.md`. Until then keep the narrowed support claims.
+6. Enable GitHub private vulnerability reporting, then replace the notice in `SECURITY.md`.
+7. Only after 1 to 3: tag and publish, as an explicitly authorized separate action.
+
+Never mark the human-validation or pacing criteria Done by citing another tree's or another
+chat's recorded numbers.
+
+## 2026-10-29 — Evaluation reliability from the VoltKart retest (historical task)
 
 Worked in `D:/AI-Agent-Testing-Studio`, branch `codex/industry-reliability`. **Nothing was pushed.**
 No provider call, no paid evaluation, no Jira issue, no saved history deleted or modified. The only

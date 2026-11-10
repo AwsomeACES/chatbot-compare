@@ -52,3 +52,56 @@ Optional Docker: copy `.env.example` to `.env`, configure your own keys, then `d
 Promptfoo was not added: existing LiteLLM adapters and black-box connector/runner reuse already cover this protocol, so a second runner would duplicate metering and governance.
 
 For current subtype scoring, hash-chain governance, reproduction, privacy, retention, caches and batching, read [the bias and governance guide](bias-governance.md).
+
+## The synthetic demo, with no API key
+
+Studio bundles a deterministic synthetic chatbot so a new installation can complete a real
+evaluation without a provider account, a credit card or a chatbot of your own.
+
+The demo is a **real** evaluation: the ordinary API connector, the ordinary runner, real
+scoring, real Governance records and real exports. Only the bot and the Cases are synthetic,
+and the AI Judge is switched off.
+
+### Run it
+
+1. Start Studio as usual.
+2. In a second terminal, from the same folder, start the demo bot:
+
+   ```sh
+   python scripts/demo_bot.py
+   ```
+
+   It binds loopback only and prints `http://127.0.0.1:2709/chat`. Use `--port` to change it.
+
+3. In **Evaluate**:
+   - Bot link: `http://127.0.0.1:2709/chat`
+   - **Advanced settings → response field**: `answer`
+   - Turn the **AI judge off**
+   - Import the demo Cases from `http://127.0.0.1:2708/api/blackbox/case-set/demo`
+   - Confirm ownership, then **Start test**
+
+### What you should see
+
+Eight Cases across hallucination, injection, prompt leakage, guardrails, unnecessary refusals
+and consistency. All eight score without any Judge, because each Case carries literal
+`required`, `forbidden` or `canary` checks.
+
+**Seven pass and one fails.** The failing Case is deliberate: the demo bot answers a refund
+question with an invented unconditional guarantee, and the Case forbids that phrase. A demo in
+which everything passed would misrepresent what Studio shows you, so the failure, its evidence
+and its effect on the index are all visible.
+
+### What the demo does not establish
+
+Results from the demo are **synthetic demonstration data**. They measure a fixture whose answers
+are hand-written strings in `app/blackbox/demo_bot.py`. They say nothing about any real chatbot,
+and nothing about Judge accuracy — no Judge ran at all. The absence of a Judge is reported rather
+than hidden, and cost stays at a known zero because no provider call was made.
+
+### Then connect a real bot
+
+Point the bot link at your own running chatbot, choose a Judge, and confirm ownership or written
+permission first. Either install a model in Ollama and run `ollama serve` for a local Judge, or
+enter a cloud provider key in the password field. See [API keys](api-keys.md) for which key goes
+where, and [reliable comparisons](comparison-reliability.md) before treating any score as a
+decision.

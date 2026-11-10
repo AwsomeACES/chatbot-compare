@@ -1,8 +1,14 @@
-"""Check the five project documents, requirement coverage, and their local links.
+"""Check the project documents, requirement coverage, and their local links.
 
-Scope includes the five documents and the root AGENTS/CLAUDE pointers when present.
-External URLs are not fetched. Code examples are not interpreted as Markdown links.
-This checks structure, not the truth of product claims or task completion.
+Requirement coverage is checked between PRD.md and tasks.md. Link and anchor
+checking covers every maintained Markdown file, including the README,
+contributor and security documents, the guides and the issue templates, so a
+newly added document cannot ship with a broken relative link.
+
+Generated, vendored and runtime directories are skipped, and the internal
+working history is excluded because it is deliberately not part of the source
+archive. External URLs are not fetched. Code examples are not interpreted as
+Markdown links. This checks structure, not the truth of product claims.
 """
 
 from __future__ import annotations
@@ -14,6 +20,23 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 DOCUMENTS = ("PRD.md", "Architecture.md", "Design.md", "Rules.md", "tasks.md")
+# Generated, vendored or local runtime directories.
+SKIP_DIRS = {
+    ".git",
+    ".venv",
+    "venv",
+    "node_modules",
+    "runtime",
+    "runs",
+    "dist",
+    "build",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+}
+# Internal working history: retained locally, excluded from the source archive,
+# and therefore not a release gate for its historical links.
+HISTORY = {"PROGRESS.md", "HANDOFF.md"}
 REQUIREMENT = re.compile(r"\b(?:FR|NFR)-\d{2,}\b")
 INLINE_LINK = re.compile(
     r"!?\[[^\]\n]*\]\(\s*(?:<(?P<angle>[^>]+)>|(?P<plain>[^\s)]+))"
@@ -71,13 +94,26 @@ def local_links(text: str) -> list[tuple[int, str]]:
     return found
 
 
+def markdown_files(root: Path) -> list[Path]:
+    """Every maintained Markdown file whose local links must resolve."""
+    found = []
+    for path in sorted(root.rglob("*.md")):
+        relative = path.relative_to(root)
+        if any(part in SKIP_DIRS for part in relative.parts):
+            continue
+        if relative.as_posix() in HISTORY:
+            continue
+        found.append(path)
+    return found
+
+
 def check_docs(root: Path) -> list[str]:
     """Return actionable failures without mutating files or making network requests."""
     root = root.resolve()
     paths = [root / "docs" / name for name in DOCUMENTS]
     errors = [f"Missing document: {path.relative_to(root)}" for path in paths if not path.is_file()]
     text_by_path: dict[Path, str] = {}
-    for path in paths + [root / "AGENTS.md", root / "CLAUDE.md"]:
+    for path in paths + markdown_files(root):
         if not path.is_file():
             continue
         try:
@@ -131,8 +167,10 @@ def main() -> int:
         for error in errors:
             print(error, file=sys.stderr)
         return 1
+    checked = len(markdown_files(args.root.resolve()))
     print(
-        "Documentation checks passed: 5 documents, requirement coverage, and local links/anchors."
+        f"Documentation checks passed: requirement coverage and local links/anchors "
+        f"across {checked} Markdown documents."
     )
     return 0
 

@@ -5,7 +5,9 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
-RUNTIME = Path(os.getenv("STUDIO_RUNTIME", str(ROOT / "runtime")))
+# An empty STUDIO_RUNTIME would make Path("") the current directory, which
+# scatters runtime data through the source tree. Treat an empty value as unset.
+RUNTIME = Path(os.getenv("STUDIO_RUNTIME") or str(ROOT / "runtime"))
 for folder in ("uploads", "extracted", "reports", "logs", "work"):
     (RUNTIME / folder).mkdir(parents=True, exist_ok=True)
 MAX_UPLOAD = int(os.getenv("MAX_UPLOAD_MB", "1024")) * 1024 * 1024

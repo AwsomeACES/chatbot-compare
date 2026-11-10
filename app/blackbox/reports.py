@@ -12,6 +12,29 @@ from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
 from ..config import RUNTIME
 from . import judge_consistency, judge_provenance
 
+# Rendering bounds. The PDF is a readable summary of a saved Run; the JSON
+# export remains the complete record. A very large Run would otherwise render
+# unbounded flowables inside the request and block the single server worker.
+# Exceeding a bound truncates the document and discloses that in the document.
+# The governance and reproduction block is one serialized paragraph of roughly
+# 8.7 KB and does not grow with the number of Cases, so the per-paragraph cap
+# sits well above it. Document growth comes from the per-Case transcript loop,
+# which the flowable budget bounds instead.
+MAX_PARAGRAPH_CHARS = 20000
+MAX_FLOWABLES = 24000
+TRUNCATION_NOTICE = (
+    "This PDF was truncated to stay within its rendering bounds. It is a summary, not the "
+    "complete record: download the JSON export for the full evidence. No saved evidence was "
+    "changed."
+)
+
+
+class ReportTooLarge(ValueError):
+    """A saved report that cannot be rendered as a PDF within the bounds.
+
+    Carries an actionable message only; it never includes report content.
+    """
+
 
 def score_text(value):
     return "Not scored" if value is None else f"{value:.1f}%"
@@ -29,15 +52,25 @@ def generate_pdf(run):
     styles["BodyText"].leading = 15
     styles["BodyText"].wordWrap = "CJK"
     story = []
+    bounded = {"truncated": False, "notice_at": 0}
 
     def paragraph(text, style="BodyText"):
-        story.append(Paragraph(escape(str(text)).replace("\n", "<br/>"), styles[style]))
+        """Append one bounded paragraph, recording any truncation for disclosure."""
+        if len(story) >= MAX_FLOWABLES:
+            bounded["truncated"] = True
+            return
+        body = str(text)
+        if len(body) > MAX_PARAGRAPH_CHARS:
+            body = body[:MAX_PARAGRAPH_CHARS] + " [truncated in this PDF]"
+            bounded["truncated"] = True
+        story.append(Paragraph(escape(body).replace("\n", "<br/>"), styles[style]))
         spacer = Spacer(1, 7)
         spacer.keepWithNext = style.startswith("Heading")
         story.append(spacer)
 
     paragraph("AI Agent Studio — black-box evaluation", "Title")
     paragraph("Run " + run["id"])
+    bounded["notice_at"] = len(story)
     if run.get("studio"):
         paragraph(
             f"{len(run.get('protocol_snapshot', {}).get('cases', [])) or len(run['studio']['bots'][0]['categories'])}-check evaluation index",
@@ -390,14 +423,26 @@ def generate_pdf(run):
         canvas.drawRightString(553, 22, "Page " + str(doc.page))
         canvas.restoreState()
 
-    SimpleDocTemplate(
-        str(path),
-        title="AI Agent Studio black-box report",
-        leftMargin=42,
-        rightMargin=42,
-        topMargin=42,
-        bottomMargin=42,
-    ).build(story, onFirstPage=footer, onLaterPages=footer)
+    if bounded["truncated"]:
+        story.insert(bounded["notice_at"], Paragraph(escape(TRUNCATION_NOTICE), styles["BodyText"]))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        SimpleDocTemplate(
+            str(path),
+            title="AI Agent Studio black-box report",
+            leftMargin=42,
+            rightMargin=42,
+            topMargin=42,
+            bottomMargin=42,
+        ).build(story, onFirstPage=footer, onLaterPages=footer)
+    except Exception as exc:
+        # Any layout or font failure becomes one actionable refusal. The saved
+        # Run and its evidence are untouched, and the JSON export still works.
+        path.unlink(missing_ok=True)
+        raise ReportTooLarge(
+            "This saved report could not be rendered as a PDF within its bounds. "
+            "Download the JSON export, which carries the same evidence."
+        ) from exc
     return path
 
 

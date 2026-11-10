@@ -528,3 +528,83 @@ old snapshot, and the fast heartbeat only polls while the _loaded_ status is act
 compared, and a disagreement re-reads the detail; a slower list refresh runs only while the loaded
 result looks finished, so a completed Run is never polled every few seconds. This was diagnosed from
 the polling code rather than inferred from the symptom.
+
+## 2026-11-09 — Open-source release candidate decisions
+
+### D-OSR-01 — The release is MIT licensed
+
+**Decision.** Ship under the MIT license, `Copyright (c) 2026 Moinuddeen Hussain`.
+
+**Why.** The owner asked for the simplest option for a small local tool. MIT is one short
+file, needs no `NOTICE` convention, and places no obligation on users beyond attribution.
+
+**Still open.** The owner has **not** yet confirmed in writing that every included file is
+theirs to distribute under MIT. The license text is in place; the rights confirmation is a
+separate gate and release stays blocked on it. The copyright line was taken from the
+repository's Git author name and can be changed on request.
+
+### D-OSR-02 — Build the candidate from the published lineage only
+
+**Decision.** Build from `Simali2724/AI-Agent-Testing-Studio` `master` (`cfbe8de`) and
+deliberately exclude the divergent work in the `studio-publish` checkout.
+
+**Why.** The owner chose this when shown that the two trees each hold unique work and neither
+is a superset. The published lineage already carries the T-039 to T-045 reliability work and is
+what the public repository actually serves, so building here avoids a divergent-history
+reconcile. Nothing in the other checkout was modified or deleted.
+
+**Cost, accepted.** The candidate ships without the VoltKart connector, the judge rubric review
+and the pacing clock seam with its stress harness. Pacing stress is therefore reported as
+**Not tested**, not as the other tree's recorded 50 of 50. Tracked as T-052.
+
+### D-OSR-03 — A PDF report is a bounded summary, not the complete record
+
+**Decision.** Bound PDF rendering per paragraph (20000 characters) and per document (24000
+flowables). Exceeding a bound truncates the document and says so inside the document. An
+unrenderable report returns `413` naming the JSON export.
+
+**Why.** Rendering was unbounded inside the request handler, which matches the recorded export
+timeout. The JSON export is the complete record, so the PDF can be a bounded summary without
+losing evidence. Truncation is disclosed because a silently shortened report is worse than a
+refused one.
+
+**Boundary.** No stored evidence or audit record is altered by rendering. The per-paragraph cap
+was set from measurement — the serialized governance block is one paragraph of roughly 8.7 KB
+and does not grow with Case count — rather than guessed.
+
+### D-OSR-04 — The demo bot is a separate loopback process
+
+**Decision.** Serve the synthetic demo chatbot from `scripts/demo_bot.py` as its own loopback
+process, not from a route inside Studio.
+
+**Why.** Studio's middleware requires an `X-Studio-Request` header on every non-GET request as
+a cross-site-request defence, and a target chatbot has no reason to send it. Serving the demo
+inside Studio would have meant exempting a route from that defence or adding a custom-headers
+field to the saved `Target` schema. A separate process costs the user one extra command and
+keeps both the security boundary and the saved schema untouched.
+
+**Boundary.** The demo is Studio's own reviewed fixture. It is never a user-supplied application
+and is never executed on the host as uploaded code. Its results are labelled synthetic
+demonstration data, scoring runs on deterministic literal checks with the AI Judge off, and the
+Case set deliberately contains a failure.
+
+### D-OSR-05 — Internal working history stays out of the source archive
+
+**Decision.** Keep `PROGRESS.md` and `HANDOFF.md` outside the release manifest, and remove the
+public README's links to them. Exclude them from the broadened document link check with a
+stated reason.
+
+**Why.** They are the canonical internal record and contain workstation paths, internal ticket
+identifiers and another repository's name. They remain tracked in Git so the history is
+preserved; they are simply not shipped as product documentation, and the shipped README must
+not link what the archive omits.
+
+### D-OSR-06 — Claim only what was qualified
+
+**Decision.** Advertise Python 3.12 only, Windows only, and label Judge accuracy
+**uncalibrated**, Linux and macOS **not qualified**, and the optional classifiers **disabled and
+unverified**.
+
+**Why.** One tested interpreter does not justify "3.12 and newer", and a checked-in `start.sh`
+is not evidence that it runs. The release gate ledger records each gate's real status, including
+the ones that are not met.

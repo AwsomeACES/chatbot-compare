@@ -16,12 +16,12 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import database as db
 from .assurance.routes import router as assurance_router
-from .blackbox import metering, pricing
+from .blackbox import demo_bot, metering, pricing
 from .blackbox.calibration_routes import router as calibration_router
 from .blackbox.catalog import build_cases
 from .blackbox.cost_summary import estimate
 from .blackbox.governance_routes import router as governance_router
-from .blackbox.reports import generate_pdf
+from .blackbox.reports import ReportTooLarge, generate_pdf
 from .blackbox.runner import ACTIVE, TASKS, aggregate, execute, make_run, now, save
 from .blackbox.schema import (
     CATEGORIES,
@@ -652,8 +652,13 @@ def download(ident: uuid.UUID, format: str = "json"):
     if format == "pdf":
         if run["status"] in ("queued", "running"):
             raise HTTPException(409, "Wait for the run to finish before creating the PDF.")
+        try:
+            rendered = generate_pdf(run)
+        except ReportTooLarge as exc:
+            # A bounded refusal, not a silent empty file. JSON stays available.
+            raise HTTPException(413, str(exc)) from None
         return FileResponse(
-            generate_pdf(run),
+            rendered,
             filename=f"blackbox-{ident}.pdf",
             media_type="application/pdf",
         )
@@ -744,6 +749,25 @@ def reliance_twenty():
     return {
         "cases": json.loads(path.read_text(encoding="utf-8")),
         "target_model": "gemma-4-26b-a4b-it",
+    }
+
+
+@app.get("/api/blackbox/case-set/demo")
+def demo_case_set():
+    """Serve the synthetic demo Cases, which score without any AI Judge.
+
+    The demo bot itself runs as a separate loopback process; start it with
+    ``python scripts/demo_bot.py``. Studio then reaches it through the ordinary
+    API connector, so the demo exercises the real evaluation path.
+    """
+    return {
+        "cases": demo_bot.case_set(),
+        "target_name": demo_bot.DEMO_BOT_NAME,
+        "target_url": demo_bot.DEMO_URL,
+        "response_field": "answer",
+        "judge_enabled": False,
+        "start_command": "python scripts/demo_bot.py",
+        "disclosure": demo_bot.DEMO_LABEL,
     }
 
 

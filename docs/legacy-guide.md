@@ -1,7 +1,7 @@
 # AI Agent Studio
 
 **New simple screen:** open http://127.0.0.1:2708/. Add 1–4 bots, choose judges and repeat the same ten checks.
-See [the short user guide](docs/simple-guide.md) for Windows, macOS/Linux, Ollama and Docker setup.
+See [the short user guide](simple-guide.md) for Windows, macOS/Linux, Ollama and Docker setup.
 The older interface remains at /index.html for previous runs and advanced datasets.
 
 ## AI Agent Studio
@@ -9,9 +9,9 @@ The older interface remains at /index.html for previous runs and advanced datase
 Local, single-user black-box chatbot evaluation on **http://127.0.0.1:2708**. Test one chatbot or compare two to four using conversations and evidence. Source scanning and uploaded unit-test execution are retired.
 
 For the code map, formatting conventions and development checks, see
-[CONTRIBUTING.md](CONTRIBUTING.md). Current engineering decisions are in
-[DECISIONS.md](DECISIONS.md); incomplete capabilities are tracked explicitly in
-[BACKLOG.md](BACKLOG.md).
+[CONTRIBUTING.md](../CONTRIBUTING.md). Current engineering decisions are in
+[DECISIONS.md](../DECISIONS.md); incomplete capabilities are tracked explicitly in
+[BACKLOG.md](../BACKLOG.md).
 
 ## Start on Windows
 
@@ -135,7 +135,7 @@ Integration scope: the active HTTP, browser and rubric pathways are metered. Opt
 
 ## Safe ZIP export
 
-Do not ZIP the entire working folder. Use `python scripts/package_release.py --root . --output ../AI-Agent-Testing-Studio-safe.zip`. This source-only export excludes `.env`, runtime data, dependency folders and nested archives; it includes the blank `.env.example`. See [SECURITY.md](SECURITY.md) for key exposure and revocation steps.
+Do not ZIP the entire working folder. Use `python scripts/package_release.py --root . --output ../AI-Agent-Testing-Studio-safe.zip`. This source-only export excludes `.env`, runtime data, dependency folders and nested archives; it includes the blank `.env.example`. See [SECURITY.md](../SECURITY.md) for key exposure and revocation steps.
 
 ### Reference-free defaults (Ticket 82)
 

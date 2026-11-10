@@ -1,8 +1,11 @@
 """Synthetic fixtures only: never read the developer's actual .env."""
 
 import importlib.util
+import re
+import shutil
+import subprocess
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -199,3 +202,138 @@ def test_output_race_preserves_newly_created_output(tmp_path, monkeypatch):
     with pytest.raises(packager.PackagingError, match="appeared"):
         packager.package_release(root, output)
     assert output.read_bytes() == b"concurrent output"
+
+
+REPOSITORY = Path(__file__).parents[1]
+# Files the documented installation modes need inside an extracted archive.
+REQUIRED_IN_RELEASE = (
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "run.ps1",
+    "start.sh",
+    "Dockerfile",
+    "Dockerfile.scanners",
+    "compose.yaml",
+    ".dockerignore",
+    "requirements.txt",
+    "requirements-dev.txt",
+    "requirements-evaluation.txt",
+    "requirements.lock",
+    "requirements-dev.lock",
+    "requirements-evaluation.lock",
+    "pytest.ini",
+    "pyproject.toml",
+    "package.json",
+    "package-lock.json",
+    ".env.example",
+    "app/main.py",
+    ".github/workflows/quality.yml",
+    ".github/pull_request_template.md",
+    ".github/ISSUE_TEMPLATE/bug_report.md",
+)
+# Internal working history stays local; the public README must not link it.
+EXCLUDED_FROM_RELEASE = ("PROGRESS.md", "HANDOFF.md")
+LOCAL_LINK = re.compile(r"!?\[[^\]\n]*\]\(\s*(?!https?:|mailto:|#)([^\s)#]+)")
+
+
+def tracked_copy(tmp_path):
+    """Copy the repository's tracked files only.
+
+    Uses Git rather than a directory walk so the developer's real ``.env``,
+    runtime data and virtual environment are never read by this test.
+    """
+    try:
+        listing = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=REPOSITORY,
+            capture_output=True,
+            check=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pytest.skip("Git is unavailable, so the real tracked tree cannot be resolved")
+    root = tmp_path / "repository"
+    names = [name for name in listing.stdout.decode("utf-8").split("\0") if name]
+    if not names:
+        pytest.skip("No tracked files were reported")
+    for name in names:
+        origin = REPOSITORY / name
+        if not origin.is_file():
+            continue
+        destination = root / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(origin, destination)
+    assert not (root / ".env").exists(), "A tracked .env would be a release blocker"
+    return root
+
+
+def test_real_repository_export_carries_every_documented_setup_file(tmp_path):
+    """The archive must satisfy its own install instructions, not a mock list."""
+    root = tracked_copy(tmp_path)
+    output = tmp_path / "candidate.zip"
+    result = packager.package_release(root, output)
+    with zipfile.ZipFile(output) as archive:
+        names = set(archive.namelist())
+    missing = [name for name in REQUIRED_IN_RELEASE if name not in names]
+    assert not missing, f"The source archive omits required files: {missing}"
+    assert not set(EXCLUDED_FROM_RELEASE) & names
+    assert result["files"] == len(names)
+    # A lock without hashes cannot be installed with --require-hashes.
+    with zipfile.ZipFile(output) as archive:
+        assert b"--hash=sha256:" in archive.read("requirements.lock")
+
+
+def test_archived_readme_links_resolve_inside_the_archive(tmp_path):
+    """A shipped README must not link documents the manifest excludes."""
+    root = tracked_copy(tmp_path)
+    output = tmp_path / "candidate.zip"
+    packager.package_release(root, output)
+    with zipfile.ZipFile(output) as archive:
+        names = set(archive.namelist())
+        readme = archive.read("README.md").decode("utf-8")
+    broken = sorted(
+        {
+            target
+            for target in LOCAL_LINK.findall(readme)
+            if PurePosixPath(target).as_posix() not in names
+        }
+    )
+    assert not broken, f"README links files absent from the archive: {broken}"
+
+
+def test_manifest_did_not_become_a_wildcard(tmp_path):
+    """Widening the manifest must not admit arbitrary workspace files."""
+    root = source(tmp_path)
+    rejected = [
+        "personal-todo.md",
+        "requirements.lock.bak",
+        "my-notes.json",
+        "deploy-production.ps1",
+        "combined-36-cases.json",
+        ".github/ISSUE_TEMPLATE/private.txt",
+        ".github/dependabot.yml",
+        ".github/workflows/publish-secrets.yml",
+    ]
+    for name in rejected:
+        write(root, name, "NOT_FOR_RELEASE")
+    write(root, ".github/ISSUE_TEMPLATE/bug_report.md", "---\nname: Bug report\n---\n")
+    write(root, ".github/pull_request_template.md", "## What changed\n")
+    write(root, "LICENSE", "MIT License\n")
+    write(root, "requirements.lock", "fastapi==0.1 --hash=sha256:0\n")
+    write(root, "start.sh", "#!/usr/bin/env bash\n")
+    output = tmp_path / "release.zip"
+    packager.package_release(root, output)
+    with zipfile.ZipFile(output) as archive:
+        names = set(archive.namelist())
+        assert not any(b"NOT_FOR_RELEASE" in archive.read(name) for name in names)
+    assert not set(rejected) & names
+    assert {
+        "LICENSE",
+        "requirements.lock",
+        "start.sh",
+        ".github/ISSUE_TEMPLATE/bug_report.md",
+        ".github/pull_request_template.md",
+    } <= names

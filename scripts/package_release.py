@@ -21,7 +21,16 @@ ROOT_FILES = {
     "README.md",
     "DECISIONS.md",
     "SECURITY.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "AGENTS.md",
+    "CLAUDE.md",
     "run.ps1",
+    "start.sh",
+    "Dockerfile",
+    "Dockerfile.scanners",
+    "compose.yaml",
+    ".dockerignore",
     "pytest.ini",
     ".gitignore",
     ".gitattributes",
@@ -35,6 +44,15 @@ ROOT_FILES = {
     ".prettierignore",
     ".editorconfig",
 }
+# Only reviewed repository metadata is exported, never arbitrary .github content.
+GITHUB_FILES = {
+    ".github/workflows/quality.yml",
+    ".github/pull_request_template.md",
+}
+GITHUB_DIRS = {".github/workflows", ".github/ISSUE_TEMPLATE"}
+GITHUB_PATTERNS = (".github/ISSUE_TEMPLATE/*.md",)
+# Root manifests that may carry a suffix, kept narrow on purpose.
+ROOT_PATTERNS = ("requirements*.txt", "requirements*.lock")
 PRIVATE_DIRS = {
     ".git",
     ".venv",
@@ -228,11 +246,13 @@ def _allowed_name(name: str) -> bool:
     ):
         return False
     parts = path.parts
-    # Only the reviewed workflow is exported, not arbitrary GitHub metadata.
-    if parts[0] == ".github" and name != ".github/workflows/quality.yml":
-        return False
+    if parts[0] == ".github" and name not in GITHUB_FILES:
+        if not any(fnmatch.fnmatchcase(name, pattern) for pattern in GITHUB_PATTERNS):
+            return False
     if len(parts) == 1:
-        if name not in ROOT_FILES and not fnmatch.fnmatchcase(name, "requirements*.txt"):
+        if name not in ROOT_FILES and not any(
+            fnmatch.fnmatchcase(name, pattern) for pattern in ROOT_PATTERNS
+        ):
             return False
     elif parts[0] not in SOURCE_DIRS:
         return False
@@ -275,7 +295,7 @@ def _sources(root: Path):
                     for name in dirs
                     if not _is_link(directory / name)
                     and (
-                        (directory / name).relative_to(root).as_posix() == ".github/workflows"
+                        (directory / name).relative_to(root).as_posix() in GITHUB_DIRS
                         or _allowed_name(
                             (directory / name / "file.py").relative_to(root).as_posix()
                         )
