@@ -190,6 +190,9 @@ DATABASE_URL=sqlite:///compare-test.db GEMINI_API_KEY=... AI_PROVIDER=gemini GEM
 cd ~/projects/chatbot-compare && .venv/bin/uvicorn app:app --port 8080
 ```
 
+**Quick or full.** The start screen's *Length* picks *Quick* (the suite's `quick` list: 22 cases, one or two per skill, none that needs a capability only some bots have) or *Full* (all 117). On the free Gemini tier a quick three-bot run takes minutes and a full one hours; from the terminal, `regress.py run --bots a,b --quick`. A quick run has too few cases to name a winner with confidence: use it to screen a change, and the full suite to decide.
+**One Gemini quota per bot.** Free-tier limits are per Google Cloud project, not per key, so bots sharing a project slow each other down. Mouni's bot uses `MOUNI_GEMINI_API_KEY` when it is set in `.env` (a key from its own project), else the shared `GOOGLE_API_KEY`.
+
 Open http://localhost:8080. Run the app's own tests with `.venv/bin/python -m pytest tests`; GitHub Actions runs them on every push to `main` and every pull request (`.github/workflows/tests.yml`).
 A run started from the dashboard lives in the server process, so restarting the server cuts it off ("interrupted";
 the start screen lists these). Resume one from its page, or from the terminal with `.venv/bin/python regress.py resume

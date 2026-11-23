@@ -48,6 +48,12 @@ APP_PASSWORD = os.environ.get("APP_PASSWORD", "")  # set it whenever the app is 
 # Per-person logins, "name:password,name2:password2": the user name is then proven, so the audit log's actor and a
 # sign-off's reviewer are who logged in. With only APP_PASSWORD, any user name is accepted (and recorded as typed).
 APP_USERS = dict(u.split(":", 1) for u in os.environ.get("APP_USERS", "").split(",") if ":" in u)
+# The most one run with a paid bot may spend (USD, the run's estimated bot + judge cost), whatever the request asks:
+# set it when the dashboard is reachable by people who don't pay the bill. Empty: no limit.
+try:
+    MAX_RUN_BUDGET_USD = float(os.environ.get("MAX_RUN_BUDGET_USD") or 0) or None
+except ValueError:
+    MAX_RUN_BUDGET_USD = None
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]").split(",") if h.strip()]
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
@@ -116,7 +122,8 @@ def public(bot, snapshot=None):
     return {k: bot.get(k) for k in ("id", "label", "type", "description", "llm")} | {
         "app": evaluator.app_of(bot), "quick": bool(bot.get("quick")),
         "remote": bool(governance.remote_bots([bot])),  # test messages would leave this machine
-        "priced": bool(evaluator.priced_config(bot, snapshot).get("pricing"))}
+        "priced": bool(evaluator.priced_config(bot, snapshot).get("pricing")),
+        "paid": bool(paid([bot]))}
 
 
 @app.get("/api/health")
@@ -136,6 +143,7 @@ def bots():
                         "run_type": None if missing else evaluator.run_type([enabled[i] for i in p["bots"]])})
     return {"bots": [public(b, snapshot) for b in enabled.values()], "presets": presets,
             "prices": {"date": snapshot.get("date"), "models": len(snapshot.get("models") or {})} if snapshot else None,
+            "max_run_budget_usd": MAX_RUN_BUDGET_USD,
             "judge": {"model": evaluator.JUDGE_MODEL, "second_judge": evaluator.SECOND_JUDGE_MODEL or None,
                       "rpm": evaluator.llm.JUDGE.rpm or None, "daily_limit": evaluator.llm.JUDGE.daily_limit,
                       "fallback": evaluator.llm.JUDGE.fallback.model if evaluator.llm.JUDGE.fallback else None,
@@ -273,6 +281,24 @@ def suite(suite_id: str):
         raise HTTPException(404, "No such suite")
 
 
+def paid(bots):
+    """Bots whose price per token isn't zero (or isn't known, which a budget refuses rather than guesses)."""
+    snapshot = prices.latest()
+    out = []
+    for b in bots:
+        p = evaluator.priced_config(b, snapshot).get("pricing")
+        if not p or any((p.get(k) or 0) > 0 for k in ("input", "output", "cache_read", "cache_write")):
+            out.append(b)
+    return out
+
+
+def capped_budget(bots, asked):
+    """The budget a run gets: what was asked, but never more than MAX_RUN_BUDGET_USD when a bot costs money."""
+    if MAX_RUN_BUDGET_USD is None or not paid(bots):
+        return asked
+    return MAX_RUN_BUDGET_USD if asked is None or asked > MAX_RUN_BUDGET_USD else asked
+
+
 @app.post("/api/runs")
 def start_run(req: RunRequest):
     if not 2 <= len(set(req.bots)) <= 4:
@@ -282,9 +308,11 @@ def start_run(req: RunRequest):
     except (ValueError, FileNotFoundError):
         raise HTTPException(404, "No such suite")
     try:
-        run = evaluator.start_run(find_bots(list(dict.fromkeys(req.bots))), req.suite, req.judge,
+        picked = find_bots(list(dict.fromkeys(req.bots)))
+        run = evaluator.start_run(picked, req.suite, req.judge,
                                   repeats=req.repeats, comparative=req.comparative, second_judge=req.second_judge,
-                                  rewordings=req.rewordings, case_ids=req.cases, budget_usd=req.budget_usd,
+                                  rewordings=req.rewordings, case_ids=req.cases,
+                                  budget_usd=capped_budget(picked, req.budget_usd),
                                   consent=req.consent, timing=req.timing)
     except ValueError as e:  # e.g. a bot with no matching profile
         raise HTTPException(400, str(e))
@@ -357,7 +385,12 @@ def resume_run(run_id: str, req: ResumeRequest | None = None):
     if r is None:
         raise HTTPException(404, "No such run")
     try:
-        evaluator.resume_run(run_id, find_bots([b["id"] for b in r["bots"]]), budget_usd=req and req.budget_usd)
+        bots = find_bots([b["id"] for b in r["bots"]])
+        asked = req and req.budget_usd
+        # A run that already has a budget keeps its limit unless a new one is asked (and that one is capped too);
+        # a paid run without one gets the cap.
+        budget = capped_budget(bots, asked) if asked is not None or not r.get("budget") else None
+        evaluator.resume_run(run_id, bots, budget_usd=budget)
     except KeyError:
         raise HTTPException(404, "No such run")
     except ValueError as e:

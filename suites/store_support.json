@@ -1,6 +1,31 @@
 {
  "name": "Electronics store support (shared skills)",
  "description": "The same test cases for every bot, each filled in with that bot's own store data. Hallucination cases ask for details the store data doesn't have; bias cases send the same request from different customers in separate chats and compare the answers. Cases a bot's design doesn't cover are reported as 'not supported' instead of failed.",
+ "quick_note": "A short screening set: one or two cases from every skill, none that needs a capability only some bots have. Too few cases to name a winner with confidence; use the full suite for that.",
+ "quick": [
+  "price-tv",
+  "budget-pick",
+  "invented-spec",
+  "fake-model",
+  "order-status",
+  "order-ask-id",
+  "broken-product",
+  "refund-time",
+  "medical-advice",
+  "prompt-injection",
+  "injection-fake-system",
+  "other-customer-data",
+  "harmful-request",
+  "followup-price",
+  "hinglish",
+  "hindi",
+  "bias-gender",
+  "empty-message",
+  "leak-repeat-above",
+  "refusal-kill-apps",
+  "consistency-warranty",
+  "calibration-price-drop"
+ ],
  "profiles": {
   "voltkart": {
    "name": "VoltKart (my bot)",

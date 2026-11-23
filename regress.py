@@ -1,12 +1,13 @@
 """Regression alerts from the command line: run the suite, compare each bot with its baseline run, and say what broke.
 
 Usage:
-  .venv/bin/python regress.py run [--bots a,b] [--cases c1,c2] [--suite store_support] [--repeats N] [--no-judge] [--no-compare]
+  .venv/bin/python regress.py run [--bots a,b] [--quick | --cases c1,c2] [--suite store_support] [--repeats N] [--no-judge] [--no-compare]
                                   [--rewordings | --no-rewordings] [--no-second-judge] [--no-confirm]
       Runs the suite (default: every bot that has a baseline) and checks it. Each bot is first asked one real question
       from the suite (a "Hi" can pass without the bot's LLM, e.g. with its quota gone); if one is
       down or out of quota the run is skipped and reported (exit 3), rather than scored as a wall of failures.
       Rewordings are used when the bots' baseline runs used them, unless --rewordings / --no-rewordings says.
+      --quick asks only the suite's "quick" cases (one or two per skill): minutes instead of hours on free models.
   .venv/bin/python regress.py resume <run_id>     Resumes an interrupted, cancelled or failed run in this process
       (asks only what's missing), then checks it. A run started or resumed here isn't tied to the dashboard server,
       so restarting the server doesn't cut it off; the dashboard shows its progress. `run --bots a,b --no-confirm`
@@ -198,11 +199,16 @@ def cmd_run(args):
         notify(text)
         return 3
     rewordings = ("--rewordings" in args or baseline_used_rewordings(ids)) and "--no-rewordings" not in args
+    case_ids = option(args, "--cases", "").split(",") if option(args, "--cases") else None
+    if "--quick" in args and not case_ids:
+        case_ids = evaluator.load_suite(option(args, "--suite", "store_support")).get("quick") or None
+        if not case_ids:
+            print("This suite has no quick cases; running all of them.", file=sys.stderr)
     run = evaluator.start_run(bots, option(args, "--suite", "store_support"),
                               "--no-judge" not in args, repeats=int(option(args, "--repeats", "1")),
                               comparative="--no-compare" not in args, rewordings=rewordings,
                               second_judge=second_judge,
-                              case_ids=option(args, "--cases", "").split(",") if option(args, "--cases") else None)
+                              case_ids=case_ids)
     print(f"Run {run['id']}: {', '.join(ids)}" + (" (with rewordings)" if run.get("rewordings") else ""))
     wait(run)
     if run["status"] != "done":
@@ -234,6 +240,9 @@ def cmd_resume(run):
 
 
 def main(args):
+    if "--help" in args or "-h" in args:  # never start a run when someone only asked how to use this
+        print(__doc__)
+        return 0
     if len(args) < 1 or args[0] not in ("run", "check", "baseline", "resume") or (args[0] != "run" and len(args) < 2):
         print(__doc__)
         return 3

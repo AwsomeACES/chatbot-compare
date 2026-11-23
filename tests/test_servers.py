@@ -71,3 +71,15 @@ def test_the_shipped_servers_are_well_formed():
     for s in servers.servers():
         assert {"name", "port", "cmd", "health"} <= set(s) and isinstance(s["cmd"], list), s
         assert s["health"]["path"].startswith("/") and s["health"]["expect"], s
+
+
+def test_expand_falls_back_to_the_shared_key(monkeypatch):
+    import servers
+    monkeypatch.delenv("OWN_KEY", raising=False)
+    monkeypatch.setenv("SHARED_KEY", "shared")
+    assert servers.expand("${OWN_KEY:-$SHARED_KEY}") == "shared"
+    monkeypatch.setenv("OWN_KEY", "")
+    assert servers.expand("${OWN_KEY:-$SHARED_KEY}") == "shared"
+    monkeypatch.setenv("OWN_KEY", "own")
+    assert servers.expand("${OWN_KEY:-$SHARED_KEY}") == "own"
+    assert servers.expand("$SHARED_KEY") == "shared"

@@ -220,7 +220,7 @@
      "health": {"path": "/health", "expect": "reliance-digital-ai"},
      "cmd": ["$COMPARE_DIR/.bots/reliance222-venv/bin/uvicorn", "main:app", "--port", "8001"]},
     {"name": "mouni", "port": 5000, "dir": "~/projects/mouni-bot/github-latest/backend",
-     "env": {"GEMINI_API_KEY": "$GOOGLE_API_KEY", "DATABASE_URL": "sqlite:///compare-test.db", "AI_PROVIDER": "gemini",
+     "env": {"GEMINI_API_KEY": "${MOUNI_GEMINI_API_KEY:-$GOOGLE_API_KEY}", "DATABASE_URL": "sqlite:///compare-test.db", "AI_PROVIDER": "gemini",
              "GEMINI_MODEL": "gemini-3.6-flash"},
      "health": {"path": "/api/health", "expect": "\"ok\""},
      "cmd": [".venv-local/bin/flask", "--app", "app", "run", "--port", "5000", "--no-reload"],

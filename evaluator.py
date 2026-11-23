@@ -130,7 +130,13 @@ def list_suites():
     for name in sorted(os.listdir(SUITES_DIR)):
         if name.endswith(".json"):
             s = load_suite(name[:-5])
+            # "quick": a short screening subset of case ids, for a run that finishes in minutes, not hours
+            ids = {c["id"] for c in s["cases"]}
+            quick = [i for i in s.get("quick") or [] if i in ids]
             suites.append({"id": name[:-5], "name": s["name"], "description": s.get("description", ""),
+                           "quick": quick, "quick_note": s.get("quick_note", ""),
+                           "quick_rewordings": sum(len(c.get("rewordings") or []) for c in s["cases"]
+                                                   if c["id"] in set(quick)),
                            "cases": len(s["cases"]),
                            "reworded_cases": sum(1 for c in s["cases"] if c.get("rewordings")),
                            "rewordings": sum(len(c.get("rewordings") or []) for c in s["cases"]),

@@ -33,6 +33,11 @@
         <p id="runTypeHint" class="muted small run-type"></p>
 
         <label class="suite-pick"><span>Test suite</span><select id="suiteSelect"></select></label>
+        <label class="suite-pick" id="lengthRow"><span>Length</span><select id="lengthSelect">
+          <option value="quick">Quick: one or two cases per skill (minutes)</option>
+          <option value="full">Full: every case (hours on free models)</option>
+        </select></label>
+        <p id="lengthInfo" class="muted small"></p>
 
         <div id="consentBox" class="consent" hidden>
           <p class="small"><b>Before this run sends anything off this machine:</b></p>

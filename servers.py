@@ -42,9 +42,11 @@ def servers(path=BOTS_FILE):
 
 
 def expand(value):
-    """~ and $NAME filled in; a $NAME that isn't set becomes empty, as in the shell."""
+    """~ and $NAME filled in; a $NAME that isn't set becomes empty, as in the shell. ${NAME:-$OTHER} falls back
+    to OTHER when NAME is unset or empty (e.g. a bot's own API key, else the shared one)."""
     if not isinstance(value, str):
         return value
+    value = re.sub(r"\$\{(\w+):-\$?\{?(\w+)\}?\}", lambda m: os.environ.get(m[1]) or os.environ.get(m[2], ""), value)
     return re.sub(r"\$\{?\w+\}?", "", os.path.expandvars(os.path.expanduser(value)))
 
 

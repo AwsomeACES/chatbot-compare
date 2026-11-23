@@ -4,7 +4,7 @@ const METRICS = [
   ["overall", "Overall"], ["accuracy", "Accuracy"], ["safety", "Safety"], ["hallucination", "No hallucination"],
   ["bias", "Fairness (bias)"], ["quality", "Judge quality"], ["speed", "Speed"],
 ];
-let bots = [], presets = [], suites = [], judgeInfo = {}, priceInfo = null, currentRunId = null, pollTimer = null, currentRun = null;
+let bots = [], presets = [], suites = [], judgeInfo = {}, maxRunBudget = null, priceInfo = null, currentRunId = null, pollTimer = null, currentRun = null;
 
 // ---------- Utilities ----------
 function esc(s) {
@@ -101,13 +101,19 @@ function botRow(b, checked, name) {
 }
 
 async function loadSetup() {
-  [{ bots, presets, judge: judgeInfo, prices: priceInfo }, { suites }] = await Promise.all([api("/api/bots"), api("/api/suites")]);
+  [{ bots, presets, judge: judgeInfo, prices: priceInfo, max_run_budget_usd: maxRunBudget }, { suites }] = await Promise.all([api("/api/bots"), api("/api/suites")]);
+  if (maxRunBudget) {
+    $("budgetInput").placeholder = `at most ${maxRunBudget}`;
+    $("budgetInput").max = String(maxRunBudget);
+  }
   showPrices();
   $("judgeName").textContent = judgeInfo.model;
   $("secondJudgeName").textContent = judgeInfo.second_judge ? `(${judgeInfo.second_judge})` : "(not configured: set SECOND_JUDGE_MODEL)";
   let picked = [];
   try { picked = JSON.parse(readStore("picked") || "[]"); } catch {}
-  if (!picked.length) picked = bots.slice(0, 2).map((b) => b.id);
+  // First visit: the free preset when there is one, so nobody starts a paid run without choosing to.
+  const free = presets.find((p) => p.id === "free-three-apps" && !(p.missing || []).length);
+  if (!picked.length) picked = free ? free.bots : bots.slice(0, 2).map((b) => b.id);
   $("botList").replaceChildren(...bots.map((b) => botRow(b, picked.includes(b.id), "pick")));
   $("arenaPool").replaceChildren(...bots.map((b) => botRow(b, picked.includes(b.id), "pool")));
   $("botList").onchange = updatePickCount;
@@ -119,6 +125,8 @@ async function loadSetup() {
   const preferred = [lastSuite, "store_support"].find((id) => suites.some((x) => x.id === id));
   if (preferred) $("suiteSelect").value = preferred;
   $("suiteSelect").onchange = () => { tryStore("suite", $("suiteSelect").value); showSuiteInfo(); };
+  if (readStore("length") === "full") $("lengthSelect").value = "full";
+  $("lengthSelect").onchange = () => { tryStore("length", $("lengthSelect").value); showSuiteInfo(); };
   showSuiteInfo();
 }
 function picked(name) { return [...document.querySelectorAll(`input[name=${name}]:checked`)].map((i) => i.value); }
@@ -170,16 +178,23 @@ $("pricesBtn").onclick = async () => {
   finally { $("pricesBtn").disabled = false; }
 };
 // One line next to the start button: what a run with the current settings will do.
+// The quick subset's case ids when "Quick" is chosen and the suite has one; null means every case.
+function quickCases(s) {
+  return s && s.quick && s.quick.length && $("lengthSelect").value === "quick" ? s.quick : null;
+}
 function updateStartSummary() {
   const s = suites.find((x) => x.id === $("suiteSelect").value), n = picked("pick").length;
   if (!s) { $("startSummary").textContent = ""; $("quotaWarning").textContent = ""; return; }
   const reps = Number($("repeatSelect").value), judge = $("judgeToggle").checked;
-  const chats = (s.cases + ($("rewordToggle").checked ? s.rewordings || 0 : 0)) * reps; // same count as evaluator.start_run
+  const quick = quickCases(s);
+  const chats = ((quick ? quick.length : s.cases)
+    + ($("rewordToggle").checked ? (quick ? s.quick_rewordings : s.rewordings) || 0 : 0)) * reps; // same count as evaluator.start_run
   $("startSummary").textContent = [
     n < 2 ? "Pick at least 2 bots" : n > 4 ? "Pick at most 4 bots" : `${n} bots`,
     `${chats} chats per bot`,
     judge ? `AI judge on${$("compareToggle").checked ? " + comparative" : ""}${$("secondJudgeToggle").checked ? " + second judge" : ""}` : "no AI judge",
     reps > 1 ? `each case ${reps} times` : null,
+    maxRunBudget && bots.some((b) => picked("pick").includes(b.id) && b.paid) ? `stops at about $${maxRunBudget} of paid model use` : null,
   ].filter(Boolean).join(" · ");
   // Judge calls the run will make: one per conversation, two per comparison (both orders), plus the second judge's sample.
   const calls = judge && n >= 2 ? n * chats + ($("compareToggle").checked ? 2 * chats : 0) : 0;
@@ -229,6 +244,11 @@ $("judgeToggle").onchange = () => { syncJudgeOptions(); updateStartSummary(); up
 function showSuiteInfo() {
   const s = suites.find((x) => x.id === $("suiteSelect").value);
   $("suiteInfo").textContent = s ? `${s.description} Skills: ${s.categories.join(", ")}.` : "";
+  const hasQuick = !!(s && s.quick && s.quick.length);
+  $("lengthRow").hidden = !hasQuick;
+  $("lengthInfo").textContent = !hasQuick ? "" : quickCases(s)
+    ? `${s.quick.length} of ${s.cases} cases, covering every skill. ${s.quick_note || ""}`
+    : `All ${s.cases} cases. On free models this takes hours; start it in the evening.`;
   const n = s?.rewordings || 0;
   $("rewordToggle").disabled = !n;
   if (!n) $("rewordToggle").checked = false;
@@ -248,6 +268,7 @@ $("startBtn").onclick = async () => {
         repeats: Number($("repeatSelect").value), comparative: $("compareToggle").checked,
         second_judge: $("secondJudgeToggle").checked, rewordings: $("rewordToggle").checked,
         timing: $("timingToggle").checked,
+        cases: quickCases(suites.find((x) => x.id === $("suiteSelect").value)),
         budget_usd: budgetValue(),
         consent: { send_to_bots: $("consentBots").checked, share_with_judge: $("consentJudge").checked },
       }),
